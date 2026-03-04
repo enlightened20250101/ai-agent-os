@@ -59,3 +59,23 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Support both Supabase modes where email confirmation is required or not required.
 - Why: Existing Supabase project settings are assumed to be pre-configured; signup flow now handles no-session responses with a clear confirmation message.
+
+### 2026-03-05 - Schema implementation choice
+
+- Decision: Implement constrained statuses/providers/actor types as Postgres ENUMs in the initial migration.
+- Why: Faster to enforce correctness at the database boundary and keeps event/action states consistent.
+
+### 2026-03-05 - RLS baseline strategy
+
+- Decision: Apply strict org-scoped RLS across all tables via helper function `is_org_member(org_id uuid)`.
+- Why: Keeps policy logic centralized, easy to audit, and aligned to the product's tenant isolation needs.
+
+### 2026-03-05 - Org provisioning path
+
+- Decision: Block direct authenticated inserts to `orgs`; create initial org + owner membership only through server-side onboarding with service role key.
+- Why: Guarantees first-write bootstrap while preserving strict user-facing RLS.
+
+### 2026-03-05 - New-user routing
+
+- Decision: Middleware enforces onboarding redirect for authenticated users without memberships until provisioning is completed.
+- Why: Ensures all `/app` features run with valid org context.

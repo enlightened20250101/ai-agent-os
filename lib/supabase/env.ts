@@ -1,4 +1,5 @@
 const requiredServerEnv = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
+const serviceRoleEnv = "SUPABASE_SERVICE_ROLE_KEY";
 
 function getEnvVar(key: string): string {
   const value = process.env[key];
@@ -15,4 +16,8 @@ export function getSupabaseEnv() {
     url: getEnvVar(urlKey),
     anonKey: getEnvVar(anonKey)
   };
+}
+
+export function getSupabaseServiceRoleKey() {
+  return getEnvVar(serviceRoleEnv);
 }

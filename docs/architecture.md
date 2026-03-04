@@ -20,7 +20,7 @@ Primary workflow:
 
 - Responsibility: Immutable audit events for every state change and external action.
 - Backing store: Supabase Postgres table(s) with RLS.
-- Event examples: `task_intake_received`, `draft_generated`, `policy_passed`, `approval_requested`, `approval_granted`, `gmail_sent`, `evidence_pack_generated`, `error_recorded`.
+- Event examples: `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`, `APPROVAL_REQUESTED`, `HUMAN_APPROVED`, `ACTION_EXECUTED`, `ACTION_FAILED`.
 - Requirement: All modules write to ledger through a shared server-side writer.
 
 ### 2) Policy Engine
@@ -62,11 +62,39 @@ Primary workflow:
 
 ## Data Model (MVP-level)
 
-- `work_items`: high-level unit of work from Slack intake.
-- `drafts`: generated draft content and model metadata.
-- `approvals`: approval requests and status.
-- `outbound_messages`: Gmail send attempts/results.
-- `event_ledger`: append-only event records with actor, timestamp, event type, payload JSON.
+- `orgs`: tenant boundary.
+- `memberships`: maps authenticated users to orgs with role (`owner`/`admin`/`member`).
+- `agents`: org-scoped agents with role key and lifecycle status.
+- `tasks`: intake/draft execution unit linked to creator and optional agent.
+- `task_events`: append-only event ledger entries per task.
+- `approvals`: human approval state for tasks.
+- `connector_accounts`: org connector identities and encrypted secret blobs.
+- `actions`: outbound provider action attempts and results.
+
+## Schema Notes
+
+- Primary keys are UUIDs (`gen_random_uuid()`), all timestamps are `timestamptz` in UTC defaults.
+- Multi-tenant access is enforced by `org_id` on all domain tables.
+- RLS is enabled on all tables with policy gating through `is_org_member(org_id uuid)`.
+- Regular authenticated users cannot create `orgs` directly under RLS.
+- Initial org + owner membership is created via server-side onboarding using Supabase service role key.
+
+## Event Types (Minimum Set)
+
+- `ORG_CREATED`
+- `MEMBERSHIP_CREATED`
+- `AGENT_CREATED`
+- `AGENT_UPDATED`
+- `TASK_CREATED`
+- `TASK_UPDATED`
+- `APPROVAL_REQUESTED`
+- `HUMAN_APPROVED`
+- `HUMAN_REJECTED`
+- `MODEL_INFERRED`
+- `POLICY_CHECKED`
+- `ACTION_QUEUED`
+- `ACTION_EXECUTED`
+- `ACTION_FAILED`
 
 ## Reliability and Observability
 

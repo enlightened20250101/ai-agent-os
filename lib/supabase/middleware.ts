@@ -31,6 +31,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isAppPath = request.nextUrl.pathname.startsWith("/app");
+  const isOnboardingPath = request.nextUrl.pathname === "/app/onboarding";
   const isAuthPath = request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/signup";
 
   if (isAppPath && !user) {
@@ -45,6 +46,28 @@ export async function updateSession(request: NextRequest) {
     appUrl.pathname = "/app";
     appUrl.search = "";
     return NextResponse.redirect(appUrl);
+  }
+
+  if (isAppPath && user) {
+    const { data: memberships, error } = await supabase.from("memberships").select("id").limit(1);
+
+    if (!error) {
+      const hasMembership = (memberships?.length ?? 0) > 0;
+
+      if (!hasMembership && !isOnboardingPath) {
+        const onboardingUrl = request.nextUrl.clone();
+        onboardingUrl.pathname = "/app/onboarding";
+        onboardingUrl.search = "";
+        return NextResponse.redirect(onboardingUrl);
+      }
+
+      if (hasMembership && isOnboardingPath) {
+        const appUrl = request.nextUrl.clone();
+        appUrl.pathname = "/app";
+        appUrl.search = "";
+        return NextResponse.redirect(appUrl);
+      }
+    }
   }
 
   return response;
