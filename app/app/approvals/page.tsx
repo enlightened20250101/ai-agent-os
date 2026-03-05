@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { decideApproval, resendApprovalSlackReminder } from "@/app/app/approvals/actions";
+import {
+  decideApproval,
+  resendApprovalSlackReminder,
+  sendStaleApprovalRemindersNow
+} from "@/app/app/approvals/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -104,28 +108,35 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </p>
       ) : null}
 
-      <form method="get" className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
-        <label className="inline-flex items-center gap-2">
-          <input
-            type="checkbox"
-            name="stale_only"
-            value="1"
-            defaultChecked={staleOnly}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          SLA超過のみ
-        </label>
-        <label className="inline-flex items-center gap-2">
-          並び順
-          <select name="sort" defaultValue={sort} className="rounded-md border border-slate-300 px-2 py-1">
-            <option value="oldest">古い順</option>
-            <option value="newest">新しい順</option>
-          </select>
-        </label>
-        <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
-          適用
-        </button>
-      </form>
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
+        <form method="get" className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              name="stale_only"
+              value="1"
+              defaultChecked={staleOnly}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            SLA超過のみ
+          </label>
+          <label className="inline-flex items-center gap-2">
+            並び順
+            <select name="sort" defaultValue={sort} className="rounded-md border border-slate-300 px-2 py-1">
+              <option value="oldest">古い順</option>
+              <option value="newest">新しい順</option>
+            </select>
+          </label>
+          <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
+            適用
+          </button>
+        </form>
+        <form action={sendStaleApprovalRemindersNow}>
+          <button type="submit" className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-700 hover:bg-sky-100">
+            SLA超過をSlack再通知
+          </button>
+        </form>
+      </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">

@@ -664,3 +664,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` に `stale_only` フィルタと `oldest/newest` ソートを追加した。
 - Why: SLA超過承認の優先処理と、運用時の確認順序（古い順/新しい順）を明示的に切り替えられるようにするため。
+
+- Decision: `sendApprovalReminders`（lib）と `/api/approvals/reminders`（cron API）を追加し、SLA超過pending承認のSlack再通知を自動化した。
+- Why: 承認滞留を定期的に押し戻し、手動巡回に依存しない承認促進ループを作るため。
+
+- Decision: 承認リマインドは `approval_id` 単位でクールダウン重複排除し、同一approvalへの短時間連投を防ぐ方式にした。
+- Why: 通知ノイズを抑えつつ、未対応承認への再通知だけを確実に送るため。

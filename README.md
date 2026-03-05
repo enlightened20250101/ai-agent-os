@@ -53,6 +53,7 @@ Set these in `.env.local`:
 - `INCIDENT_AUTO_ACTION_FAILED_THRESHOLD` (default `5`, failed actions in lookback)
 - `INCIDENT_AUTO_LOOKBACK_HOURS` (default `6`)
 - `EXCEPTION_ALERTS_TOKEN` (optional; fallback to incident/governance/planner token)
+- `APPROVAL_REMINDER_TOKEN` (optional; fallback to exception/incident/governance/planner token)
 - `EXCEPTION_EXPORT_TOKEN` (optional; enables server-to-server exception export API access)
 - `EXCEPTION_ALERT_COOLDOWN_MINUTES` (default `60`)
 - `OPS_JOB_RETRY_MAX_ATTEMPTS` (default `2`, max per-org attempt count for batch APIs)
@@ -71,6 +72,9 @@ Set these in `.env.local`:
 - `E2E_PASSWORD` (for Playwright signup/login test account)
 - `E2E_CLEANUP_TOKEN` (required to authorize test cleanup endpoint)
 - `EXCEPTION_PENDING_APPROVAL_HOURS` (exception queue stale approval threshold; default `6`)
+- `APPROVAL_REMINDER_STALE_HOURS` (optional; pending承認の再通知対象しきい値。未設定時は `EXCEPTION_PENDING_APPROVAL_HOURS`)
+- `APPROVAL_REMINDER_COOLDOWN_MINUTES` (default `120`; 同一approvalへの再通知クールダウン)
+- `APPROVAL_REMINDER_MAX_TARGETS` (default `20`; 1回のジョブで処理する最大件数)
 
 ## Scripts
 
@@ -178,6 +182,7 @@ Set these in `.env.local`:
   - `/api/workflows/tick?max_orgs=<N>&limit=<M>`
   - `/api/incidents/auto-open?max_orgs=<N>`
   - `/api/operations/exceptions/alerts?max_orgs=<N>`
+  - `/api/approvals/reminders?max_orgs=<N>`
 - Required repository secrets:
   - `APP_BASE_URL` (public reachable URL, e.g. prod URL)
   - `PLANNER_RUN_TOKEN`
@@ -186,6 +191,7 @@ Set these in `.env.local`:
   - `WORKFLOW_TICK_TOKEN` (if omitted, planner token is reused)
   - `INCIDENT_AUTOMATION_TOKEN` (if omitted, governance/planner token is reused)
   - `EXCEPTION_ALERTS_TOKEN` (if omitted, incident/governance/planner token is reused)
+  - `APPROVAL_REMINDER_TOKEN` (if omitted, exception/incident/governance/planner token is reused)
 - Optional repository variables:
   - `AUTONOMY_API_RETRY_COUNT` (default `2`)
   - `AUTONOMY_API_RETRY_WAIT_SECONDS` (default `5`)
