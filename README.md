@@ -177,6 +177,22 @@ Set these in `.env.local`:
   - `--resume-from` loads existing JSON export (`rows` + `meta.next_offset`) and continues fetching remaining pages.
   - `--shard-size` writes chunk files (`*.part-0001.json` ...) and stores shard manifest in `--out`.
 
+### Chat Audit Export CLI
+
+- Script: `scripts/export-chat-audit-json.mjs`
+- Uses `next_offset` to fetch all pages from `/api/chat/audit/export?format=json`.
+- Required:
+  - `APP_BASE_URL`
+  - `CHAT_EXPORT_TOKEN`
+  - `--org-id=<org_uuid>`
+- Example:
+  - `npm run export:chat-audit -- --org-id=00000000-0000-0000-0000-000000000000 --status=failed --scope=all --intent=all --out=./chat-audit-export.json`
+  - `npm run export:chat-audit -- --org-id=00000000-0000-0000-0000-000000000000 --resume-from=./chat-audit-export.json`
+  - `npm run export:chat-audit -- --org-id=00000000-0000-0000-0000-000000000000 --shard-size=5000 --out=./chat-audit-export-manifest.json`
+- Notes:
+  - `--include-result=0` で `result_json` の取得を省略して軽量化できます。
+  - `--resume-from` / `--shard-size` の挙動は exception export CLI と同様です。
+
 ## Scheduled Autonomy Jobs (GitHub Actions)
 
 - Workflow: `.github/workflows/autonomy-cron.yml`

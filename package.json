@@ -11,6 +11,7 @@
     "test:e2e": "playwright test",
     "test": "npm run lint && npm run typecheck && npm run test:e2e",
     "export:exceptions": "node scripts/export-exceptions-json.mjs",
+    "export:chat-audit": "node scripts/export-chat-audit-json.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
