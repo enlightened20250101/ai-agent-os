@@ -984,3 +984,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `tasks/[id]` の主要 server actions（承認待ち化・承認依頼・ドラフト生成・メール実行）と `approvals/decideApproval` は成功時に `?ok=` を付けて同画面へリダイレクトする。
 - Why: 実行後に「何が成功したか」を明示して、操作完了の認知を早めるため。
+
+- Decision: `StatusNotice` の適用範囲を `/app/workflows`, `/app/workflows/runs`, `/app/workflows/runs/[id]`, `/app/operations/jobs`, `/app/operations/exceptions` に拡張した。
+- Why: 運用系画面の実行結果表示を同一UIに統一し、画面横断での認知負荷を下げるため。
+
+- Decision: `/app/operations/jobs` の手動実行ボタン（インシデント判定、workflow tick、ops alert再送）と `/app/workflows/runs/[id]` の進行/再試行ボタンを `ConfirmSubmitButton` 化した。
+- Why: 本番運用への影響が大きい手動オペレーションに確認ダイアログと二重送信防止を適用するため。

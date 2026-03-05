@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { createWorkflowTemplate } from "@/app/app/workflows/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -49,16 +50,7 @@ export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps
           </Link>
         </div>
 
-        {sp.ok ? (
-          <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {sp.ok}
-          </p>
-        ) : null}
-        {sp.error ? (
-          <p className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {sp.error}
-          </p>
-        ) : null}
+        <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
 
         <form action={createWorkflowTemplate} className="mt-5 space-y-3">
           <input

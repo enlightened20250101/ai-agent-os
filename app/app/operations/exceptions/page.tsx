@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   bulkUpdateExceptionCases,
   notifyExceptionCasesNow,
@@ -627,12 +628,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
         <p className="mt-2 text-sm text-slate-200">失敗・滞留・ポリシーブロックを一箇所で確認し、優先対応できます。</p>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{sp.ok}</p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{sp.error}</p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <form method="get" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">

@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { advanceWorkflowRunAction, retryWorkflowRunAction } from "@/app/app/workflows/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -61,31 +63,28 @@ export default async function WorkflowRunDetailPage({ params, searchParams }: Wo
         ) : null}
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       {String(run.status) === "running" ? (
         <form action={advanceWorkflowRunAction}>
           <input type="hidden" name="workflow_run_id" value={String(run.id)} />
-          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white">
-            次のステップへ進める
-          </button>
+          <ConfirmSubmitButton
+            label="次のステップへ進める"
+            pendingLabel="進行中..."
+            confirmMessage="このworkflow runを次ステップへ進めます。実行しますか？"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white"
+          />
         </form>
       ) : null}
       {String(run.status) === "failed" ? (
         <form action={retryWorkflowRunAction}>
           <input type="hidden" name="workflow_run_id" value={String(run.id)} />
-          <button type="submit" className="rounded-md bg-amber-700 px-4 py-2 text-sm text-white hover:bg-amber-600">
-            失敗したステップを再試行
-          </button>
+          <ConfirmSubmitButton
+            label="失敗したステップを再試行"
+            pendingLabel="再試行中..."
+            confirmMessage="failed workflow run を再試行します。実行しますか？"
+            className="rounded-md bg-amber-700 px-4 py-2 text-sm text-white hover:bg-amber-600"
+          />
         </form>
       ) : null}
 

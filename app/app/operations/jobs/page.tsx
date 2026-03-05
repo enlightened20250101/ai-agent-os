@@ -4,6 +4,8 @@ import {
   runAutoIncidentCheckNow,
   runWorkflowTickNow
 } from "@/app/app/operations/jobs/actions";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -297,42 +299,33 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <form action={runAutoIncidentCheckNow}>
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="自動インシデント判定"
+              pendingLabel="実行中..."
+              confirmMessage="自動インシデント判定を即時実行します。よろしいですか？"
               className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
-            >
-              自動インシデント判定
-            </button>
+            />
           </form>
           <form action={runWorkflowTickNow}>
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="Workflow Tick実行"
+              pendingLabel="実行中..."
+              confirmMessage="workflow tick を即時実行します。よろしいですか？"
               className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
-            >
-              Workflow Tick実行
-            </button>
+            />
           </form>
           <form action={resendOpsAlertNow}>
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="Opsアラートを手動再送"
+              pendingLabel="再送中..."
+              confirmMessage="Opsアラートを手動再送します。よろしいですか？"
               className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
-            >
-              Opsアラートを手動再送
-            </button>
+            />
           </form>
         </div>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
