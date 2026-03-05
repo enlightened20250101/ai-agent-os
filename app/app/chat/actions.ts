@@ -41,6 +41,7 @@ function isMutatingIntent(intentType: string) {
     intentType === "request_approval" ||
     intentType === "decide_approval" ||
     intentType === "bulk_decide_approvals" ||
+    intentType === "bulk_retry_failed_commands" ||
     intentType === "execute_action"
   );
 }
@@ -813,6 +814,105 @@ async function runBulkDecideApprovalsCommand(args: {
   };
 }
 
+async function runBulkRetryFailedCommandsCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  sessionId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, sessionId, intentJson } = args;
+  const maxItemsRaw = typeof intentJson.maxItems === "number" ? intentJson.maxItems : Number.NaN;
+  const maxItems = Number.isFinite(maxItemsRaw) ? Math.max(1, Math.min(20, Math.floor(maxItemsRaw))) : 5;
+  const scope =
+    intentJson.scope === "shared" || intentJson.scope === "personal" || intentJson.scope === "all" ? intentJson.scope : "current";
+
+  let sessionIds: string[] | null = null;
+  if (scope === "current") {
+    sessionIds = [sessionId];
+  } else if (scope === "shared" || scope === "personal") {
+    const { data: sessions, error: sessionsError } = await supabase
+      .from("chat_sessions")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("scope", scope);
+    if (sessionsError) {
+      throw new Error(`対象セッション取得に失敗しました: ${sessionsError.message}`);
+    }
+    sessionIds = (sessions ?? []).map((row) => row.id as string);
+  }
+
+  let commandQuery = supabase
+    .from("chat_commands")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("execution_status", "failed")
+    .order("created_at", { ascending: false })
+    .limit(maxItems * 4);
+  if (sessionIds && sessionIds.length > 0) {
+    commandQuery = commandQuery.in("session_id", sessionIds);
+  } else if (sessionIds && sessionIds.length === 0) {
+    throw new Error("対象scopeに再実行候補がありません。");
+  }
+
+  const { data: commands, error: commandsError } = await commandQuery;
+  if (commandsError) {
+    throw new Error(`失敗コマンドの取得に失敗しました: ${commandsError.message}`);
+  }
+  const rows = commands ?? [];
+  if (rows.length === 0) {
+    throw new Error("失敗コマンドはありません。");
+  }
+
+  let createdCount = 0;
+  let skippedPendingCount = 0;
+  let skippedLimitCount = 0;
+  let failedCount = 0;
+
+  for (const row of rows) {
+    if (createdCount >= maxItems) break;
+    try {
+      const result = await createRetryConfirmationForFailedCommand({
+        supabase,
+        orgId,
+        userId,
+        commandId: row.id as string,
+        skipCooldown: true
+      });
+      if (result.created) {
+        createdCount += 1;
+      } else if (result.reason === "already_pending") {
+        skippedPendingCount += 1;
+      } else if (result.reason === "pending_limit_reached") {
+        skippedLimitCount += 1;
+      }
+    } catch (error) {
+      failedCount += 1;
+      const message = error instanceof Error ? error.message : "unknown";
+      console.error(`[CHAT_BULK_RETRY_FROM_COMMAND_FAILED] command_id=${row.id as string} ${message}`);
+    }
+  }
+
+  if (createdCount === 0 && failedCount > 0) {
+    throw new Error("再実行確認を作成できませんでした。");
+  }
+
+  return {
+    executionRefType: "chat_command",
+    executionRefId: null,
+    result: {
+      scope,
+      requested_count: maxItems,
+      created_count: createdCount,
+      skipped_pending_count: skippedPendingCount,
+      skipped_limit_count: skippedLimitCount,
+      failed_count: failedCount
+    },
+    message: `再実行確認を${createdCount}件作成しました（pending重複:${skippedPendingCount} / 上限スキップ:${skippedLimitCount} / 失敗:${failedCount}）。`,
+    touchedTaskId: null
+  };
+}
+
 async function runAcceptProposalCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -877,6 +977,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "bulk_decide_approvals") {
     return runBulkDecideApprovalsCommand(args);
+  }
+  if (args.intentType === "bulk_retry_failed_commands") {
+    return runBulkRetryFailedCommandsCommand(args);
   }
   if (args.intentType === "execute_action") {
     return runExecuteActionCommand(args);

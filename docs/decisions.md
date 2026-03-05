@@ -795,3 +795,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` に「再実行確認一括作成」アクションを追加し、scope/件数指定で failed コマンドの確認をまとめて生成できるようにした。
 - Why: 例外キュー復旧の初動を高速化し、失敗コマンドの再試行準備を監査画面で完結させるため。
+
+- Decision: チャットに `bulk_retry_failed_commands` 意図を追加し、「失敗コマンドをまとめて再実行確認して」を確認付きで実行可能にした（current/shared/personal/all scope 対応）。
+- Why: 監査画面に移動せず会話だけで復旧オペレーションを起動できるようにし、例外処理のレイテンシをさらに下げるため。

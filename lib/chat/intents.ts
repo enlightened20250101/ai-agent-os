@@ -36,6 +36,12 @@ export type ParsedChatIntent =
       plan: { summary: string; decision: "approved" | "rejected"; maxItems: number; reason: string | null };
     }
   | {
+      intentType: "bulk_retry_failed_commands";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; maxItems: number; scope: "current" | "shared" | "personal" | "all" };
+    }
+  | {
       intentType: "execute_action";
       confidence: number;
       requiresConfirmation: true;
@@ -167,6 +173,33 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         decision,
         maxItems,
         reason: extractReason(text)
+      }
+    };
+  }
+
+  const bulkRetryLike =
+    /(失敗コマンド|failed command|失敗したコマンド)/i.test(text) &&
+    /(再実行確認|再実行|まとめて|一括|bulk retry)/i.test(text);
+  if (bulkRetryLike) {
+    const scope = /(shared|共有)/i.test(text)
+      ? "shared"
+      : /(personal|個人)/i.test(text)
+        ? "personal"
+        : /(all|全部|全体)/i.test(text)
+          ? "all"
+          : "current";
+    const maxItems = parsedCount ?? 5;
+    return {
+      intentType: "bulk_retry_failed_commands",
+      confidence: 0.77,
+      requiresConfirmation: true,
+      plan: {
+        summary:
+          scope === "current"
+            ? `このチャットの失敗コマンドから最大${maxItems}件、再実行確認を作成します。`
+            : `${scope} scope の失敗コマンドから最大${maxItems}件、再実行確認を作成します。`,
+        maxItems,
+        scope
       }
     };
   }
