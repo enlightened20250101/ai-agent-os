@@ -723,3 +723,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `failed` な chat command からは「再実行確認を作成」アクションを提供し、元intentを再利用して再実行する（即実行ではなく再確認必須）。
 - Why: リトライ可能性を上げつつ、再実行時の誤操作防止と監査性を維持するため。
+
+- Decision: Playwright E2E に chat command の承認依頼/実行フロー（確認ステップ付き）を追加し、`ACTION_EXECUTED` までの回帰を検証する。
+- Why: チャット機能はUI操作レス実行の中核であり、既存の手動フロー回帰とは別に継続検証が必要なため。

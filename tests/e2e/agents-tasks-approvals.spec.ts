@@ -768,6 +768,127 @@ test("exceptions notify performs auto-assign and escalation audit events", async
   }
 });
 
+test("chat commands can request approval and execute action with confirmation", async ({ page, request }, testInfo) => {
+  const password = requireEnv("E2E_PASSWORD");
+  const cleanupToken = requireEnv("E2E_CLEANUP_TOKEN");
+
+  const timestamp = Date.now();
+  const email = `e2e+chat+${timestamp}@example.com`;
+  const agentName = "E2E Chat Agent";
+  const taskTitle = `E2E Chat Task ${timestamp}`;
+  let orgId: string | null = null;
+  let flowSucceeded = false;
+
+  try {
+    const provisionResponse = await request.post("/api/e2e/provision-user", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: { email, password }
+    });
+    if (!provisionResponse.ok()) {
+      const body = await provisionResponse.text();
+      throw new Error(`Failed to provision E2E user: ${provisionResponse.status()} ${body}`);
+    }
+
+    await page.goto("/login");
+    await page.getByLabel("メールアドレス").fill(email);
+    await page.getByLabel("パスワード").fill(password);
+    await page.getByRole("button", { name: "ログイン" }).click();
+    await page.waitForURL(/\/app(\/onboarding)?/);
+
+    if (new URL(page.url()).pathname === "/app/onboarding") {
+      await Promise.race([
+        page.waitForURL("/app", { timeout: 15_000 }),
+        (async () => {
+          const continueButton = page.getByRole("button", { name: /続行|ワークスペース作成中/ });
+          await expect(continueButton).toBeVisible();
+          await continueButton.click();
+          await page.waitForURL("/app", { timeout: 30_000 });
+        })()
+      ]);
+    }
+
+    await expect(page).toHaveURL(/\/app$/);
+    const orgContextText = await page.getByText(/組織コンテキスト:\s+/).innerText();
+    orgId = orgContextText.split("組織コンテキスト:")[1]?.trim() ?? null;
+
+    await page.goto("/app/agents");
+    await page.getByPlaceholder("エージェント名").fill(agentName);
+    await page.getByPlaceholder("role_key（例: support_writer）").fill("accounting");
+    await page.getByRole("button", { name: "エージェントを作成" }).click();
+    await expect(page.getByText(agentName)).toBeVisible({ timeout: 30_000 });
+
+    await page.goto("/app/tasks");
+    const agentSelect = page.locator('select[name="agent_id"]').first();
+    await expect(agentSelect).toBeVisible({ timeout: 30_000 });
+    const agentOptionValue = await agentSelect
+      .locator("option")
+      .filter({ hasText: agentName })
+      .first()
+      .getAttribute("value");
+    if (!agentOptionValue) {
+      throw new Error("Could not find chat E2E agent option.");
+    }
+    await agentSelect.selectOption(agentOptionValue);
+    await page.getByPlaceholder("タスクタイトル").fill(taskTitle);
+    await page.getByPlaceholder("タスク入力").fill("Please draft an email to vendor.");
+    await page.getByRole("button", { name: "タスクを作成" }).click();
+
+    await page.getByRole("link", { name: taskTitle }).first().click();
+    await expect(page).toHaveURL(/\/app\/tasks\/.+/);
+    const taskPath = new URL(page.url()).pathname;
+    const taskId = taskPath.split("/").pop() ?? "";
+    if (!taskId) {
+      throw new Error("Task id missing for chat e2e.");
+    }
+
+    await page.getByRole("button", { name: "ドラフト生成" }).click();
+    await expect(page.getByText("MODEL_INFERRED").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("POLICY_CHECKED").first()).toBeVisible({ timeout: 30_000 });
+
+    await page.goto("/app/chat/shared");
+    await page.getByLabel("メッセージ").fill(`「${taskTitle}」の承認依頼を出して`);
+    await page.getByRole("button", { name: "送信" }).click();
+    await expect(page.getByText("実行確認待ち")).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Yes 実行する" }).first().click();
+    await expect(page.getByText("承認依頼を作成しました")).toBeVisible({ timeout: 30_000 });
+
+    await page.goto("/app/approvals");
+    const row = page.locator("li").filter({ hasText: taskTitle }).first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.getByPlaceholder("理由（任意）").fill("chat ok");
+    await row.getByRole("button", { name: "承認" }).click();
+    await expect(page.locator("li").filter({ hasText: taskTitle })).toHaveCount(0, { timeout: 30_000 });
+
+    await page.goto("/app/chat/shared");
+    await page.getByLabel("メッセージ").fill(`「${taskTitle}」を実行して`);
+    await page.getByRole("button", { name: "送信" }).click();
+    await expect(page.getByText("実行確認待ち")).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Yes 実行する" }).first().click();
+    await expect(page.getByText("メール実行が完了しました")).toBeVisible({ timeout: 30_000 });
+
+    await page.goto(taskPath);
+    await expect(page.getByText("ACTION_EXECUTED").first()).toBeVisible({ timeout: 30_000 });
+
+    flowSucceeded = true;
+  } finally {
+    const didPassByStatus = testInfo.status === testInfo.expectedStatus;
+    if (flowSucceeded && didPassByStatus && orgId) {
+      await request.post("/api/test/cleanup", {
+        headers: {
+          "content-type": "application/json",
+          "x-e2e-cleanup-token": cleanupToken
+        },
+        data: { orgId }
+      });
+    } else {
+      console.error(`[E2E_DEBUG][chat] skipping cleanup for failed run orgId=${orgId ?? "unknown"}`);
+    }
+  }
+});
+
 test("planner API returns skipped_circuit and skipped_dry_run under circuit stages", async ({ page, request }, testInfo) => {
   const password = requireEnv("E2E_PASSWORD");
   const cleanupToken = requireEnv("E2E_CLEANUP_TOKEN");
