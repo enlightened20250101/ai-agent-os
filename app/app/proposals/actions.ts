@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
+import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
 
 function toError(message: string) {
@@ -84,6 +85,7 @@ export async function acceptProposal(formData: FormData) {
   const proposalId = String(formData.get("proposal_id") ?? "").trim();
   const decisionReasonCode = String(formData.get("decision_reason_code") ?? "").trim();
   const decisionReason = composeDecisionReason(decisionReasonCode || "accepted_manual", "");
+  const autoRequestApproval = String(formData.get("auto_request_approval") ?? "") === "1";
   if (!proposalId) {
     redirect(toError("proposal_id がありません。"));
   }
@@ -258,10 +260,73 @@ export async function acceptProposal(formData: FormData) {
     redirect(toError(`提案イベント記録に失敗しました: ${proposalEventError.message}`));
   }
 
+  if (autoRequestApproval && proposal.policy_status !== "block") {
+    const { data: approval, error: approvalError } = await supabase
+      .from("approvals")
+      .insert({
+        org_id: orgId,
+        task_id: createdTask.id as string,
+        requested_by: userId,
+        status: "pending"
+      })
+      .select("id")
+      .single();
+    if (approvalError) {
+      redirect(toError(`承認依頼作成に失敗しました: ${approvalError.message}`));
+    }
+
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: createdTask.id as string,
+      actorId: userId,
+      eventType: "APPROVAL_REQUESTED",
+      payload: {
+        approval_id: approval.id
+      }
+    });
+
+    try {
+      const slackMessage = await postApprovalRequestToSlack({
+        supabase,
+        orgId,
+        approvalId: approval.id as string,
+        taskId: createdTask.id as string,
+        taskTitle: proposal.title as string,
+        draftSummary: proposal.title as string,
+        policyStatus: proposal.policy_status as string
+      });
+      if (slackMessage) {
+        await appendTaskEvent({
+          supabase,
+          orgId,
+          taskId: createdTask.id as string,
+          actorType: "system",
+          actorId: null,
+          eventType: "SLACK_APPROVAL_POSTED",
+          payload: {
+            channel_id: slackMessage.channel,
+            slack_ts: slackMessage.ts
+          }
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Slack承認投稿に失敗しました。";
+      console.error(`[PROPOSAL_ACCEPT_SLACK_APPROVAL_POST_FAILED] task_id=${createdTask.id as string} ${message}`);
+    }
+  }
+
   revalidatePath("/app/proposals");
   revalidatePath("/app/tasks");
+  revalidatePath("/app/approvals");
   revalidatePath(`/app/tasks/${createdTask.id as string}`);
-  redirect(`/app/tasks/${createdTask.id as string}?ok=${encodeURIComponent("提案を受け入れてタスクを作成しました。")}`);
+  redirect(
+    `/app/tasks/${createdTask.id as string}?ok=${encodeURIComponent(
+      autoRequestApproval && proposal.policy_status !== "block"
+        ? "提案を受け入れて承認依頼まで作成しました。"
+        : "提案を受け入れてタスクを作成しました。"
+    )}`
+  );
 }
 
 export async function rejectProposal(formData: FormData) {

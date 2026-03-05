@@ -652,3 +652,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: タスク詳細ヘッダーに起票ソース（manual/slack/proposal/system）バッジと `proposal_id` 表示を追加した。
 - Why: 単一タスクの監査・原因調査時に、起票経路を即時判別できる導線を作るため。
+
+- Decision: 提案受け入れ操作に「受け入れ+承認依頼」を追加し、受け入れ直後に `approvals` 作成 + `APPROVAL_REQUESTED`（必要なら Slack 投稿）まで自動実行する導線を追加した。
+- Why: 提案採用後に別画面で承認依頼を作る手間を減らし、提案から実行準備までのリードタイムを短縮するため。

@@ -333,6 +333,15 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                       >
                         受け入れ
                       </button>
+                      <button
+                        type="submit"
+                        name="auto_request_approval"
+                        value="1"
+                        disabled={!canAccept}
+                        className="ml-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        受け入れ+承認依頼
+                      </button>
                     </form>
                     <form action={rejectProposal} className="flex items-center gap-2">
                       <input type="hidden" name="proposal_id" value={proposal.id as string} />
