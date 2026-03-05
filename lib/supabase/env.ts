@@ -1,23 +1,23 @@
-const requiredServerEnv = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
-const serviceRoleEnv = "SUPABASE_SERVICE_ROLE_KEY";
-
-function getEnvVar(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    throw new Error(`Missing environment variable: ${key}`);
-  }
-  return value;
-}
-
 export function getSupabaseEnv() {
-  const [urlKey, anonKey] = requiredServerEnv;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url) {
+    throw new Error("Missing environment variable: NEXT_PUBLIC_SUPABASE_URL");
+  }
+  if (!anonKey) {
+    throw new Error("Missing environment variable: NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
 
   return {
-    url: getEnvVar(urlKey),
-    anonKey: getEnvVar(anonKey)
+    url,
+    anonKey
   };
 }
 
 export function getSupabaseServiceRoleKey() {
-  return getEnvVar(serviceRoleEnv);
+  const value = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!value) {
+    throw new Error("Missing environment variable: SUPABASE_SERVICE_ROLE_KEY");
+  }
+  return value;
 }

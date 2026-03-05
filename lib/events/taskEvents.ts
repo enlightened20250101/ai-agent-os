@@ -1,0 +1,93 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type AppEventType =
+  | "ORG_CREATED"
+  | "MEMBERSHIP_CREATED"
+  | "AGENT_CREATED"
+  | "AGENT_UPDATED"
+  | "TASK_CREATED"
+  | "TASK_UPDATED"
+  | "APPROVAL_REQUESTED"
+  | "HUMAN_APPROVED"
+  | "HUMAN_REJECTED"
+  | "MODEL_INFERRED"
+  | "POLICY_CHECKED"
+  | "ACTION_QUEUED"
+  | "ACTION_EXECUTED"
+  | "ACTION_FAILED";
+
+type AppendTaskEventArgs = {
+  supabase: SupabaseClient;
+  orgId: string;
+  taskId: string;
+  actorId: string;
+  eventType: AppEventType;
+  payload: Record<string, unknown>;
+};
+
+export const AGENT_EVENTS_TASK_TITLE = "__SYSTEM_AGENT_EVENTS__";
+
+export async function appendTaskEvent({
+  supabase,
+  orgId,
+  taskId,
+  actorId,
+  eventType,
+  payload
+}: AppendTaskEventArgs) {
+  const { error } = await supabase.from("task_events").insert({
+    org_id: orgId,
+    task_id: taskId,
+    actor_type: "user",
+    actor_id: actorId,
+    event_type: eventType,
+    payload_json: payload
+  });
+
+  if (error) {
+    throw new Error(`Failed to append event ${eventType}: ${error.message}`);
+  }
+}
+
+type AgentOpsTaskArgs = {
+  supabase: SupabaseClient;
+  orgId: string;
+  userId: string;
+};
+
+export async function getOrCreateAgentOpsTaskId({ supabase, orgId, userId }: AgentOpsTaskArgs) {
+  const { data: existingTask, error: lookupError } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("title", AGENT_EVENTS_TASK_TITLE)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (lookupError) {
+    throw new Error(`Failed to load system agent event task: ${lookupError.message}`);
+  }
+
+  if (existingTask?.id) {
+    return existingTask.id as string;
+  }
+
+  const { data: createdTask, error: createError } = await supabase
+    .from("tasks")
+    .insert({
+      org_id: orgId,
+      created_by_user_id: userId,
+      title: AGENT_EVENTS_TASK_TITLE,
+      input_text: "Internal task for non-task agent lifecycle events.",
+      status: "done"
+    })
+    .select("id")
+    .single();
+
+  if (createError) {
+    throw new Error(`Failed to create system agent event task: ${createError.message}`);
+  }
+
+  return createdTask.id as string;
+}

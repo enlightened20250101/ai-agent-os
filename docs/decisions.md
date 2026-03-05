@@ -79,3 +79,48 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Middleware enforces onboarding redirect for authenticated users without memberships until provisioning is completed.
 - Why: Ensures all `/app` features run with valid org context.
+
+### 2026-03-05 - CRUD data access mode
+
+- Decision: Use user-scoped Supabase server client for all Agents/Tasks/Approvals CRUD and event writes.
+- Why: RLS should be exercised directly by application flows; service-role access remains reserved for onboarding bootstrap only.
+
+### 2026-03-05 - MVP org context selection
+
+- Decision: For MVP, the active org is the first membership by `created_at` for the current user.
+- Why: Eliminates org-switching complexity while preserving strict org scoping in every query/write.
+
+### 2026-03-05 - Agent event logging on task_events
+
+- Decision: Store `AGENT_CREATED` / `AGENT_UPDATED` in `task_events` by attaching them to a per-org internal task `__SYSTEM_AGENT_EVENTS__`.
+- Why: Current schema requires non-null `task_id` on task events, and this preserves unified event storage without changing schema constraints.
+
+### 2026-03-05 - E2E framework choice
+
+- Decision: Use Playwright with a real local Next.js dev server for end-to-end checks.
+- Why: Fastest reliable browser automation path for full flow validation in App Router apps.
+
+### 2026-03-05 - E2E cleanup safety model
+
+- Decision: Add `/api/test/cleanup` route that only works in test mode (`NODE_ENV=test` or `E2E_MODE=1`) and requires `E2E_CLEANUP_TOKEN`.
+- Why: Keeps cleanup available for tests while preventing production misuse.
+
+### 2026-03-05 - CI test execution mode
+
+- Decision: CI runs `lint`, `typecheck`, and Playwright E2E using repository secrets for Supabase and E2E credentials.
+- Why: Ensures the main user-facing workflow is continuously validated with real auth/database integration.
+
+### 2026-03-05 - E2E user provisioning path
+
+- Decision: Provision E2E users through test-only endpoint `/api/e2e/provision-user` via Supabase admin API, then login through `/login` in Playwright.
+- Why: Avoids flaky browser signup creation path while still validating authenticated product flows end-to-end.
+
+### 2026-03-05 - E2E failure forensics behavior
+
+- Decision: Skip org cleanup when E2E test fails and emit debug log with `orgId` and `taskId`.
+- Why: Preserves failing test artifacts/data in Supabase for SQL-level debugging and replay.
+
+### 2026-03-05 - Dynamic rendering for workflow pages
+
+- Decision: Mark Tasks/Task Detail/Approvals pages as `force-dynamic`.
+- Why: Avoid stale cached reads after server actions so status and event timelines reflect latest DB writes (including `HUMAN_APPROVED`/`HUMAN_REJECTED`).

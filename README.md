@@ -37,6 +37,8 @@ Set these in `.env.local`:
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI`
 - `OPENAI_API_KEY`
+- `E2E_PASSWORD` (for Playwright signup/login test account)
+- `E2E_CLEANUP_TOKEN` (required to authorize test cleanup endpoint)
 
 ## Scripts
 
@@ -45,7 +47,8 @@ Set these in `.env.local`:
 - `npm run start`: run built app
 - `npm run lint`: run ESLint
 - `npm run typecheck`: run TypeScript type checks
-- `npm run test`: run baseline quality gate (`lint` + `typecheck`)
+- `npm run test:e2e`: run Playwright end-to-end tests
+- `npm run test`: run full quality gate (`lint` + `typecheck` + `test:e2e`)
 - `npm run format`: run Prettier write
 - `npm run format:check`: run Prettier check
 
