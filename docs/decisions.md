@@ -855,3 +855,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` フィルタフォーム直下に「この条件で開く」固定リンクを表示し、現在条件のURLを画面上で即利用可能にした。
 - Why: 条件共有や再アクセス時に、コピー操作なしでも同一ビューへ遷移できるようにするため。
+
+- Decision: 監査一覧の `quick #N action` バッジをクリック可能にし、`intent=quick_top_action` へ即絞り込みできる導線を追加した。
+- Why: クイック実行由来の履歴だけを迅速に抽出し、クイック操作の品質監査を効率化するため。

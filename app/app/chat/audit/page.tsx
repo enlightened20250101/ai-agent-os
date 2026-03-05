@@ -526,9 +526,17 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                     </Link>
                   ) : null}
                   {quickIndex && quickAction ? (
-                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
+                    <Link
+                      href={buildAuditFilterHref({
+                        status: statusFilter,
+                        scope: scopeFilter,
+                        intent: "quick_top_action",
+                        skipReason: skipReasonFilter
+                      })}
+                      className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700 hover:bg-violet-100"
+                    >
                       quick #{quickIndex} {quickAction}
-                    </span>
+                    </Link>
                   ) : null}
                 </div>
                 <p className="mt-1 text-sm text-slate-800">{intent?.summary ?? "summaryなし"}</p>
