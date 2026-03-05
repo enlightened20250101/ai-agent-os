@@ -813,3 +813,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: クイック実行の安全策として `status_top_candidates.generated_at` を保存し、`CHAT_STATUS_TOP_TTL_SECONDS`（既定600秒）を超えた候補では実行を拒否して再度 `status_query` を要求する。
 - Why: 古いサマリ候補に対する誤承認・誤実行を防ぎ、最新状態に基づく判断を強制するため。
+
+- Decision: クイック実行で対象がすでに状態変更済み（例: pending承認が存在しない / 既に承認待ち）の場合は失敗にせず `skipped` として扱い、`CHAT_QUICK_ACTION_USED` に `skip_reason` を記録する。
+- Why: 競合や先行処理による自然な不一致をエラー扱いせず、監査上は「安全に未実行だった」ことを明示するため。

@@ -1009,6 +1009,42 @@ async function runQuickTopActionCommand(args: {
     target,
     requested_action: action
   };
+  const buildQuickSkip = async (params: {
+    taskId: string | null;
+    reason: string;
+    details?: Record<string, unknown>;
+  }) => {
+    if (params.taskId) {
+      await appendTaskEvent({
+        supabase,
+        orgId,
+        taskId: params.taskId,
+        actorType: "user",
+        actorId: userId,
+        eventType: "CHAT_QUICK_ACTION_USED",
+        payload: {
+          ...quickBase,
+          skipped: true,
+          skip_reason: params.reason,
+          ...params.details
+        }
+      });
+    }
+    return {
+      executionRefType: "chat_command",
+      executionRefId: null,
+      result: {
+        skipped: true,
+        skip_reason: params.reason,
+        quick_ref: {
+          ...quickBase,
+          ...params.details
+        }
+      },
+      message: `クイック実行はスキップされました: ${params.reason}`,
+      touchedTaskId: params.taskId
+    };
+  };
 
   const top = await getRecentTopCandidatesFromSession({ supabase, orgId, sessionId });
   if (!top) {
@@ -1087,31 +1123,64 @@ async function runQuickTopActionCommand(args: {
   }
 
   if (action === "request_approval") {
-    return runRequestApprovalCommand({
-      supabase,
-      orgId,
-      userId,
-      sessionId,
-      intentJson: { taskHint: candidateTaskId },
-      quickRef: {
-        ...quickBase,
+    try {
+      return await runRequestApprovalCommand({
+        supabase,
+        orgId,
+        userId,
+        sessionId,
+        intentJson: { taskHint: candidateTaskId },
+        quickRef: {
+          ...quickBase,
+          selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
+          selected_candidate_id: candidateTaskId,
+          generated_at: top.generatedAt,
+          max_age_seconds: ttlSeconds
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "request_approval_failed";
+      if (message.includes("すでに承認待ち")) {
+        return buildQuickSkip({
+          taskId: candidateTaskId,
+          reason: "approval_already_pending",
+          details: {
+            selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
+            selected_candidate_id: candidateTaskId
+          }
+        });
+      }
+      throw error;
+    }
+  }
+
+  const { data: pendingApprovalRow, error: pendingApprovalError } = await supabase
+    .from("approvals")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("task_id", candidateTaskId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (pendingApprovalError) {
+    throw new Error(`承認検索に失敗しました: ${pendingApprovalError.message}`);
+  }
+  if (!pendingApprovalRow?.id) {
+    return buildQuickSkip({
+      taskId: candidateTaskId,
+      reason: "approval_not_pending",
+      details: {
         selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
-        selected_candidate_id: candidateTaskId,
-        generated_at: top.generatedAt,
-        max_age_seconds: ttlSeconds
+        selected_candidate_id: candidateTaskId
       }
     });
   }
 
-  const targetApproval = await findPendingApprovalForChat({
-    supabase,
-    orgId,
-    taskHint: candidateTaskId
-  });
   const decision = action === "approve" ? "approved" : "rejected";
   const decided = await decideApprovalShared({
     supabase,
-    approvalId: targetApproval.approvalId,
+    approvalId: pendingApprovalRow.id as string,
     decision,
     reason: "chat_quick_top_action",
     actorType: "user",
