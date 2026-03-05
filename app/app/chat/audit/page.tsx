@@ -89,6 +89,25 @@ function recommendationForSkipReason(reason: string) {
   };
 }
 
+function recommendationForIntentFailure(intentType: string) {
+  if (intentType === "request_approval") {
+    return "承認依頼前に対象タスクを明示し、必要ならドラフト生成/ポリシー確認を先に実行してください。";
+  }
+  if (intentType === "execute_action") {
+    return "実行前に承認状態と policy_status を確認し、対象タスク名を明示して再実行してください。";
+  }
+  if (intentType === "quick_top_action") {
+    return "TOP候補の鮮度切れが起きやすいため、先に状況確認を再実行してから quick action を使ってください。";
+  }
+  if (intentType === "run_workflow") {
+    return "workflow_template 未設定で失敗しやすいので、/app/tasks でテンプレート設定を確認してください。";
+  }
+  if (intentType === "bulk_retry_failed_workflows") {
+    return "retry exhausted が多い場合は再試行より先に /app/workflows/runs で根本原因を確認してください。";
+  }
+  return "失敗コマンドの result_json を確認し、対象IDを明示した指示へ寄せてください。";
+}
+
 export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -201,6 +220,28 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     running: rows.filter((row) => row.execution_status === "running").length,
     pending: rows.filter((row) => row.execution_status === "pending").length
   };
+  const intentPerformance = Array.from(
+    rows.reduce((acc, row) => {
+      const intentType = intentMap.get(row.intent_id)?.intentType ?? "unknown";
+      const current = acc.get(intentType) ?? { intentType, total: 0, failed: 0 };
+      current.total += 1;
+      if (row.execution_status === "failed") current.failed += 1;
+      acc.set(intentType, current);
+      return acc;
+    }, new Map<string, { intentType: string; total: number; failed: number }>())
+      .values()
+  )
+    .map((row) => ({
+      ...row,
+      failureRate: row.total > 0 ? Math.round((row.failed / row.total) * 100) : 0
+    }))
+    .sort((a, b) => {
+      if (b.failureRate !== a.failureRate) return b.failureRate - a.failureRate;
+      if (b.failed !== a.failed) return b.failed - a.failed;
+      return b.total - a.total;
+    })
+    .slice(0, 6);
+  const worstIntent = intentPerformance.find((row) => row.total >= 3 && row.failureRate >= 50) ?? null;
   const skipReasonCounts = new Map<string, number>();
   for (const row of rows) {
     const createdAtMs = new Date(row.created_at).getTime();
@@ -414,6 +455,55 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           <p className="mt-1 text-xs text-slate-700">{topSkipRecommendation.text}</p>
           <Link href={recommendationHref} className="mt-2 inline-block text-xs text-sky-700 underline">
             対応ページを開く
+          </Link>
+        </div>
+      ) : null}
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+        <p className="font-medium text-slate-900">intent別失敗率（現在フィルタ）</p>
+        {intentPerformance.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {intentPerformance.map((item) => (
+              <Link
+                key={item.intentType}
+                href={buildAuditFilterHref({
+                  status: "failed",
+                  scope: scopeFilter,
+                  intent: item.intentType,
+                  skipReason: "all"
+                })}
+                className={`rounded-full border px-2 py-1 text-xs ${
+                  item.failureRate >= 60
+                    ? "border-rose-300 bg-rose-50 text-rose-800"
+                    : item.failureRate >= 30
+                      ? "border-amber-300 bg-amber-50 text-amber-800"
+                      : "border-emerald-300 bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                {item.intentType}: {item.failed}/{item.total} ({item.failureRate}%)
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-slate-600">intent別集計対象がありません。</p>
+        )}
+      </div>
+      {worstIntent ? (
+        <div className="rounded-md border border-rose-300 bg-rose-50 p-3 text-sm">
+          <p className="font-medium text-rose-900">推奨アクション（intent失敗対策）</p>
+          <p className="mt-1 text-xs text-rose-800">
+            {worstIntent.intentType} の失敗率が高いです（{worstIntent.failed}/{worstIntent.total}, {worstIntent.failureRate}%）。
+            {recommendationForIntentFailure(worstIntent.intentType)}
+          </p>
+          <Link
+            href={buildAuditFilterHref({
+              status: "failed",
+              scope: scopeFilter,
+              intent: worstIntent.intentType,
+              skipReason: "all"
+            })}
+            className="mt-2 inline-block text-xs text-rose-700 underline"
+          >
+            このintentの failed を開く
           </Link>
         </div>
       ) : null}

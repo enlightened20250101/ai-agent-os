@@ -927,3 +927,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `unknown` 意図のシステム返答を具体例付きのガイドに変更し、主要操作（作成/承認依頼/承認/実行/プランナー/失敗workflow再試行）を明示した。
 - Why: 初回利用者でも正しい文型へ即到達できるようにし、会話起点オペレーションの学習コストを下げるため。
+
+- Decision: `/app/chat/audit` に「intent別失敗率（現在フィルタ）」を追加し、`failed/total` と失敗率(%)を意図ごとに表示して failed ドリルダウンへ直リンクした。
+- Why: どの意図が運用ボトルネックかを即判別し、改善対象を優先順位付きで絞るため。
+
+- Decision: 失敗率が高い意図（件数>=3かつ失敗率>=50%）を `worstIntent` として推奨アクションを表示する。
+- Why: 監査画面を「可視化だけ」で終わらせず、次に取るべき改善行動へ繋げるため。
