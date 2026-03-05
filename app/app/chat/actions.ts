@@ -317,10 +317,13 @@ async function getRecentTopCandidatesFromSession(args: {
     const exceptions = Array.isArray(top.exception_task_ids)
       ? top.exception_task_ids.filter((v): v is string => typeof v === "string")
       : [];
+    const generatedAt =
+      typeof top.generated_at === "string" && !Number.isNaN(Date.parse(top.generated_at)) ? top.generated_at : null;
     return {
       approvalTaskIds: approvals,
       proposalIds: proposals,
-      exceptionTaskIds: exceptions
+      exceptionTaskIds: exceptions,
+      generatedAt
     };
   }
   return null;
@@ -1011,6 +1014,16 @@ async function runQuickTopActionCommand(args: {
   if (!top) {
     throw new Error("直近のTOP候補が見つかりません。先に状況確認を実行してください。");
   }
+  const ttlSecondsRaw = Number.parseInt(process.env.CHAT_STATUS_TOP_TTL_SECONDS ?? "600", 10);
+  const ttlSeconds = Number.isNaN(ttlSecondsRaw) ? 600 : Math.max(60, Math.min(3600, ttlSecondsRaw));
+  const generatedAtMs = top.generatedAt ? Date.parse(top.generatedAt) : Number.NaN;
+  if (!Number.isFinite(generatedAtMs)) {
+    throw new Error("TOP候補の生成時刻が不明です。先に状況確認を再実行してください。");
+  }
+  const ageSeconds = Math.floor((Date.now() - generatedAtMs) / 1000);
+  if (ageSeconds > ttlSeconds) {
+    throw new Error(`TOP候補が古くなっています（${ageSeconds}s経過）。先に状況確認を再実行してください。`);
+  }
 
   if (action === "accept_proposal") {
     const proposalId = (target === "proposal" || target === "auto" ? top.proposalIds : [])[offset];
@@ -1050,7 +1063,9 @@ async function runQuickTopActionCommand(args: {
         quick_ref: {
           ...quickBase,
           selected_candidate_type: "proposal",
-          selected_candidate_id: proposalId
+          selected_candidate_id: proposalId,
+          generated_at: top.generatedAt,
+          max_age_seconds: ttlSeconds
         },
         proposal_id: accepted.proposalId,
         task_id: accepted.taskId,
@@ -1081,7 +1096,9 @@ async function runQuickTopActionCommand(args: {
       quickRef: {
         ...quickBase,
         selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
-        selected_candidate_id: candidateTaskId
+        selected_candidate_id: candidateTaskId,
+        generated_at: top.generatedAt,
+        max_age_seconds: ttlSeconds
       }
     });
   }
@@ -1127,7 +1144,9 @@ async function runQuickTopActionCommand(args: {
       quick_ref: {
         ...quickBase,
         selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
-        selected_candidate_id: candidateTaskId
+        selected_candidate_id: candidateTaskId,
+        generated_at: top.generatedAt,
+        max_age_seconds: ttlSeconds
       },
       approval_id: decided.approvalId,
       task_id: decided.taskId,
@@ -1556,6 +1575,7 @@ async function postMessage(scope: ChatScope, formData: FormData) {
           intent_type: intent.intentType,
           focus,
           status_top_candidates: {
+            generated_at: new Date().toISOString(),
             approval_task_ids: (topPendingApprovals ?? []).map((row) => row.task_id as string),
             proposal_ids: (topProposals ?? []).map((row) => row.id as string),
             exception_task_ids: (topFailedActions ?? []).map((row) => row.task_id as string),

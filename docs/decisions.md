@@ -810,3 +810,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: クイック実行の監査性を高めるため、`quick_ref`（候補順位・対象種別・候補ID）を `chat_commands.result_json` と `chat_messages.metadata` に保存し、対象タスクには `CHAT_QUICK_ACTION_USED` を追記する。
 - Why: 「どの候補を根拠に実行したか」を後から一意に追跡できるようにし、説明責任と再現性を向上させるため。
+
+- Decision: クイック実行の安全策として `status_top_candidates.generated_at` を保存し、`CHAT_STATUS_TOP_TTL_SECONDS`（既定600秒）を超えた候補では実行を拒否して再度 `status_query` を要求する。
+- Why: 古いサマリ候補に対する誤承認・誤実行を防ぎ、最新状態に基づく判断を強制するため。
