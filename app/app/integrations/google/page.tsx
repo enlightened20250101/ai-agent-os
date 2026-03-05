@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { CopyButton } from "@/app/app/integrations/google/CopyButton";
 import { disconnectGoogleConnector } from "@/app/app/integrations/google/actions";
 import { getConnectorAccount } from "@/lib/connectors/getConnectorAccount";
@@ -39,6 +41,10 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
     (typeof dbSecrets.sender_email === "string" && dbSecrets.sender_email) || connector?.external_account_id;
   const connected = Boolean(dbStatus.refreshToken && senderEmail);
   const sp = searchParams ? await searchParams : {};
+  const okMessage = sp.ok ?? (sp.success === "1" ? "Googleコネクタの接続に成功しました。" : undefined);
+  const errorMessage = sp.error
+    ? `${sp.error}${sp.error_description ? `: ${sp.error_description}` : ""}${sp.error_id ? ` (error_id: ${sp.error_id})` : ""}`
+    : undefined;
   const shouldWarnDomain =
     appBaseUrl.includes("ngrok") &&
     (currentHost.includes("localhost") || currentHost.includes("127.0.0.1"));
@@ -52,18 +58,7 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
         </p>
       </div>
 
-      {sp.ok || sp.success === "1" ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok ?? "Googleコネクタの接続に成功しました。"}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-          {sp.error_description ? `: ${sp.error_description}` : ""}
-          {sp.error_id ? ` (error_id: ${sp.error_id})` : ""}
-        </p>
-      ) : null}
+      <StatusNotice ok={okMessage} error={errorMessage} />
       {shouldWarnDomain ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           セッション/ドメイン問題を避けるため、ngrokドメインからOAuthを開始してください。
@@ -118,12 +113,12 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
         </Link>
         {connected ? (
           <form action={disconnectGoogleConnector}>
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="切断"
+              pendingLabel="切断中..."
+              confirmMessage="この組織のGoogle接続を切断します。実行しますか？"
               className="rounded-md border border-rose-300 px-4 py-2 text-sm text-rose-700 hover:bg-rose-50"
-            >
-              切断
-            </button>
+            />
           </form>
         ) : null}
       </div>

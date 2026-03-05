@@ -1008,3 +1008,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/integrations/slack` の保存・テスト送信操作を `ConfirmSubmitButton` 化し、`StatusNotice` に統一した。
 - Why: 外部通知への実送信操作は誤操作コストが高いため、確認付き実行を既定化するため。
+
+- Decision: `/app/integrations/google` に `StatusNotice` を適用し、OAuth callback の `ok/error(+description,+error_id)` を統一表示する。
+- Why: 接続失敗時の原因表示を既存ページと同一パターンに揃え、運用時の読み取りを簡潔にするため。
+
+- Decision: `/app/integrations/google` の切断操作を `ConfirmSubmitButton` 化した。`/app/governance/trust` は読み取り/GETフィルタ中心のため確認ダイアログ対象外とした。
+- Why: 破壊的操作のみ確認必須にして、読み取り画面の操作負荷は増やさないため。
