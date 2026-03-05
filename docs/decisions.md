@@ -574,3 +574,12 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: サーキット開放時に Slack 運用チャネルへ通知し、`OPS_JOB_CIRCUIT_ALERT_POSTED/FAILED` を台帳記録する（既存 `ENABLE_OPS_SLACK_ALERTS` ガードを再利用）。
 - Why: 自動停止が発生したことを運用者へ即時に伝え、再開判断と復旧初動を早めるため。
+
+- Decision: ジョブサーキットの復帰を `paused -> dry_run -> active` の2段階に変更し、復帰ゲートは「直近成功率」または「手動解除」のどちらかを必須にした。
+- Why: 停止解除直後の誤復帰を防ぎ、段階的に安全確認してから本実行へ戻すため。
+
+- Decision: 例外通知時に未割当ケースを既定担当者（owner優先）へ自動アサインし、`CASE_AUTO_ASSIGNED` を記録する。
+- Why: 通知だけで担当不在のまま滞留する状態を減らし、一次対応の責任者を即時確定するため。
+
+- Decision: 例外通知にSLAベースの段階エスカレーション（medium/high/critical）を導入し、`CASE_ESCALATED` を高優先ケースに記録する。
+- Why: 期限超過の深刻度を運用チャネルで即判別できるようにし、対応優先度の判断を高速化するため。

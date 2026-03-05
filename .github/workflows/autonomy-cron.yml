@@ -57,6 +57,8 @@ jobs:
             echo "$RESP" | jq .
             echo "Planner skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Planner dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
             echo "$RESP"
           fi
@@ -98,6 +100,8 @@ jobs:
             echo "$RESP" | jq -r '.results[]? | select(.alert_key != null) | "\(.org_id)\t\(.alert_reason)\t\(.alert_key)"' || true
             echo "Governance skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Governance dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
             echo "$RESP"
           fi
@@ -139,6 +143,8 @@ jobs:
             echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tscanned=\(.scanned // 0)\tcompleted=\(.completed // 0)\trunning=\(.running // 0)\tfailed=\(.failed // 0)"' || true
             echo "Workflow tick skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Workflow tick dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
             echo "$RESP"
           fi
@@ -181,6 +187,8 @@ jobs:
             echo "$RESP" | jq -r '.results[]? | select(.opened == true) | "\(.org_id)\t\(.incident_id)\t\(.trigger // "-")"' || true
             echo "Auto-incident skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Auto-incident dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
             echo "$RESP"
           fi
@@ -224,6 +232,8 @@ jobs:
             echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tsent=\(.sent // false)\ttarget_count=\(.target_count // 0)\treason=\(.reason // "-")"' || true
             echo "Exception alerts skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Exception alerts dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
             echo "$RESP"
           fi

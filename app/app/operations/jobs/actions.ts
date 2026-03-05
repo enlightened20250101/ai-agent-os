@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getOrCreateGovernanceOpsTaskId } from "@/lib/governance/review";
+import { recordJobCircuitManualClear } from "@/lib/governance/jobCircuitBreaker";
 import { maybeSendOpsFailureAlert } from "@/lib/governance/opsAlerts";
 import { evaluateAndMaybeOpenIncident } from "@/lib/governance/incidentAuto";
 import { requireOrgContext } from "@/lib/org/context";
@@ -110,22 +111,45 @@ export async function clearJobCircuitNow(formData: FormData) {
   }
 
   const nowIso = new Date().toISOString();
-  const updateQuery = supabase
-    .from("org_job_circuit_breakers")
-    .update({
-      consecutive_failures: 0,
-      paused_until: null,
-      last_error: null,
-      updated_at: nowIso
-    })
-    .eq("org_id", orgId);
   if (jobName) {
-    updateQuery.eq("job_name", jobName);
-  }
-
-  const { error: updateError } = await updateQuery;
-  if (updateError) {
-    redirect(withMessage("error", `サーキット解除に失敗しました: ${updateError.message}`));
+    try {
+      await recordJobCircuitManualClear({
+        supabase,
+        orgId,
+        jobName
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "manual clear failed";
+      redirect(withMessage("error", `サーキット解除に失敗しました: ${message}`));
+    }
+  } else {
+    const updateQuery = supabase
+      .from("org_job_circuit_breakers")
+      .update({
+        consecutive_failures: 0,
+        paused_until: null,
+        resume_stage: "active",
+        dry_run_until: null,
+        manual_cleared_at: nowIso,
+        last_error: null,
+        updated_at: nowIso
+      })
+      .eq("org_id", orgId);
+    const { error: updateError } = await updateQuery;
+    if (updateError) {
+      const fallback = await supabase
+        .from("org_job_circuit_breakers")
+        .update({
+          consecutive_failures: 0,
+          paused_until: null,
+          last_error: null,
+          updated_at: nowIso
+        })
+        .eq("org_id", orgId);
+      if (fallback.error) {
+        redirect(withMessage("error", `サーキット解除に失敗しました: ${fallback.error.message}`));
+      }
+    }
   }
 
   try {

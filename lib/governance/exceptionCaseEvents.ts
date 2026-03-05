@@ -4,7 +4,9 @@ export type ExceptionCaseEventType =
   | "CASE_CREATED"
   | "CASE_UPDATED"
   | "CASE_BULK_UPDATED"
-  | "CASE_NOTIFICATION_SENT";
+  | "CASE_NOTIFICATION_SENT"
+  | "CASE_AUTO_ASSIGNED"
+  | "CASE_ESCALATED";
 
 function isMissingTableError(message: string, tableName: string) {
   return (

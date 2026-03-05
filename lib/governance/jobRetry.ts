@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   checkJobCircuitOpen,
+  markJobCircuitDryRunPassed,
   recordJobCircuitFailure,
   recordJobCircuitSuccess
 } from "@/lib/governance/jobCircuitBreaker";
@@ -21,6 +22,7 @@ type RetryResult<T> =
       retried: boolean;
       circuitOpen: boolean;
       pausedUntil: string | null;
+      dryRunProbe: boolean;
     };
 
 function getRetryConfig() {
@@ -63,8 +65,9 @@ export async function runWithOpsRetry<T>(args: {
   orgId: string;
   jobName: string;
   run: () => Promise<T>;
+  runDryProbe?: () => Promise<void>;
 }): Promise<RetryResult<T>> {
-  const { supabase, orgId, jobName, run } = args;
+  const { supabase, orgId, jobName, run, runDryProbe } = args;
   const circuit = await checkJobCircuitOpen({ supabase, orgId, jobName });
   if (circuit.open) {
     await logRetryEvent({
@@ -73,7 +76,8 @@ export async function runWithOpsRetry<T>(args: {
       eventType: "OPS_JOB_SKIPPED_CIRCUIT_OPEN",
       payload: {
         job_name: jobName,
-        paused_until: circuit.pausedUntil
+        paused_until: circuit.pausedUntil,
+        reason: circuit.gateReason ?? null
       }
     });
     return {
@@ -82,8 +86,66 @@ export async function runWithOpsRetry<T>(args: {
       attempts: 0,
       retried: false,
       circuitOpen: true,
-      pausedUntil: circuit.pausedUntil
+      pausedUntil: circuit.pausedUntil,
+      dryRunProbe: false
     };
+  }
+  if (circuit.dryRun) {
+    try {
+      if (runDryProbe) {
+        await runDryProbe();
+      } else {
+        await supabase.from("orgs").select("id").eq("id", orgId).limit(1).single();
+      }
+      await markJobCircuitDryRunPassed({ supabase, orgId, jobName });
+      await logRetryEvent({
+        supabase,
+        orgId,
+        eventType: "OPS_JOB_DRY_RUN_PASSED",
+        payload: {
+          job_name: jobName,
+          dry_run_until: circuit.pausedUntil,
+          reason: circuit.gateReason ?? null
+        }
+      });
+      return {
+        ok: false,
+        error: "dry_run_probe_passed",
+        attempts: 0,
+        retried: false,
+        circuitOpen: false,
+        pausedUntil: circuit.pausedUntil,
+        dryRunProbe: true
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "dry run probe failed";
+      const circuitResult = await recordJobCircuitFailure({
+        supabase,
+        orgId,
+        jobName,
+        errorMessage: `dry_run_probe_failed:${message}`
+      });
+      await logRetryEvent({
+        supabase,
+        orgId,
+        eventType: "OPS_JOB_DRY_RUN_FAILED",
+        payload: {
+          job_name: jobName,
+          error: message,
+          paused_until: circuitResult.pausedUntil,
+          consecutive_failures: circuitResult.consecutiveFailures
+        }
+      });
+      return {
+        ok: false,
+        error: message,
+        attempts: 0,
+        retried: false,
+        circuitOpen: true,
+        pausedUntil: circuitResult.pausedUntil,
+        dryRunProbe: false
+      };
+    }
   }
 
   const { maxAttempts, backoffMs } = getRetryConfig();
@@ -196,6 +258,7 @@ export async function runWithOpsRetry<T>(args: {
     attempts: maxAttempts,
     retried: maxAttempts > 1,
     circuitOpen: false,
-    pausedUntil: null
+    pausedUntil: null,
+    dryRunProbe: false
   };
 }

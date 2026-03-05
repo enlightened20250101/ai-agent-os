@@ -49,6 +49,7 @@ export async function POST(request: Request) {
       incident_id?: string;
       trigger?: string;
       skipped_circuit?: boolean;
+      skipped_dry_run?: boolean;
       paused_until?: string | null;
       error?: string;
     }> = [];
@@ -87,6 +88,18 @@ export async function POST(request: Request) {
             opened: false,
             reason: "circuit_open",
             skipped_circuit: true,
+            paused_until: retried.pausedUntil
+          });
+          continue;
+        }
+        if (retried.dryRunProbe) {
+          results.push({
+            org_id: targetOrgId,
+            ok: true,
+            evaluated: false,
+            opened: false,
+            reason: "dry_run_probe",
+            skipped_dry_run: true,
             paused_until: retried.pausedUntil
           });
           continue;
@@ -139,6 +152,17 @@ export async function POST(request: Request) {
       opened: false,
       reason: "circuit_open",
       skipped_circuit: true,
+      paused_until: retried.pausedUntil
+    });
+  }
+  if (retried.dryRunProbe) {
+    return NextResponse.json({
+      ok: true,
+      org_id: orgId,
+      evaluated: false,
+      opened: false,
+      reason: "dry_run_probe",
+      skipped_dry_run: true,
       paused_until: retried.pausedUntil
     });
   }

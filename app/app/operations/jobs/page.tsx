@@ -161,7 +161,9 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         "OPS_JOB_SKIPPED_CIRCUIT_OPEN",
         "OPS_JOB_CIRCUIT_OPENED",
         "OPS_JOB_CIRCUIT_CLOSED",
-        "OPS_JOB_CIRCUIT_MANUALLY_CLEARED"
+        "OPS_JOB_CIRCUIT_MANUALLY_CLEARED",
+        "OPS_JOB_DRY_RUN_PASSED",
+        "OPS_JOB_DRY_RUN_FAILED"
       ])
       .order("created_at", { ascending: false })
       .limit(30),
@@ -224,6 +226,8 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const retryRecoveredCount = retryEvents.filter((row) => row.event_type === "OPS_JOB_RETRY_RECOVERED").length;
   const retryExhaustedCount = retryEvents.filter((row) => row.event_type === "OPS_JOB_RETRY_EXHAUSTED").length;
   const retrySkippedCircuitCount = retryEvents.filter((row) => row.event_type === "OPS_JOB_SKIPPED_CIRCUIT_OPEN").length;
+  const dryRunPassedCount = retryEvents.filter((row) => row.event_type === "OPS_JOB_DRY_RUN_PASSED").length;
+  const dryRunFailedCount = retryEvents.filter((row) => row.event_type === "OPS_JOB_DRY_RUN_FAILED").length;
   const circuitOpenCount = circuits.filter((row) => {
     if (!row.paused_until) return false;
     const until = new Date(row.paused_until).getTime();
@@ -351,6 +355,14 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 shadow-sm">
           <p className="text-xs text-yellow-700">skipped by circuit</p>
           <p className="mt-1 text-2xl font-semibold text-yellow-900">{retrySkippedCircuitCount}</p>
+        </div>
+        <div className="rounded-xl border border-lime-200 bg-lime-50 p-4 shadow-sm">
+          <p className="text-xs text-lime-700">dry-run passed</p>
+          <p className="mt-1 text-2xl font-semibold text-lime-900">{dryRunPassedCount}</p>
+        </div>
+        <div className="rounded-xl border border-orange-300 bg-orange-50 p-4 shadow-sm">
+          <p className="text-xs text-orange-700">dry-run failed</p>
+          <p className="mt-1 text-2xl font-semibold text-orange-900">{dryRunFailedCount}</p>
         </div>
       </div>
 

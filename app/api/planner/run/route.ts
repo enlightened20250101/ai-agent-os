@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       ok: boolean;
       created_proposals?: number;
       skipped_circuit?: boolean;
+      skipped_dry_run?: boolean;
       paused_until?: string | null;
       error?: string;
     }> = [];
@@ -69,6 +70,16 @@ export async function POST(request: Request) {
             ok: true,
             created_proposals: 0,
             skipped_circuit: true,
+            paused_until: retried.pausedUntil
+          });
+          continue;
+        }
+        if (retried.dryRunProbe) {
+          results.push({
+            org_id: targetOrgId,
+            ok: true,
+            created_proposals: 0,
+            skipped_dry_run: true,
             paused_until: retried.pausedUntil
           });
           continue;
@@ -117,6 +128,13 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       skipped_circuit: true,
+      paused_until: retried.pausedUntil
+    });
+  }
+  if (retried.dryRunProbe) {
+    return NextResponse.json({
+      ok: true,
+      skipped_dry_run: true,
       paused_until: retried.pausedUntil
     });
   }

@@ -627,3 +627,103 @@ test("governance recommendation risky action requires confirmation checkbox", as
     }
   }
 });
+
+test("exceptions notify performs auto-assign and escalation audit events", async ({ page, request }, testInfo) => {
+  const password = requireEnv("E2E_PASSWORD");
+  const cleanupToken = requireEnv("E2E_CLEANUP_TOKEN");
+
+  const timestamp = Date.now();
+  const email = `e2e+exceptions+${timestamp}@example.com`;
+  let orgId: string | null = null;
+  let flowSucceeded = false;
+
+  try {
+    const provisionResponse = await request.post("/api/e2e/provision-user", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: { email, password }
+    });
+    if (!provisionResponse.ok()) {
+      const body = await provisionResponse.text();
+      throw new Error(`Failed to provision E2E user: ${provisionResponse.status()} ${body}`);
+    }
+
+    await page.goto("/login");
+    await page.getByLabel("メールアドレス").fill(email);
+    await page.getByLabel("パスワード").fill(password);
+    await page.getByRole("button", { name: "ログイン" }).click();
+    await page.waitForURL(/\/app(\/onboarding)?/);
+
+    if (new URL(page.url()).pathname === "/app/onboarding") {
+      await Promise.race([
+        page.waitForURL("/app", { timeout: 15_000 }),
+        (async () => {
+          const continueButton = page.getByRole("button", { name: /続行|ワークスペース作成中/ });
+          await expect(continueButton).toBeVisible();
+          await continueButton.click();
+          await page.waitForURL("/app", { timeout: 30_000 });
+        })()
+      ]);
+    }
+
+    await expect(page).toHaveURL(/\/app$/);
+    const orgContextText = await page.getByText(/組織コンテキスト:\s+/).innerText();
+    orgId = orgContextText.split("組織コンテキスト:")[1]?.trim() ?? null;
+    if (!orgId) {
+      throw new Error("Failed to resolve orgId for exception e2e.");
+    }
+
+    const seeded = await request.post("/api/e2e/seed-exception-case", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: {
+        orgId,
+        kind: "failed_action",
+        refId: `e2e-exc-${timestamp}`,
+        overdueHours: 12
+      }
+    });
+    if (!seeded.ok()) {
+      const body = await seeded.text();
+      throw new Error(`Failed to seed exception case: ${seeded.status()} ${body}`);
+    }
+
+    await page.goto("/app/operations/exceptions");
+    await page.getByRole("button", { name: "例外通知をSlack送信" }).click();
+
+    const successAlert = page.getByText(/例外通知を送信しました。target=/);
+    const failAlert = page.getByText(/例外通知を送信できませんでした。reason=/);
+    await Promise.race([successAlert.waitFor({ state: "visible" }), failAlert.waitFor({ state: "visible" })]);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const hasAssigned = (await page.getByText("CASE_AUTO_ASSIGNED").count()) > 0;
+      const hasEscalated = (await page.getByText("CASE_ESCALATED").count()) > 0;
+      if (hasAssigned && hasEscalated) {
+        break;
+      }
+      await page.reload();
+    }
+
+    await expect(page.getByText("CASE_AUTO_ASSIGNED").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("CASE_ESCALATED").first()).toBeVisible({ timeout: 30_000 });
+
+    flowSucceeded = true;
+  } finally {
+    const didPassByStatus = testInfo.status === testInfo.expectedStatus;
+    if (flowSucceeded && didPassByStatus && orgId) {
+      await request.post("/api/test/cleanup", {
+        headers: {
+          "content-type": "application/json",
+          "x-e2e-cleanup-token": cleanupToken
+        },
+        data: { orgId }
+      });
+    } else {
+      console.error(`[E2E_DEBUG][exceptions] skipping cleanup for failed run orgId=${orgId ?? "unknown"}`);
+    }
+  }
+});

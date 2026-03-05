@@ -57,6 +57,13 @@ Set these in `.env.local`:
 - `OPS_JOB_RETRY_BACKOFF_MS` (default `500`, linear backoff base milliseconds)
 - `OPS_JOB_CIRCUIT_BREAKER_THRESHOLD` (default `3`, consecutive exhausted runs before opening per-job circuit)
 - `OPS_JOB_CIRCUIT_BREAKER_PAUSE_MINUTES` (default `30`, pause duration while a job circuit stays open)
+- `OPS_JOB_CIRCUIT_DRY_RUN_MINUTES` (default `10`, probe window before full resume)
+- `OPS_JOB_CIRCUIT_RECHECK_MINUTES` (default `15`, re-check interval when resume gate is not met)
+- `OPS_JOB_CIRCUIT_MIN_SUCCESS_RATE` (default `0.6`, recent recovered/(recovered+exhausted) gate)
+- `OPS_JOB_CIRCUIT_MIN_SAMPLE_SIZE` (default `5`, minimum sample size for success-rate gate)
+- `EXCEPTION_ESCALATION_HOURS_L1` (default `2`, medium escalation threshold)
+- `EXCEPTION_ESCALATION_HOURS_L2` (default `8`, high escalation threshold)
+- `EXCEPTION_ESCALATION_HOURS_L3` (default `24`, critical escalation threshold)
 - `OPENAI_API_KEY`
 - `ALLOWED_EMAIL_DOMAINS` (optional, comma-separated allowlist for policy check)
 - `E2E_PASSWORD` (for Playwright signup/login test account)

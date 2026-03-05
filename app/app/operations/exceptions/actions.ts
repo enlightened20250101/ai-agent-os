@@ -213,7 +213,7 @@ export async function upsertExceptionCase(formData: FormData) {
 }
 
 export async function notifyExceptionCasesNow() {
-  const { orgId, userId } = await requireOrgContext();
+  const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
   const result = await notifyExceptionCases({
@@ -222,31 +222,14 @@ export async function notifyExceptionCasesNow() {
     source: "manual"
   });
 
-  if (result.sent && Array.isArray(result.targetIds)) {
-    const { data: rows } = await supabase
-      .from("exception_cases")
-      .select("id, kind, ref_id")
-      .eq("org_id", orgId)
-      .in("id", result.targetIds);
-    for (const row of rows ?? []) {
-      await appendExceptionCaseEvent({
-        supabase,
-        orgId,
-        exceptionCaseId: row.id as string,
-        actorUserId: userId,
-        eventType: "CASE_NOTIFICATION_SENT",
-        payload: {
-          mode: "manual",
-          kind: row.kind,
-          ref_id: row.ref_id
-        }
-      });
-    }
-  }
-
   revalidatePath("/app/operations/exceptions");
   if (result.sent) {
-    redirect(withMessage("ok", `例外通知を送信しました。target=${result.targetCount}`));
+    redirect(
+      withMessage(
+        "ok",
+        `例外通知を送信しました。target=${result.targetCount} auto_assigned=${result.autoAssignedCount ?? 0}`
+      )
+    );
   }
   redirect(withMessage("error", `例外通知を送信できませんでした。reason=${result.reason}`));
 }
