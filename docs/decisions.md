@@ -774,3 +774,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャットの `status_query` を拡張し、自然文キーワードから `approval / proposal / exception / incident / overview` の焦点を判定して、対象別サマリを返すようにした。
 - Why: 「〜ってどうなってる？」の質問に対して画面遷移なしで即時トリアージ情報を返し、会話起点オペレーションの実用性を上げるため。
+
+- Decision: `status_query` の返答には必ず「次アクション」(優先順3件) と運用画面パスを含める形式を採用した。
+- Why: 状況説明だけで止まらず、会話から即オペレーションへ遷移できる導線を標準化するため。

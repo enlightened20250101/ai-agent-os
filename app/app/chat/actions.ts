@@ -867,35 +867,55 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `- 提案待ち: ${pendingProposalCount ?? 0} (policy block: ${blockedProposalCount ?? 0})\n` +
         `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
         `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
-        `- open incidents: ${openIncidentCount ?? 0}`;
+        `- open incidents: ${openIncidentCount ?? 0}\n` +
+        `次アクション:\n` +
+        `1) 例外キュー確認: /app/operations/exceptions\n` +
+        `2) 承認キュー確認: /app/approvals\n` +
+        `3) 提案キュー確認: /app/proposals`;
 
       const approvalText =
         `承認キュー状況:\n` +
         `- pending approvals: ${pendingApprovalCount ?? 0}\n` +
         `- 3日超 pending approvals: ${staleApprovalCount ?? 0}\n` +
         `- ready_for_approval tasks: ${blockedTaskCount ?? 0}\n` +
-        `- 7日失敗アクション: ${actionFailCount ?? 0}`;
+        `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
+        `次アクション:\n` +
+        `1) 承認を処理: /app/approvals\n` +
+        `2) Slack再通知: /app/approvals\n` +
+        `3) タスク詳細確認: /app/tasks`;
 
       const proposalText =
         `提案キュー状況:\n` +
         `- proposed: ${pendingProposalCount ?? 0}\n` +
         `- policy block proposals: ${blockedProposalCount ?? 0}\n` +
         `- open incidents: ${openIncidentCount ?? 0}\n` +
-        `- 承認待ち: ${pendingApprovalCount ?? 0}`;
+        `- 承認待ち: ${pendingApprovalCount ?? 0}\n` +
+        `次アクション:\n` +
+        `1) 提案を採択/却下: /app/proposals\n` +
+        `2) プランナー実行: /app/planner\n` +
+        `3) policy block を精査: /app/proposals?policy_status=block`;
 
       const exceptionText =
         `例外キュー状況:\n` +
         `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
         `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
         `- 3日超 pending approvals: ${staleApprovalCount ?? 0}\n` +
-        `- policy block proposals: ${blockedProposalCount ?? 0}`;
+        `- policy block proposals: ${blockedProposalCount ?? 0}\n` +
+        `次アクション:\n` +
+        `1) 例外トリアージ: /app/operations/exceptions\n` +
+        `2) チャット失敗監査: /app/chat/audit?status=failed\n` +
+        `3) ガバナンス提案確認: /app/governance/recommendations`;
 
       const incidentText =
         `インシデント状況:\n` +
         `- open incidents: ${openIncidentCount ?? 0}\n` +
         `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
         `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
-        `- 提案待ち(policy block): ${blockedProposalCount ?? 0}`;
+        `- 提案待ち(policy block): ${blockedProposalCount ?? 0}\n` +
+        `次アクション:\n` +
+        `1) インシデント対応: /app/governance/incidents\n` +
+        `2) 例外キュー確認: /app/operations/exceptions\n` +
+        `3) 自律設定確認: /app/governance`;
 
       const bodyText =
         focus === "approval"
