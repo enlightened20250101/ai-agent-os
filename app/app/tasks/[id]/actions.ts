@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { sendEmailWithGmail } from "@/lib/google/gmail";
 import { requireOrgContext } from "@/lib/org/context";
 import { generateDraftWithOpenAI } from "@/lib/llm/openai";
 import { checkDraftPolicy } from "@/lib/policy/check";
@@ -15,6 +16,82 @@ function taskPath(taskId: string) {
 
 function errorPath(taskId: string, message: string) {
   return `${taskPath(taskId)}?error=${encodeURIComponent(message)}`;
+}
+
+type ParsedProposedAction = {
+  provider: "google";
+  action_type: "send_email";
+  to: string;
+  subject: string;
+  body_text: string;
+};
+
+function parseLatestDraftAction(payload: unknown): ParsedProposedAction | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const eventPayload = payload as Record<string, unknown>;
+  const output = eventPayload.output;
+  if (typeof output !== "object" || output === null) {
+    return null;
+  }
+  const draft = output as Record<string, unknown>;
+  const proposedActions = draft.proposed_actions;
+  if (!Array.isArray(proposedActions) || proposedActions.length === 0) {
+    return null;
+  }
+  const first = proposedActions[0];
+  if (typeof first !== "object" || first === null) {
+    return null;
+  }
+  const action = first as Record<string, unknown>;
+  if (action.provider !== "google" || action.action_type !== "send_email") {
+    return null;
+  }
+  if (
+    typeof action.to !== "string" ||
+    typeof action.subject !== "string" ||
+    typeof action.body_text !== "string"
+  ) {
+    return null;
+  }
+  return {
+    provider: "google",
+    action_type: "send_email",
+    to: action.to,
+    subject: action.subject,
+    body_text: action.body_text
+  };
+}
+
+function parsePolicyStatus(payload: unknown): "pass" | "warn" | "block" | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const p = payload as Record<string, unknown>;
+  if (p.status === "pass" || p.status === "warn" || p.status === "block") {
+    return p.status;
+  }
+  return null;
+}
+
+function getAllowedDomains() {
+  const raw = process.env.ALLOWED_EMAIL_DOMAINS?.trim();
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getEmailDomain(email: string) {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at >= email.length - 1) {
+    return null;
+  }
+  return email.slice(at + 1).toLowerCase();
 }
 
 export async function setTaskReadyForApproval(formData: FormData) {
@@ -297,7 +374,9 @@ export async function generateDraft(formData: FormData) {
     inferredPayload = {
       model: result.model,
       latency_ms: result.latencyMs,
-      output: result.output
+      output: result.output,
+      coercions: result.metadata.coercions,
+      raw_model_output: result.metadata.rawModelOutput
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown model error.";
@@ -333,6 +412,207 @@ export async function generateDraft(formData: FormData) {
         evaluated_action: policy.evaluatedAction
       }
     });
+  }
+
+  revalidatePath(taskPath(taskId));
+  revalidatePath("/app/tasks");
+  revalidatePath("/app/approvals");
+}
+
+export async function executeDraftAction(formData: FormData) {
+  const taskId = String(formData.get("task_id") ?? "").trim();
+  if (!taskId) {
+    redirect("/app/tasks?error=Missing+task+id");
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const { data: task, error: taskError } = await supabase
+    .from("tasks")
+    .select("id, status")
+    .eq("id", taskId)
+    .eq("org_id", orgId)
+    .single();
+  if (taskError) {
+    redirect(errorPath(taskId, taskError.message));
+  }
+
+  const { data: latestModelEvent, error: modelError } = await supabase
+    .from("task_events")
+    .select("id, payload_json")
+    .eq("org_id", orgId)
+    .eq("task_id", taskId)
+    .eq("event_type", "MODEL_INFERRED")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (modelError) {
+    redirect(errorPath(taskId, modelError.message));
+  }
+  if (!latestModelEvent) {
+    redirect(errorPath(taskId, "No model draft found."));
+  }
+
+  const { data: latestPolicyEvent, error: policyError } = await supabase
+    .from("task_events")
+    .select("id, payload_json")
+    .eq("org_id", orgId)
+    .eq("task_id", taskId)
+    .eq("event_type", "POLICY_CHECKED")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (policyError) {
+    redirect(errorPath(taskId, policyError.message));
+  }
+  if (!latestPolicyEvent) {
+    redirect(errorPath(taskId, "No policy result found."));
+  }
+
+  const action = parseLatestDraftAction(latestModelEvent.payload_json);
+  if (!action) {
+    redirect(errorPath(taskId, "No executable google/send_email draft action found."));
+  }
+  const policyStatus = parsePolicyStatus(latestPolicyEvent.payload_json);
+  if (!policyStatus) {
+    redirect(errorPath(taskId, "Policy status is invalid."));
+  }
+
+  const eligibilityReasons: string[] = [];
+  if (task.status !== "approved") {
+    eligibilityReasons.push("Task must be approved before execution.");
+  }
+  if (policyStatus === "block") {
+    eligibilityReasons.push("Policy status is block.");
+  }
+
+  const allowedDomains = getAllowedDomains();
+  const toDomain = getEmailDomain(action.to);
+  if (allowedDomains.length > 0 && (!toDomain || !allowedDomains.includes(toDomain))) {
+    eligibilityReasons.push(`Recipient domain ${toDomain ?? "(invalid)"} not allowed.`);
+  }
+
+  if (eligibilityReasons.length > 0) {
+    redirect(errorPath(taskId, eligibilityReasons.join(" ")));
+  }
+
+  const { data: createdAction, error: createActionError } = await supabase
+    .from("actions")
+    .insert({
+      org_id: orgId,
+      task_id: taskId,
+      provider: "google",
+      action_type: "send_email",
+      request_json: {
+        to: action.to,
+        subject: action.subject,
+        body_text: action.body_text
+      },
+      status: "queued",
+      result_json: {}
+    })
+    .select("id")
+    .single();
+
+  if (createActionError) {
+    redirect(errorPath(taskId, createActionError.message));
+  }
+
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId,
+    actorType: "user",
+    actorId: userId,
+    eventType: "ACTION_QUEUED",
+    payload: {
+      action_id: createdAction.id,
+      provider: "google",
+      action_type: "send_email",
+      request: {
+        to: action.to,
+        subject: action.subject
+      }
+    }
+  });
+
+  const { error: runningError } = await supabase
+    .from("actions")
+    .update({ status: "running" })
+    .eq("id", createdAction.id)
+    .eq("org_id", orgId);
+  if (runningError) {
+    redirect(errorPath(taskId, runningError.message));
+  }
+
+  try {
+    const sendResult = await sendEmailWithGmail({
+      to: action.to,
+      subject: action.subject,
+      bodyText: action.body_text
+    });
+
+    const { error: successUpdateError } = await supabase
+      .from("actions")
+      .update({
+        status: "success",
+        result_json: {
+          gmail_message_id: sendResult.messageId,
+          stubbed: sendResult.stubbed
+        }
+      })
+      .eq("id", createdAction.id)
+      .eq("org_id", orgId);
+    if (successUpdateError) {
+      redirect(errorPath(taskId, successUpdateError.message));
+    }
+
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "system",
+      actorId: null,
+      eventType: "ACTION_EXECUTED",
+      payload: {
+        action_id: createdAction.id,
+        provider: "google",
+        action_type: "send_email",
+        gmail_message_id: sendResult.messageId,
+        stubbed: sendResult.stubbed
+      }
+    });
+  } catch (error) {
+    const summary = error instanceof Error ? error.message.slice(0, 500) : "Unknown send error.";
+
+    await supabase
+      .from("actions")
+      .update({
+        status: "failed",
+        result_json: {
+          error: summary
+        }
+      })
+      .eq("id", createdAction.id)
+      .eq("org_id", orgId);
+
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "system",
+      actorId: null,
+      eventType: "ACTION_FAILED",
+      payload: {
+        action_id: createdAction.id,
+        provider: "google",
+        action_type: "send_email",
+        error: summary
+      }
+    });
+
+    redirect(errorPath(taskId, `Execution failed: ${summary}`));
   }
 
   revalidatePath(taskPath(taskId));

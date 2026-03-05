@@ -154,3 +154,18 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Verify Slack request signatures and require HMAC-signed short-lived action tokens for approval actions.
 - Why: Prevents forged approval/rejection requests and avoids trusting client-supplied org/task identifiers.
+
+### 2026-03-05 - Gmail as first action runner connector
+
+- Decision: Execute only the first `google/send_email` proposed action for MVP and log full action lifecycle in `actions` + `task_events`.
+- Why: Minimal deterministic runner path that is auditable and easy to extend to multi-action plans later.
+
+### 2026-03-05 - Gmail execution safety gates
+
+- Decision: Enforce execution only when task is `approved`, latest policy is not `block`, and recipient domain passes allowlist when configured.
+- Why: Keeps outbound connector execution aligned with approval/policy intent.
+
+### 2026-03-05 - Gmail E2E stub
+
+- Decision: In `E2E_MODE=1`, Gmail send returns deterministic message id without external API calls while still writing `actions` and `ACTION_*` events.
+- Why: Preserves end-to-end execution coverage without sending real emails.

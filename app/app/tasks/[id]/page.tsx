@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { generateDraft, requestApproval, setTaskReadyForApproval } from "@/app/app/tasks/[id]/actions";
+import {
+  executeDraftAction,
+  generateDraft,
+  requestApproval,
+  setTaskReadyForApproval
+} from "@/app/app/tasks/[id]/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,6 +32,34 @@ type PolicyView = {
   status: "pass" | "warn" | "block";
   reasons: string[];
 };
+
+type ActionRow = {
+  id: string;
+  provider: string;
+  action_type: string;
+  status: string;
+  created_at: string;
+  result_json: unknown;
+};
+
+function getAllowedDomains() {
+  const raw = process.env.ALLOWED_EMAIL_DOMAINS?.trim();
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function extractDomain(email: string) {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at >= email.length - 1) {
+    return null;
+  }
+  return email.slice(at + 1).toLowerCase();
+}
 
 function parseDraftPayload(payload: unknown): DraftView | null {
   if (typeof payload !== "object" || payload === null) {
@@ -101,8 +134,12 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
-  const [{ data: task, error: taskError }, { data: events, error: eventsError }, { data: approvals, error: approvalsError }] =
-    await Promise.all([
+  const [
+    { data: task, error: taskError },
+    { data: events, error: eventsError },
+    { data: approvals, error: approvalsError },
+    { data: actions, error: actionsError }
+  ] = await Promise.all([
       supabase
         .from("tasks")
         .select("id, title, input_text, status, created_at, agent_id")
@@ -120,6 +157,12 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         .select("id, status, reason, requested_by, approver_user_id, created_at, decided_at")
         .eq("org_id", orgId)
         .eq("task_id", id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("actions")
+        .select("id, provider, action_type, status, created_at, result_json")
+        .eq("org_id", orgId)
+        .eq("task_id", id)
         .order("created_at", { ascending: false })
     ]);
 
@@ -132,6 +175,9 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
   if (approvalsError) {
     throw new Error(`Failed to load approvals: ${approvalsError.message}`);
   }
+  if (actionsError) {
+    throw new Error(`Failed to load actions: ${actionsError.message}`);
+  }
 
   if (!task) {
     notFound();
@@ -143,6 +189,45 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
   const latestDraft = parseDraftPayload(latestModelEvent?.payload_json);
   const latestPolicy = parsePolicyPayload(latestPolicyEvent?.payload_json);
   const canRequestApproval = Boolean(latestDraft && latestPolicy && latestPolicy.status !== "block");
+  const proposedEmailAction =
+    latestDraft?.proposed_actions.find(
+      (action) => action.provider === "google" && action.action_type === "send_email"
+    ) ?? null;
+  const executeEligibilityReasons: string[] = [];
+
+  if ((task.status as string) !== "approved") {
+    executeEligibilityReasons.push("Task status must be approved.");
+  }
+  if (!latestDraft || !proposedEmailAction) {
+    executeEligibilityReasons.push("No executable google/send_email action found in latest draft.");
+  }
+  if (!latestPolicy) {
+    executeEligibilityReasons.push("Policy check result is missing.");
+  } else if (latestPolicy.status === "block") {
+    executeEligibilityReasons.push("Policy status is block.");
+  }
+
+  const allowedDomains = getAllowedDomains();
+  if (proposedEmailAction && allowedDomains.length > 0) {
+    const domain = extractDomain(proposedEmailAction.to);
+    if (!domain || !allowedDomains.includes(domain)) {
+      executeEligibilityReasons.push(`Recipient domain ${domain ?? "(invalid)"} is not allowed.`);
+    }
+  }
+
+  const hasGmailEnv =
+    process.env.E2E_MODE === "1" ||
+    (Boolean(process.env.GOOGLE_CLIENT_ID) &&
+      Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
+      Boolean(process.env.GOOGLE_REFRESH_TOKEN) &&
+      Boolean(process.env.GOOGLE_SENDER_EMAIL));
+  if (!hasGmailEnv) {
+    executeEligibilityReasons.push("Gmail env is not fully configured.");
+  }
+
+  const canExecuteEmail = executeEligibilityReasons.length === 0;
+  const actionHistory = (actions ?? []) as ActionRow[];
+  const latestAction = actionHistory[0] ?? null;
 
   return (
     <div className="space-y-6">
@@ -203,6 +288,21 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
                   ? "Approval is disabled because policy status is block."
                   : "Run policy check by generating a draft."
                 : "Generate a draft before requesting approval."}
+            </p>
+          )}
+          {canExecuteEmail ? (
+            <form action={executeDraftAction}>
+              <input type="hidden" name="task_id" value={task.id as string} />
+              <button
+                type="submit"
+                className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
+              >
+                Execute Email
+              </button>
+            </form>
+          ) : (
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Execute Email unavailable: {executeEligibilityReasons.join(" ")}
             </p>
           )}
         </div>
@@ -275,6 +375,26 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         ) : (
           <p className="mt-3 text-sm text-slate-600">No policy check yet.</p>
         )}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold">Action Runner</h2>
+        {latestAction ? (
+          <p className="mt-2 text-sm text-slate-700">
+            Latest action status: <span className="font-medium">{latestAction.status}</span>
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">No actions executed yet.</p>
+        )}
+        {actionHistory.length > 0 ? (
+          <ul className="mt-4 space-y-2">
+            {actionHistory.map((action) => (
+              <li key={action.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
+                {action.provider}/{action.action_type} | status: {action.status}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">

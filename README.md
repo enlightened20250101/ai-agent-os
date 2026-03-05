@@ -37,6 +37,8 @@ Set these in `.env.local`:
 - `APP_BASE_URL`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `GOOGLE_SENDER_EMAIL`
 - `GOOGLE_REDIRECT_URI`
 - `OPENAI_API_KEY`
 - `ALLOWED_EMAIL_DOMAINS` (optional, comma-separated allowlist for policy check)
