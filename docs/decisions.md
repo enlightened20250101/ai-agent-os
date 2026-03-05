@@ -687,3 +687,15 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット経由で作成されたタスクには `TASK_CREATED` イベント payload に `source: chat_command` と確認/コマンドIDを付与する。
 - Why: 後から「どの会話承認で起票されたか」を task ledger だけで追跡できるようにするため。
+
+- Decision: チャット実行意図に `request_approval` と `decide_approval`（承認/却下）を追加し、いずれも実行前に確認を必須化した。
+- Why: UI遷移なしで承認フローを進めつつ、誤操作を防ぎ監査可能な確認ステップを維持するため。
+
+- Decision: チャット承認判断は `decideApprovalShared` を再利用し、`source=chat` を明示して既存の `HUMAN_APPROVED/HUMAN_REJECTED` と `TASK_UPDATED` ログへ統合した。
+- Why: Web/Slack/Chat で承認結果の一貫性を保ち、証跡集計を単純化するため。
+
+- Decision: `status_query` は全体サマリに加え、引用符つきタスク名がある場合は対象タスクの個別ステータス（承認待ち/最新イベント/最新アクション）を返す。
+- Why: オペレーターが「〜ってどうなってる？」をチャットだけで即確認できる導線を作るため。
+
+- Decision: 個人チャット秘匿を担保するため、chat系RLSを `org member` 条件のみから `session access` 条件（shared or owner_user_id=auth.uid）へ強化した。
+- Why: 同一org内でも personal chat の内容は本人のみ参照可能にし、shared chat と明確にアクセス境界を分離するため。

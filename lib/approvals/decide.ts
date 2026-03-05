@@ -11,7 +11,7 @@ type DecideApprovalParams = {
   reason?: string | null;
   actorType: "user" | "system";
   actorId?: string | null;
-  source: "web" | "slack";
+  source: "web" | "slack" | "chat";
   expectedOrgId?: string;
   slackUserId?: string | null;
 };

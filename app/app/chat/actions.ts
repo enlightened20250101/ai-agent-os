@@ -2,10 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { appendTaskEvent } from "@/lib/events/taskEvents";
-import { requireOrgContext } from "@/lib/org/context";
+import { decideApprovalShared } from "@/lib/approvals/decide";
 import { parseChatIntent } from "@/lib/chat/intents";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
+import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { requireOrgContext } from "@/lib/org/context";
+import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
 
 function pathForScope(scope: ChatScope) {
@@ -18,6 +20,463 @@ function withError(scope: ChatScope, message: string) {
 
 function withOk(scope: ChatScope, message: string) {
   return `${pathForScope(scope)}?ok=${encodeURIComponent(message)}`;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+async function addSystemMessage(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  sessionId: string;
+  bodyText: string;
+  metadata?: Record<string, unknown>;
+}) {
+  await args.supabase.from("chat_messages").insert({
+    org_id: args.orgId,
+    session_id: args.sessionId,
+    sender_type: "system",
+    sender_user_id: null,
+    body_text: args.bodyText,
+    metadata_json: args.metadata ?? {}
+  });
+}
+
+async function saveIntentConfirmation(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  sessionId: string;
+  intentId: string;
+}) {
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const { error } = await args.supabase.from("chat_confirmations").insert({
+    org_id: args.orgId,
+    session_id: args.sessionId,
+    intent_id: args.intentId,
+    status: "pending",
+    expires_at: expiresAt
+  });
+  if (error) {
+    throw new Error(`実行確認の作成に失敗しました: ${error.message}`);
+  }
+  return { expiresAt };
+}
+
+async function findActiveAgentId(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+}) {
+  const { supabase, orgId } = args;
+  const { data: preferredAgent } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("status", "active")
+    .eq("role_key", "accounting")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (preferredAgent?.id) {
+    return preferredAgent.id as string;
+  }
+
+  const { data: firstAgent } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return (firstAgent?.id as string | undefined) ?? null;
+}
+
+async function findTaskForChat(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  taskHint: string | null;
+}) {
+  const { supabase, orgId, taskHint } = args;
+  let query = supabase
+    .from("tasks")
+    .select("id, title, status")
+    .eq("org_id", orgId)
+    .in("status", ["draft", "ready_for_approval", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (taskHint) {
+    query = query.ilike("title", `%${taskHint}%`);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    throw new Error(`対象タスクの検索に失敗しました: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error(taskHint ? `「${taskHint}」に一致するタスクがありません。` : "対象タスクが見つかりません。`task`名を明示してください。");
+  }
+  return {
+    id: data.id as string,
+    title: data.title as string,
+    status: data.status as string
+  };
+}
+
+async function findPendingApprovalForChat(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  taskHint: string | null;
+}) {
+  const { supabase, orgId, taskHint } = args;
+
+  if (taskHint) {
+    const task = await findTaskForChat({ supabase, orgId, taskHint });
+    const { data: approval, error } = await supabase
+      .from("approvals")
+      .select("id, task_id")
+      .eq("org_id", orgId)
+      .eq("task_id", task.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`承認検索に失敗しました: ${error.message}`);
+    }
+    if (!approval) {
+      throw new Error(`「${task.title}」の承認待ちはありません。`);
+    }
+    return {
+      approvalId: approval.id as string,
+      taskId: approval.task_id as string,
+      taskTitle: task.title
+    };
+  }
+
+  const { data: approval, error } = await supabase
+    .from("approvals")
+    .select("id, task_id")
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`承認検索に失敗しました: ${error.message}`);
+  }
+  if (!approval) {
+    throw new Error("承認待ちがありません。");
+  }
+
+  const { data: taskRow } = await supabase
+    .from("tasks")
+    .select("title")
+    .eq("id", approval.task_id as string)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  return {
+    approvalId: approval.id as string,
+    taskId: approval.task_id as string,
+    taskTitle: ((taskRow?.title as string | undefined) ?? approval.task_id) as string
+  };
+}
+
+async function runCreateTaskCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const title = typeof intentJson.title === "string" ? intentJson.title : "チャット起点タスク";
+  const inputText = typeof intentJson.inputText === "string" ? intentJson.inputText : title;
+
+  const agentId = await findActiveAgentId({ supabase, orgId });
+  if (!agentId) {
+    throw new Error("activeエージェントを作成してから再実行してください。");
+  }
+
+  const { data: createdTask, error: taskError } = await supabase
+    .from("tasks")
+    .insert({
+      org_id: orgId,
+      created_by_user_id: userId,
+      agent_id: agentId,
+      title,
+      input_text: inputText,
+      status: "draft"
+    })
+    .select("id, title, status, agent_id")
+    .single();
+
+  if (taskError) {
+    throw new Error(`タスク作成に失敗しました: ${taskError.message}`);
+  }
+
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: createdTask.id as string,
+    actorType: "user",
+    actorId: userId,
+    eventType: "TASK_CREATED",
+    payload: {
+      changed_fields: {
+        title: createdTask.title,
+        status: createdTask.status,
+        agent_id: createdTask.agent_id,
+        source: "chat_command"
+      }
+    }
+  });
+
+  return {
+    executionRefType: "task",
+    executionRefId: createdTask.id as string,
+    result: { task_id: createdTask.id, title: createdTask.title },
+    message: `タスクを作成しました: ${createdTask.title as string} (/app/tasks/${createdTask.id as string})`,
+    touchedTaskId: createdTask.id as string
+  };
+}
+
+async function runRequestApprovalCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  const task = await findTaskForChat({ supabase, orgId, taskHint });
+
+  const [{ data: latestModelEvent, error: modelError }, { data: latestPolicyEvent, error: policyError }] = await Promise.all([
+    supabase
+      .from("task_events")
+      .select("payload_json")
+      .eq("org_id", orgId)
+      .eq("task_id", task.id)
+      .eq("event_type", "MODEL_INFERRED")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("task_events")
+      .select("payload_json")
+      .eq("org_id", orgId)
+      .eq("task_id", task.id)
+      .eq("event_type", "POLICY_CHECKED")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
+  if (modelError) {
+    throw new Error(`ドラフト取得に失敗しました: ${modelError.message}`);
+  }
+  if (!latestModelEvent) {
+    throw new Error("承認依頼の前にドラフト生成が必要です。");
+  }
+  if (policyError) {
+    throw new Error(`ポリシー取得に失敗しました: ${policyError.message}`);
+  }
+  if (!latestPolicyEvent) {
+    throw new Error("承認依頼の前にポリシーチェックが必要です。");
+  }
+
+  const policyPayload = asObject(latestPolicyEvent.payload_json);
+  if (policyPayload.status === "block") {
+    throw new Error("policy status が block のため承認依頼できません。");
+  }
+
+  const { data: pendingApproval, error: pendingError } = await supabase
+    .from("approvals")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("task_id", task.id)
+    .eq("status", "pending")
+    .limit(1)
+    .maybeSingle();
+  if (pendingError) {
+    throw new Error(`既存承認チェックに失敗しました: ${pendingError.message}`);
+  }
+  if (pendingApproval) {
+    throw new Error("このタスクにはすでに承認待ちがあります。");
+  }
+
+  const { data: approval, error: approvalError } = await supabase
+    .from("approvals")
+    .insert({
+      org_id: orgId,
+      task_id: task.id,
+      requested_by: userId,
+      status: "pending"
+    })
+    .select("id")
+    .single();
+  if (approvalError) {
+    throw new Error(`承認依頼作成に失敗しました: ${approvalError.message}`);
+  }
+
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: task.id,
+    actorType: "user",
+    actorId: userId,
+    eventType: "APPROVAL_REQUESTED",
+    payload: {
+      approval_id: approval.id,
+      source: "chat_command"
+    }
+  });
+
+  if (task.status !== "ready_for_approval") {
+    const { error: updateTaskError } = await supabase
+      .from("tasks")
+      .update({ status: "ready_for_approval" })
+      .eq("id", task.id)
+      .eq("org_id", orgId);
+    if (updateTaskError) {
+      throw new Error(`タスク状態更新に失敗しました: ${updateTaskError.message}`);
+    }
+
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: task.id,
+      actorType: "user",
+      actorId: userId,
+      eventType: "TASK_UPDATED",
+      payload: {
+        changed_fields: {
+          status: {
+            from: task.status,
+            to: "ready_for_approval"
+          }
+        },
+        source: "chat_request_approval"
+      }
+    });
+  }
+
+  const modelPayload = asObject(latestModelEvent.payload_json);
+  const modelOutput = asObject(modelPayload.output);
+  const draftSummary = typeof modelOutput.summary === "string" ? modelOutput.summary : null;
+  const policyStatus = typeof policyPayload.status === "string" ? policyPayload.status : null;
+
+  try {
+    const slackMessage = await postApprovalRequestToSlack({
+      supabase,
+      orgId,
+      approvalId: approval.id as string,
+      taskId: task.id,
+      taskTitle: task.title,
+      draftSummary,
+      policyStatus
+    });
+    if (slackMessage) {
+      await appendTaskEvent({
+        supabase,
+        orgId,
+        taskId: task.id,
+        actorType: "system",
+        actorId: null,
+        eventType: "SLACK_APPROVAL_POSTED",
+        payload: {
+          channel_id: slackMessage.channel,
+          slack_ts: slackMessage.ts,
+          approval_id: approval.id,
+          source: "chat_command"
+        }
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "slack_error";
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: task.id,
+      actorType: "system",
+      actorId: null,
+      eventType: "SLACK_APPROVAL_POSTED",
+      payload: {
+        approval_id: approval.id,
+        source: "chat_command",
+        error: message
+      }
+    });
+  }
+
+  return {
+    executionRefType: "approval",
+    executionRefId: approval.id as string,
+    result: { approval_id: approval.id, task_id: task.id },
+    message: `承認依頼を作成しました: ${task.title} (/app/tasks/${task.id})`,
+    touchedTaskId: task.id
+  };
+}
+
+async function runDecideApprovalCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const decision = intentJson.decision === "rejected" ? "rejected" : "approved";
+  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  const reason = typeof intentJson.reason === "string" ? intentJson.reason : "chat_command";
+
+  const target = await findPendingApprovalForChat({ supabase, orgId, taskHint });
+  const decided = await decideApprovalShared({
+    supabase,
+    approvalId: target.approvalId,
+    decision,
+    reason,
+    actorType: "user",
+    actorId: userId,
+    source: "chat",
+    expectedOrgId: orgId
+  });
+
+  return {
+    executionRefType: "approval",
+    executionRefId: decided.approvalId,
+    result: {
+      approval_id: decided.approvalId,
+      task_id: decided.taskId,
+      decision: decided.approvalStatus
+    },
+    message:
+      decision === "approved"
+        ? `承認しました: ${target.taskTitle} (/app/tasks/${decided.taskId})`
+        : `却下しました: ${target.taskTitle} (/app/tasks/${decided.taskId})`,
+    touchedTaskId: decided.taskId
+  };
+}
+
+async function executeIntentCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentType: string;
+  intentJson: Record<string, unknown>;
+}) {
+  if (args.intentType === "create_task") {
+    return runCreateTaskCommand(args);
+  }
+  if (args.intentType === "request_approval") {
+    return runRequestApprovalCommand(args);
+  }
+  if (args.intentType === "decide_approval") {
+    return runDecideApprovalCommand(args);
+  }
+  throw new Error("この実行タイプは未対応です。");
 }
 
 async function postMessage(scope: ChatScope, formData: FormData) {
@@ -79,84 +538,121 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     .eq("org_id", orgId);
 
   if (intent.intentType === "status_query") {
-    const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [{ count: taskCount }, { count: pendingApprovalCount }, { count: actionFailCount }] = await Promise.all([
-      supabase
-        .from("tasks")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", orgId),
-      supabase
-        .from("approvals")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", orgId)
-        .eq("status", "pending"),
-      supabase
-        .from("actions")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", orgId)
-        .eq("status", "failed")
-        .gte("created_at", sevenDaysAgoIso)
-    ]);
+    const taskHint = typeof intent.plan.taskHint === "string" ? intent.plan.taskHint : null;
+    if (taskHint) {
+      const task = await findTaskForChat({ supabase, orgId, taskHint });
+      const [{ data: pendingApproval }, { data: latestAction }, { data: latestEvent }] = await Promise.all([
+        supabase
+          .from("approvals")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("task_id", task.id)
+          .eq("status", "pending")
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("actions")
+          .select("status, created_at")
+          .eq("org_id", orgId)
+          .eq("task_id", task.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("task_events")
+          .select("event_type, created_at")
+          .eq("org_id", orgId)
+          .eq("task_id", task.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      ]);
 
-    await supabase.from("chat_messages").insert({
-      org_id: orgId,
-      session_id: session.id,
-      sender_type: "system",
-      sender_user_id: null,
-      body_text:
-        `現状サマリ:\n` +
-        `- タスク総数: ${taskCount ?? 0}\n` +
-        `- 承認待ち: ${pendingApprovalCount ?? 0}\n` +
-        `- 7日失敗アクション: ${actionFailCount ?? 0}`,
-      metadata_json: {
-        intent_id: intentRow.id,
-        intent_type: intent.intentType
-      }
-    });
+      await addSystemMessage({
+        supabase,
+        orgId,
+        sessionId: session.id,
+        bodyText:
+          `タスク状況:\n` +
+          `- title: ${task.title}\n` +
+          `- status: ${task.status}\n` +
+          `- 承認待ち: ${pendingApproval ? "あり" : "なし"}\n` +
+          `- 最新アクション: ${latestAction?.status ?? "なし"}\n` +
+          `- 最新イベント: ${latestEvent?.event_type ?? "なし"}`,
+        metadata: {
+          intent_id: intentRow.id,
+          intent_type: intent.intentType,
+          task_id: task.id
+        }
+      });
+    } else {
+      const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const [{ count: taskCount }, { count: pendingApprovalCount }, { count: actionFailCount }] = await Promise.all([
+        supabase.from("tasks").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+        supabase.from("approvals").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
+        supabase
+          .from("actions")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "failed")
+          .gte("created_at", sevenDaysAgoIso)
+      ]);
+
+      await addSystemMessage({
+        supabase,
+        orgId,
+        sessionId: session.id,
+        bodyText:
+          `現状サマリ:\n` +
+          `- タスク総数: ${taskCount ?? 0}\n` +
+          `- 承認待ち: ${pendingApprovalCount ?? 0}\n` +
+          `- 7日失敗アクション: ${actionFailCount ?? 0}`,
+        metadata: {
+          intent_id: intentRow.id,
+          intent_type: intent.intentType
+        }
+      });
+    }
 
     revalidatePath(pathForScope(scope));
     redirect(withOk(scope, "状況を要約しました。"));
   }
 
-  if (intent.intentType === "create_task" && intent.requiresConfirmation) {
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const { error: confirmationError } = await supabase.from("chat_confirmations").insert({
-      org_id: orgId,
-      session_id: session.id,
-      intent_id: intentRow.id,
-      status: "pending",
-      expires_at: expiresAt
-    });
-
-    if (confirmationError) {
-      redirect(withError(scope, `実行確認の作成に失敗しました: ${confirmationError.message}`));
+  if (intent.requiresConfirmation) {
+    try {
+      const { expiresAt } = await saveIntentConfirmation({
+        supabase,
+        orgId,
+        sessionId: session.id,
+        intentId: intentRow.id as string
+      });
+      await addSystemMessage({
+        supabase,
+        orgId,
+        sessionId: session.id,
+        bodyText: `${intent.plan.summary}\nこの操作を実行してよいですか？（Yes/No）`,
+        metadata: {
+          intent_id: intentRow.id,
+          intent_type: intent.intentType,
+          requires_confirmation: true,
+          expires_at: expiresAt
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "実行確認作成に失敗しました。";
+      redirect(withError(scope, message));
     }
-
-    await supabase.from("chat_messages").insert({
-      org_id: orgId,
-      session_id: session.id,
-      sender_type: "system",
-      sender_user_id: null,
-      body_text: `${intent.plan.summary}\nこの操作を実行してよいですか？（Yes/No）`,
-      metadata_json: {
-        intent_id: intentRow.id,
-        intent_type: intent.intentType,
-        requires_confirmation: true,
-        expires_at: expiresAt
-      }
-    });
 
     revalidatePath(pathForScope(scope));
     redirect(withOk(scope, "実行確認を作成しました。"));
   }
 
-  await supabase.from("chat_messages").insert({
-    org_id: orgId,
-    session_id: session.id,
-    sender_type: "system",
-    sender_user_id: null,
-    body_text: intent.plan.summary,
-    metadata_json: {
+  await addSystemMessage({
+    supabase,
+    orgId,
+    sessionId: session.id,
+    bodyText: intent.plan.summary,
+    metadata: {
       intent_id: intentRow.id,
       intent_type: intent.intentType
     }
@@ -233,13 +729,12 @@ export async function confirmChatCommand(formData: FormData) {
     .eq("org_id", orgId);
 
   if (decision === "declined") {
-    await supabase.from("chat_messages").insert({
-      org_id: orgId,
-      session_id: confirmation.session_id as string,
-      sender_type: "system",
-      sender_user_id: null,
-      body_text: "実行をキャンセルしました。",
-      metadata_json: {
+    await addSystemMessage({
+      supabase,
+      orgId,
+      sessionId: confirmation.session_id as string,
+      bodyText: "実行をキャンセルしました。",
+      metadata: {
         confirmation_id: confirmationId,
         intent_id: intent.id,
         decision
@@ -272,172 +767,79 @@ export async function confirmChatCommand(formData: FormData) {
     .eq("id", command.id as string)
     .eq("org_id", orgId);
 
-  if (intent.intent_type === "create_task") {
-    const intentJson =
-      typeof intent.intent_json === "object" && intent.intent_json !== null
-        ? (intent.intent_json as Record<string, unknown>)
-        : null;
-    const title = typeof intentJson?.title === "string" ? intentJson.title : "チャット起点タスク";
-    const inputText = typeof intentJson?.inputText === "string" ? intentJson.inputText : title;
-
-    const { data: preferredAgent } = await supabase
-      .from("agents")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("status", "active")
-      .eq("role_key", "accounting")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    let agentId = (preferredAgent?.id as string | undefined) ?? null;
-    if (!agentId) {
-      const { data: firstAgent } = await supabase
-        .from("agents")
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("status", "active")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      agentId = (firstAgent?.id as string | undefined) ?? null;
-    }
-
-    if (!agentId) {
-      await supabase
-        .from("chat_commands")
-        .update({
-          execution_status: "failed",
-          result_json: {
-            error: "active agent not found"
-          },
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", command.id as string)
-        .eq("org_id", orgId);
-
-      await supabase.from("chat_messages").insert({
-        org_id: orgId,
-        session_id: confirmation.session_id as string,
-        sender_type: "system",
-        sender_user_id: null,
-        body_text: "実行に失敗しました。activeエージェントを作成してから再実行してください。",
-        metadata_json: {
-          confirmation_id: confirmationId,
-          intent_id: intent.id,
-          command_id: command.id
-        }
-      });
-
-      revalidatePath(pathForScope(scope));
-      redirect(withError(scope, "activeエージェントが見つからないため実行できませんでした。"));
-    }
-
-    const { data: createdTask, error: taskError } = await supabase
-      .from("tasks")
-      .insert({
-        org_id: orgId,
-        created_by_user_id: userId,
-        agent_id: agentId,
-        title,
-        input_text: inputText,
-        status: "draft"
-      })
-      .select("id, title, status, agent_id")
-      .single();
-
-    if (taskError) {
-      await supabase
-        .from("chat_commands")
-        .update({
-          execution_status: "failed",
-          result_json: {
-            error: taskError.message
-          },
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", command.id as string)
-        .eq("org_id", orgId);
-      redirect(withError(scope, `タスク作成に失敗しました: ${taskError.message}`));
-    }
-
-    await appendTaskEvent({
+  try {
+    const intentJson = asObject(intent.intent_json);
+    const executed = await executeIntentCommand({
       supabase,
       orgId,
-      taskId: createdTask.id as string,
-      actorType: "user",
-      actorId: userId,
-      eventType: "TASK_CREATED",
-      payload: {
-        changed_fields: {
-          title: createdTask.title,
-          status: createdTask.status,
-          agent_id: createdTask.agent_id,
-          source: "chat_command"
-        },
-        chat: {
-          confirmation_id: confirmationId,
-          intent_id: intent.id,
-          command_id: command.id,
-          session_id: confirmation.session_id
-        }
-      }
+      userId,
+      intentType: intent.intent_type as string,
+      intentJson
     });
 
     await supabase
       .from("chat_commands")
       .update({
         execution_status: "done",
-        execution_ref_type: "task",
-        execution_ref_id: createdTask.id,
+        execution_ref_type: executed.executionRefType,
+        execution_ref_id: executed.executionRefId,
+        result_json: executed.result,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", command.id as string)
+      .eq("org_id", orgId);
+
+    await addSystemMessage({
+      supabase,
+      orgId,
+      sessionId: confirmation.session_id as string,
+      bodyText: executed.message,
+      metadata: {
+        confirmation_id: confirmationId,
+        intent_id: intent.id,
+        command_id: command.id,
+        execution_ref_id: executed.executionRefId,
+        execution_ref_type: executed.executionRefType
+      }
+    });
+
+    revalidatePath(pathForScope(scope));
+    revalidatePath("/app/tasks");
+    revalidatePath("/app/approvals");
+    if (executed.touchedTaskId) {
+      revalidatePath(`/app/tasks/${executed.touchedTaskId}`);
+    }
+
+    redirect(withOk(scope, "実行が完了しました。"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "コマンド実行に失敗しました。";
+
+    await supabase
+      .from("chat_commands")
+      .update({
+        execution_status: "failed",
         result_json: {
-          task_id: createdTask.id,
-          title: createdTask.title
+          error: message
         },
         finished_at: new Date().toISOString()
       })
       .eq("id", command.id as string)
       .eq("org_id", orgId);
 
-    await supabase.from("chat_messages").insert({
-      org_id: orgId,
-      session_id: confirmation.session_id as string,
-      sender_type: "system",
-      sender_user_id: null,
-      body_text: `タスクを作成しました: ${createdTask.title as string} (/app/tasks/${createdTask.id as string})`,
-      metadata_json: {
+    await addSystemMessage({
+      supabase,
+      orgId,
+      sessionId: confirmation.session_id as string,
+      bodyText: `実行に失敗しました: ${message}`,
+      metadata: {
         confirmation_id: confirmationId,
         intent_id: intent.id,
         command_id: command.id,
-        task_id: createdTask.id
+        error: message
       }
     });
 
     revalidatePath(pathForScope(scope));
-    revalidatePath("/app/tasks");
-    revalidatePath(`/app/tasks/${createdTask.id as string}`);
-    redirect(withOk(scope, "タスクを作成しました。"));
+    redirect(withError(scope, message));
   }
-
-  await supabase
-    .from("chat_commands")
-    .update({ execution_status: "cancelled", finished_at: new Date().toISOString() })
-    .eq("id", command.id as string)
-    .eq("org_id", orgId);
-
-  await supabase.from("chat_messages").insert({
-    org_id: orgId,
-    session_id: confirmation.session_id as string,
-    sender_type: "system",
-    sender_user_id: null,
-    body_text: "この意図タイプの実行には未対応です。",
-    metadata_json: {
-      confirmation_id: confirmationId,
-      intent_id: intent.id,
-      command_id: command.id
-    }
-  });
-
-  revalidatePath(pathForScope(scope));
-  redirect(withError(scope, "この実行タイプは未対応です。"));
 }
