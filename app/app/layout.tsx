@@ -7,7 +7,8 @@ const NAV_LINKS = [
   { href: "/app", label: "Home" },
   { href: "/app/agents", label: "Agents" },
   { href: "/app/tasks", label: "Tasks" },
-  { href: "/app/approvals", label: "Approvals" }
+  { href: "/app/approvals", label: "Approvals" },
+  { href: "/app/integrations/slack", label: "Slack" }
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {

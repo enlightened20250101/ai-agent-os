@@ -139,3 +139,18 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `Request Approval` is enabled only when latest draft exists and latest policy status is not `block`.
 - Why: Enforces minimal safety policy before human approval flow.
+
+### 2026-03-05 - Slack approvals are optional
+
+- Decision: Keep web approvals as canonical and add Slack approvals as an optional additional channel.
+- Why: Ensures approvals still work when Slack is not configured or temporarily unavailable.
+
+### 2026-03-05 - Single-tenant Slack mapping for MVP
+
+- Decision: Use environment-based Slack config (`SLACK_*`) for one workspace/channel in MVP, while keeping code paths compatible with future per-org connector configuration.
+- Why: Minimal implementation speed with a straightforward migration path to `connector_accounts` later.
+
+### 2026-03-05 - Slack interactive approval security
+
+- Decision: Verify Slack request signatures and require HMAC-signed short-lived action tokens for approval actions.
+- Why: Prevents forged approval/rejection requests and avoids trusting client-supplied org/task identifiers.

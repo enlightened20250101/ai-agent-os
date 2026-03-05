@@ -33,6 +33,8 @@ Set these in `.env.local`:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SLACK_BOT_TOKEN`
 - `SLACK_SIGNING_SECRET`
+- `SLACK_APPROVAL_CHANNEL_ID`
+- `APP_BASE_URL`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI`
@@ -63,6 +65,19 @@ Set these in `.env.local`:
 6. Approver clicks approve in Slack.
 7. System sends Gmail message and logs send result.
 8. Operator opens Evidence Pack HTML page showing full event timeline.
+
+## Slack Approval Setup
+
+1. Create a Slack app and add OAuth scopes:
+   - `chat:write`
+   - `commands` (optional if slash commands are added later)
+2. Enable Interactivity and set Request URL to:
+   - `${APP_BASE_URL}/api/slack/actions`
+3. Install the app and set env vars:
+   - `SLACK_BOT_TOKEN`
+   - `SLACK_SIGNING_SECRET`
+   - `SLACK_APPROVAL_CHANNEL_ID`
+4. Open `/app/integrations/slack` and use "Send test message" to verify.
 
 ## Documentation
 

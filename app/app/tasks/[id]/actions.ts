@@ -6,6 +6,7 @@ import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
 import { generateDraftWithOpenAI } from "@/lib/llm/openai";
 import { checkDraftPolicy } from "@/lib/policy/check";
+import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
 
 function taskPath(taskId: string) {
@@ -199,6 +200,40 @@ export async function requestApproval(formData: FormData) {
         source: "approval_request"
       }
     });
+  }
+
+  const modelPayload = latestModelEvent.payload_json as { output?: { summary?: string } } | null;
+  const policyPayloadFull = latestPolicyEvent.payload_json as { status?: string } | null;
+  const draftSummary =
+    typeof modelPayload?.output?.summary === "string" ? modelPayload.output.summary : null;
+  const policyStatus = typeof policyPayloadFull?.status === "string" ? policyPayloadFull.status : null;
+
+  try {
+    const slackMessage = await postApprovalRequestToSlack({
+      approvalId: approval.id as string,
+      taskId,
+      taskTitle: task.title as string,
+      draftSummary,
+      policyStatus
+    });
+
+    if (slackMessage) {
+      await appendTaskEvent({
+        supabase,
+        orgId,
+        taskId,
+        actorType: "system",
+        actorId: null,
+        eventType: "SLACK_APPROVAL_POSTED",
+        payload: {
+          channel_id: slackMessage.channel,
+          slack_ts: slackMessage.ts
+        }
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Slack approval post failed.";
+    console.error(`[SLACK_APPROVAL_POST_FAILED] task_id=${taskId} approval_id=${approval.id as string} ${message}`);
   }
 
   revalidatePath(taskPath(taskId));
