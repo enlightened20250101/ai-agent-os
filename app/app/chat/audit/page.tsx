@@ -449,6 +449,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           フィルタをリセット
         </Link>
       </form>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+        <span>この条件で開く:</span>
+        <Link href={currentFilterPath} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sky-700 hover:bg-sky-50">
+          {currentFilterPath}
+        </Link>
+      </div>
       <form action={bulkRetryFailedCommands} className="flex flex-wrap items-center gap-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
         <p className="font-medium text-rose-900">失敗コマンドの再実行確認を一括作成</p>
         <input type="hidden" name="return_to" value="/app/chat/audit" />
