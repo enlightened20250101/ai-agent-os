@@ -50,6 +50,7 @@ export async function decideApproval(formData: FormData) {
   revalidatePath("/app/approvals");
   revalidatePath("/app/tasks");
   revalidatePath(`/app/tasks/${result.taskId}`);
+  redirect(okRedirect(decision === "approved" ? "承認しました。" : "却下しました。"));
 }
 
 export async function resendApprovalSlackReminder(formData: FormData) {

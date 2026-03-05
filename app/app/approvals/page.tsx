@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   decideApproval,
   resendApprovalSlackReminder,
@@ -100,14 +101,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       <h1 className="text-xl font-semibold">承認</h1>
       <p className="mt-2 text-sm text-slate-600">組織内の保留中承認です。</p>
 
-      {sp.error ? (
-        <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</p>
-      ) : null}
-      {sp.ok ? (
-        <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
 
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
         <form method="get" className="flex flex-wrap items-center gap-2">

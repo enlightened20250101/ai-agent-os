@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   executeDraftAction,
   generateDraft,
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 type TaskDetailsPageProps = {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; ok?: string }>;
 };
 
 type DraftView = {
@@ -407,11 +408,7 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
           </Link>
         </div>
 
-        {sp.error ? (
-          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {sp.error}
-          </p>
-        ) : null}
+        <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
 
         <div className="mt-4 rounded-md bg-slate-50 p-4">
           <p className="text-sm text-slate-700 whitespace-pre-wrap">{task.input_text as string}</p>

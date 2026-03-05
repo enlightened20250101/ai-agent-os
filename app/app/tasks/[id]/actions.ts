@@ -18,6 +18,10 @@ function errorPath(taskId: string, message: string) {
   return `${taskPath(taskId)}?error=${encodeURIComponent(message)}`;
 }
 
+function okPath(taskId: string, message: string) {
+  return `${taskPath(taskId)}?ok=${encodeURIComponent(message)}`;
+}
+
 export async function setTaskReadyForApproval(formData: FormData) {
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) {
@@ -70,6 +74,7 @@ export async function setTaskReadyForApproval(formData: FormData) {
   revalidatePath(taskPath(taskId));
   revalidatePath("/app/tasks");
   revalidatePath("/app/approvals");
+  redirect(okPath(taskId, "タスクを承認待ちに更新しました。"));
 }
 
 export async function requestApproval(formData: FormData) {
@@ -242,6 +247,7 @@ export async function requestApproval(formData: FormData) {
   revalidatePath(taskPath(taskId));
   revalidatePath("/app/tasks");
   revalidatePath("/app/approvals");
+  redirect(okPath(taskId, "承認依頼を作成しました。"));
 }
 
 export async function generateDraft(formData: FormData) {
@@ -343,6 +349,7 @@ export async function generateDraft(formData: FormData) {
   revalidatePath(taskPath(taskId));
   revalidatePath("/app/tasks");
   revalidatePath("/app/approvals");
+  redirect(okPath(taskId, "ドラフト生成とポリシーチェックを完了しました。"));
 }
 
 export async function executeDraftAction(formData: FormData) {
@@ -372,4 +379,5 @@ export async function executeDraftAction(formData: FormData) {
   revalidatePath(taskPath(taskId));
   revalidatePath("/app/tasks");
   revalidatePath("/app/approvals");
+  redirect(okPath(taskId, "メール送信アクションを実行しました。"));
 }

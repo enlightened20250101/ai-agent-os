@@ -978,3 +978,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` の判断・再通知操作と `/app/tasks/[id]` の主要実行操作（ドラフト生成、承認待ち化、承認依頼、メール実行、workflow開始）を `ConfirmSubmitButton` に統一した。
 - Why: 承認/実行フロー全体で確認ダイアログと二重送信防止を標準化し、誤操作リスクを下げるため。
+
+- Decision: 実行結果表示を統一するため `StatusNotice` 共通コンポーネントを追加し、`/app/tasks/[id]` と `/app/approvals` の `ok/error` 表示に適用した。
+- Why: 画面ごとの表示ゆれを減らし、実行後フィードバックの視認性を一貫化するため。
+
+- Decision: `tasks/[id]` の主要 server actions（承認待ち化・承認依頼・ドラフト生成・メール実行）と `approvals/decideApproval` は成功時に `?ok=` を付けて同画面へリダイレクトする。
+- Why: 実行後に「何が成功したか」を明示して、操作完了の認知を早めるため。
