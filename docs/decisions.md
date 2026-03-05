@@ -649,3 +649,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: planner run `summary_json` に feedbackスナップショット（acceptance/rejection rate, top_reject_reasons, requested/effective max）を保存し、`/app/planner` で可視化した。
 - Why: 「なぜその提案件数になったか」を運用者が後から説明できるようにし、改善ループを監査可能にするため。
+
+- Decision: タスク詳細ヘッダーに起票ソース（manual/slack/proposal/system）バッジと `proposal_id` 表示を追加した。
+- Why: 単一タスクの監査・原因調査時に、起票経路を即時判別できる導線を作るため。

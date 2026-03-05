@@ -47,6 +47,11 @@ type ActionRow = {
   result_json: unknown;
 };
 
+type TaskOrigin = {
+  source: "manual" | "slack" | "proposal" | "system";
+  proposalId: string | null;
+};
+
 function getAllowedDomains() {
   const raw = process.env.ALLOWED_EMAIL_DOMAINS?.trim();
   if (!raw) {
@@ -138,6 +143,40 @@ function isMissingTableError(message: string, tableName: string) {
     message.includes(`relation "${tableName}" does not exist`) ||
     message.includes(`Could not find the table 'public.${tableName}'`)
   );
+}
+
+function parseTaskOrigin(events: Array<{ event_type: string; payload_json: unknown }>) {
+  const hasSlackIntake = events.some((event) => event.event_type === "SLACK_TASK_INTAKE");
+  const taskCreated = events.find((event) => event.event_type === "TASK_CREATED");
+  let proposalId: string | null = null;
+  let sourceRaw = "";
+  if (taskCreated && typeof taskCreated.payload_json === "object" && taskCreated.payload_json !== null) {
+    const payload = taskCreated.payload_json as Record<string, unknown>;
+    proposalId = typeof payload.proposal_id === "string" ? payload.proposal_id : null;
+    const changedFields =
+      typeof payload.changed_fields === "object" && payload.changed_fields !== null
+        ? (payload.changed_fields as Record<string, unknown>)
+        : null;
+    sourceRaw = typeof changedFields?.source === "string" ? changedFields.source : "";
+  }
+
+  if (hasSlackIntake || sourceRaw.includes("slack")) {
+    return { source: "slack", proposalId } as TaskOrigin;
+  }
+  if (proposalId || sourceRaw.includes("proposal")) {
+    return { source: "proposal", proposalId } as TaskOrigin;
+  }
+  if (sourceRaw.includes("system")) {
+    return { source: "system", proposalId } as TaskOrigin;
+  }
+  return { source: "manual", proposalId } as TaskOrigin;
+}
+
+function sourceBadgeClass(source: TaskOrigin["source"]) {
+  if (source === "slack") return "border-sky-300 bg-sky-50 text-sky-700";
+  if (source === "proposal") return "border-violet-300 bg-violet-50 text-violet-700";
+  if (source === "system") return "border-slate-300 bg-slate-100 text-slate-700";
+  return "border-emerald-300 bg-emerald-50 text-emerald-700";
 }
 
 export default async function TaskDetailsPage({ params, searchParams }: TaskDetailsPageProps) {
@@ -234,6 +273,12 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
   const latestModelEvent = [...(events ?? [])].reverse().find((event) => event.event_type === "MODEL_INFERRED");
   const latestPolicyEvent = [...(events ?? [])].reverse().find((event) => event.event_type === "POLICY_CHECKED");
+  const taskOrigin = parseTaskOrigin(
+    (events ?? []).map((event) => ({
+      event_type: event.event_type as string,
+      payload_json: event.payload_json
+    }))
+  );
 
   const latestDraft = parseDraftPayload(latestModelEvent?.payload_json);
   const latestPolicy = parsePolicyPayload(latestPolicyEvent?.payload_json);
@@ -341,7 +386,17 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">{task.title as string}</h1>
-            <p className="mt-2 text-sm text-slate-600">ステータス: {task.status as string}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <p>ステータス: {task.status as string}</p>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${sourceBadgeClass(taskOrigin.source)}`}>
+                source: {taskOrigin.source}
+              </span>
+              {taskOrigin.proposalId ? (
+                <Link href={`/app/proposals`} className="text-[11px] underline">
+                  proposal_id: {taskOrigin.proposalId.slice(0, 8)}...
+                </Link>
+              ) : null}
+            </div>
           </div>
           <Link href="/app/tasks" className="text-sm">
             タスク一覧へ戻る
