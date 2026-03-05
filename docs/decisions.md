@@ -676,3 +676,14 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャットは `shared`（組織共通）と `personal`（個人）を分離し、どちらも最終的に同一の policy/approval/action runner ガードを通す。
 - Why: 情報公開範囲の違いを扱いつつ、実行統制と監査証跡は単一の安全基準で維持するため。
+
+### 2026-03-05 - Chat command layer MVP
+
+- Decision: `chat_sessions/chat_messages/chat_intents/chat_confirmations/chat_commands` を追加し、自然言語の依頼を「意図解析 -> 実行確認 -> 実行」の3段階で台帳化する。
+- Why: 会話起点の操作を監査可能にし、誤実行を防ぎながら UI 操作依存を減らすため。
+
+- Decision: MVP の意図解析はルールベース（`status_query` と `create_task`）から開始し、`create_task` は必ず Yes/No 確認を要求する。
+- Why: まず安全に運用可能な最小機能を実装し、将来のLLMベース意図解析へ段階拡張しやすくするため。
+
+- Decision: チャット経由で作成されたタスクには `TASK_CREATED` イベント payload に `source: chat_command` と確認/コマンドIDを付与する。
+- Why: 後から「どの会話承認で起票されたか」を task ledger だけで追跡できるようにするため。

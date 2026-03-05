@@ -35,6 +35,16 @@ const links = [
     description: "テンプレートと実行ステップを管理します。"
   },
   {
+    title: "共有チャット",
+    href: "/app/chat/shared",
+    description: "組織全体向けの会話で、タスク依頼や状況確認を実行確認付きで行います。"
+  },
+  {
+    title: "個人チャット",
+    href: "/app/chat/me",
+    description: "個人向けの質問や依頼を、UI操作なしで会話から実行できます。"
+  },
+  {
     title: "ジョブ履歴",
     href: "/app/operations/jobs",
     description: "定期実行ジョブ（planner/review）の成功・失敗を監視します。"

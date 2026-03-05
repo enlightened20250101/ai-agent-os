@@ -11,6 +11,8 @@ const NAV_LINKS = [
   { href: "/app/tasks", label: "タスク" },
   { href: "/app/approvals", label: "承認" },
   { href: "/app/workflows", label: "ワークフロー" },
+  { href: "/app/chat/shared", label: "共有チャット" },
+  { href: "/app/chat/me", label: "個人チャット" },
   { href: "/app/proposals", label: "提案" },
   { href: "/app/planner", label: "プランナー" },
   { href: "/app/operations/jobs", label: "ジョブ" },
