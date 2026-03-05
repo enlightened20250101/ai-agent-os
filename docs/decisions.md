@@ -957,3 +957,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `TOP(/app)` の `Next Actions` 各行にクイック実行ボタンを追加し、`失敗workflow再試行(上位3件)` と `期限切れ確認整理` をホームから直接実行可能にした。
 - Why: 異常検知後にページ遷移を挟まず一次復旧を開始できるようにし、オペレーションの初動速度を上げるため。
+
+- Decision: `TOP(/app)` が `ok/error` クエリを受け取り、クイック実行の結果をページ内で可視化するようにした。
+- Why: ホームからの即時オペレーション後に結果確認のため別画面へ行く必要を減らし、運用ループを短くするため。
+
+- Decision: `retryTopFailedWorkflowRuns` の結果文字列（`success=, failed=`）と `期限切れ確認更新件数` をパースし、成功/失敗件数チップを表示する。
+- Why: 成否メッセージを定量で読み取りやすくし、次のアクション判断を速くするため。

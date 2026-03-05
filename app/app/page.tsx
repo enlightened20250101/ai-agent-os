@@ -6,6 +6,10 @@ import { buildGovernanceRecommendations } from "@/lib/governance/recommendations
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
+type HomePageProps = {
+  searchParams?: Promise<{ ok?: string; error?: string }>;
+};
+
 const links = [
   {
     title: "エージェント",
@@ -151,7 +155,28 @@ function skipRecommendation(reason: string | null) {
   return { text: "skip要因を監査画面で確認。", href: "/app/chat/audit", severity: "low" as const };
 }
 
-export default async function AppHomePage() {
+function parseQuickActionResult(message: string | undefined) {
+  if (!message) return null;
+  const retryMatch = message.match(/success=(\d+),\s*failed=(\d+)/);
+  if (retryMatch) {
+    return {
+      kind: "workflow_retry" as const,
+      success: Number.parseInt(retryMatch[1] ?? "0", 10),
+      failed: Number.parseInt(retryMatch[2] ?? "0", 10)
+    };
+  }
+  const expireMatch = message.match(/期限切れ確認を(\d+)件更新/);
+  if (expireMatch) {
+    return {
+      kind: "expire_confirmations" as const,
+      updated: Number.parseInt(expireMatch[1] ?? "0", 10)
+    };
+  }
+  return null;
+}
+
+export default async function AppHomePage({ searchParams }: HomePageProps) {
+  const sp = searchParams ? await searchParams : {};
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
@@ -379,6 +404,7 @@ export default async function AppHomePage() {
     "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED"
   );
   const needsOpsAttention = plannerConsecutiveFailures >= 2 || reviewConsecutiveFailures >= 2;
+  const quickResult = parseQuickActionResult(sp.ok);
   const nextActions = [
     {
       key: "open_incidents",
@@ -484,6 +510,35 @@ export default async function AppHomePage() {
               失敗ジョブを確認
             </Link>
           </div>
+        </section>
+      ) : null}
+      {sp.error ? (
+        <section className="rounded-xl border border-rose-300 bg-rose-50 p-4 shadow-sm">
+          <p className="text-sm font-semibold text-rose-900">クイック実行エラー</p>
+          <p className="mt-1 text-xs text-rose-800">{sp.error}</p>
+        </section>
+      ) : null}
+      {sp.ok ? (
+        <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm">
+          <p className="text-sm font-semibold text-emerald-900">クイック実行結果</p>
+          <p className="mt-1 text-xs text-emerald-800">{sp.ok}</p>
+          {quickResult?.kind === "workflow_retry" ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border border-emerald-300 bg-white px-2 py-1 text-emerald-800">
+                success: {quickResult.success}
+              </span>
+              <span className="rounded-md border border-rose-300 bg-white px-2 py-1 text-rose-800">
+                failed: {quickResult.failed}
+              </span>
+            </div>
+          ) : null}
+          {quickResult?.kind === "expire_confirmations" ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border border-sky-300 bg-white px-2 py-1 text-sky-800">
+                expired updated: {quickResult.updated}
+              </span>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
