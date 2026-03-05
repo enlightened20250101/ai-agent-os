@@ -762,3 +762,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット実行確認（confirmed）にユーザー単位の日次上限 `CHAT_DAILY_EXECUTION_LIMIT`（既定30）を追加し、上限超過時は自動で confirmation を declined にする。
 - Why: 会話起点の実行が短時間に集中した際の誤操作・暴走リスクを抑え、安全に運用できるスループットへ制御するため。
+
+- Decision: `/app/chat/shared` と `/app/chat/me` に本日の confirmed 実行数と残量（`x/y`）を表示し、使用率に応じて色分けする。
+- Why: 実行上限に達する前にオペレーターが状況を把握し、運用計画を調整できるようにするため。

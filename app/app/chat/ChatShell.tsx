@@ -61,6 +61,11 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
+  const dailyLimitRaw = Number.parseInt(process.env.CHAT_DAILY_EXECUTION_LIMIT ?? "30", 10);
+  const dailyLimit = Number.isNaN(dailyLimitRaw) ? 30 : Math.max(1, Math.min(500, dailyLimitRaw));
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayStartIso = dayStart.toISOString();
   const commandStatusFilter =
     sp.cmd_status === "failed" || sp.cmd_status === "pending" || sp.cmd_status === "running" || sp.cmd_status === "done"
       ? sp.cmd_status
@@ -71,7 +76,8 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   const [
     { data: messagesData, error: messagesError },
     { data: confirmationsData, error: confirmationsError },
-    { data: commandsData, error: commandsError }
+    { data: commandsData, error: commandsError },
+    { count: todayConfirmedCount, error: todayCountError }
   ] = await Promise.all([
     supabase
       .from("chat_messages")
@@ -100,7 +106,14 @@ export async function ChatShell({ scope, title, description, submitAction, searc
         query = query.eq("execution_status", commandStatusFilter);
       }
       return query;
-    })()
+    })(),
+    supabase
+      .from("chat_confirmations")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("decided_by", userId)
+      .eq("status", "confirmed")
+      .gte("decided_at", dayStartIso)
   ]);
 
   if (messagesError) {
@@ -111,6 +124,9 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   }
   if (commandsError) {
     throw new Error(`Failed to load chat commands: ${commandsError.message}`);
+  }
+  if (todayCountError) {
+    throw new Error(`Failed to load daily confirmation usage: ${todayCountError.message}`);
   }
 
   const confirmations = ((confirmationsData ?? []) as ConfirmationRow[]).filter((row) => {
@@ -141,6 +157,15 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   }
 
   const messages = (messagesData ?? []) as ChatMessageRow[];
+  const confirmedToday = todayConfirmedCount ?? 0;
+  const remainingToday = Math.max(0, dailyLimit - confirmedToday);
+  const usageRatio = confirmedToday / dailyLimit;
+  const usageClass =
+    usageRatio >= 1
+      ? "border-rose-300 bg-rose-50 text-rose-800"
+      : usageRatio >= 0.8
+        ? "border-amber-300 bg-amber-50 text-amber-800"
+        : "border-emerald-300 bg-emerald-50 text-emerald-800";
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -161,6 +186,9 @@ export async function ChatShell({ scope, title, description, submitAction, searc
           （承認判断・実行コマンドは停止されます）
         </p>
       ) : null}
+      <div className={`rounded-md border px-3 py-2 text-xs ${usageClass}`}>
+        本日のチャット実行: {confirmedToday}/{dailyLimit}（残り {remainingToday}）
+      </div>
 
       {confirmations.length > 0 ? (
         <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
