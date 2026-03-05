@@ -54,6 +54,7 @@ Set these in `.env.local`:
 - `INCIDENT_AUTO_LOOKBACK_HOURS` (default `6`)
 - `EXCEPTION_ALERTS_TOKEN` (optional; fallback to incident/governance/planner token)
 - `APPROVAL_REMINDER_TOKEN` (optional; fallback to exception/incident/governance/planner token)
+- `CHAT_CONFIRMATIONS_TOKEN` (optional; fallback to approval/exception/incident/governance/planner token)
 - `EXCEPTION_EXPORT_TOKEN` (optional; enables server-to-server exception export API access)
 - `EXCEPTION_ALERT_COOLDOWN_MINUTES` (default `60`)
 - `OPS_JOB_RETRY_MAX_ATTEMPTS` (default `2`, max per-org attempt count for batch APIs)
@@ -183,6 +184,7 @@ Set these in `.env.local`:
   - `/api/incidents/auto-open?max_orgs=<N>`
   - `/api/operations/exceptions/alerts?max_orgs=<N>`
   - `/api/approvals/reminders?max_orgs=<N>`
+  - `/api/chat/confirmations/expire?max_orgs=<N>`
 - Required repository secrets:
   - `APP_BASE_URL` (public reachable URL, e.g. prod URL)
   - `PLANNER_RUN_TOKEN`
@@ -192,6 +194,7 @@ Set these in `.env.local`:
   - `INCIDENT_AUTOMATION_TOKEN` (if omitted, governance/planner token is reused)
   - `EXCEPTION_ALERTS_TOKEN` (if omitted, incident/governance/planner token is reused)
   - `APPROVAL_REMINDER_TOKEN` (if omitted, exception/incident/governance/planner token is reused)
+  - `CHAT_CONFIRMATIONS_TOKEN` (if omitted, approval/exception/incident/governance/planner token is reused)
 - Optional repository variables:
   - `AUTONOMY_API_RETRY_COUNT` (default `2`)
   - `AUTONOMY_API_RETRY_WAIT_SECONDS` (default `5`)

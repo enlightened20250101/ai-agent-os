@@ -747,3 +747,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` で pending/overdue confirmations を可視化し、`期限切れ確認を整理` を実行可能にした。
 - Why: 実行確認キューの滞留を監査画面から直接解消できるようにし、確認フローの健全性を維持するため。
+
+- Decision: 期限切れ確認整理ロジックを `lib/chat/maintenance.ts` に共通化し、UI server action と cron API の両方から利用する設計にした。
+- Why: 同じ更新ロジックを一元化して挙動差分を防ぎ、運用時の保守を容易にするため。
+
+- Decision: `/api/chat/confirmations/expire` を追加し、org単体/全orgバッチで pending確認の期限切れ処理を実行できるようにした（token guard + retry/circuit対応）。
+- Why: 手動整理に依存せず、確認キューを自動で健全化する定期保守ループを確立するため。

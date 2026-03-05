@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { executeTaskDraftActionShared } from "@/lib/actions/executeDraft";
 import { decideApprovalShared } from "@/lib/approvals/decide";
 import { parseChatIntent } from "@/lib/chat/intents";
+import { expirePendingChatConfirmations } from "@/lib/chat/maintenance";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
@@ -857,49 +858,24 @@ export async function expireStaleChatConfirmations(formData: FormData) {
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
-  const nowIso = new Date().toISOString();
-
-  const { data: expiredRows, error: updateError } = await supabase
-    .from("chat_confirmations")
-    .update({
-      status: "expired",
-      decided_at: nowIso,
-      decided_by: userId
-    })
-    .eq("org_id", orgId)
-    .eq("status", "pending")
-    .lt("expires_at", nowIso)
-    .select("id, session_id, intent_id, expires_at");
-
-  if (updateError) {
-    redirect(`${redirectPath}?error=${encodeURIComponent(`期限切れ更新に失敗しました: ${updateError.message}`)}`);
-  }
-
-  const rows = expiredRows ?? [];
-  if (rows.length > 0) {
-    const messages = rows.map((row) => ({
-      org_id: orgId,
-      session_id: row.session_id as string,
-      sender_type: "system",
-      sender_user_id: null,
-      body_text: "確認期限切れのため、この実行確認は無効化されました。",
-      metadata_json: {
-        confirmation_id: row.id,
-        intent_id: row.intent_id,
-        auto_expired: true,
-        expired_at: nowIso
-      }
-    }));
-    const { error: insertError } = await supabase.from("chat_messages").insert(messages);
-    if (insertError) {
-      redirect(`${redirectPath}?error=${encodeURIComponent(`期限切れ通知の保存に失敗しました: ${insertError.message}`)}`);
-    }
+  let expiredCount = 0;
+  try {
+    const result = await expirePendingChatConfirmations({
+      supabase,
+      orgId,
+      actorUserId: userId,
+      source: "manual"
+    });
+    expiredCount = result.expiredCount;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "期限切れ更新に失敗しました。";
+    redirect(`${redirectPath}?error=${encodeURIComponent(message)}`);
   }
 
   revalidatePath("/app/chat/shared");
   revalidatePath("/app/chat/me");
   revalidatePath("/app/chat/audit");
-  redirect(`${redirectPath}?ok=${encodeURIComponent(`期限切れ確認を${rows.length}件更新しました。`)}`);
+  redirect(`${redirectPath}?ok=${encodeURIComponent(`期限切れ確認を${expiredCount}件更新しました。`)}`);
 }
 
 export async function retryChatCommand(formData: FormData) {

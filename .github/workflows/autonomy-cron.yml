@@ -283,3 +283,50 @@ jobs:
           else
             echo "$RESP"
           fi
+
+      - name: Expire stale chat confirmations batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          CHAT_CONFIRMATIONS_TOKEN: ${{ secrets.CHAT_CONFIRMATIONS_TOKEN }}
+          APPROVAL_REMINDER_TOKEN: ${{ secrets.APPROVAL_REMINDER_TOKEN }}
+          EXCEPTION_ALERTS_TOKEN: ${{ secrets.EXCEPTION_ALERTS_TOKEN }}
+          INCIDENT_AUTOMATION_TOKEN: ${{ secrets.INCIDENT_AUTOMATION_TOKEN }}
+          GOV_RECOMMENDATIONS_TOKEN: ${{ secrets.GOV_RECOMMENDATIONS_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${CHAT_CONFIRMATIONS_TOKEN:-${APPROVAL_REMINDER_TOKEN:-${EXCEPTION_ALERTS_TOKEN:-${INCIDENT_AUTOMATION_TOKEN:-${GOV_RECOMMENDATIONS_TOKEN:-${PLANNER_RUN_TOKEN}}}}}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Chat confirmations expire batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/chat/confirmations/expire?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-chat-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Chat confirmations expire batch failed after retry."
+              exit 1
+            fi
+            echo "Chat confirmations expire batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Chat confirmation expire summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\texpired=\(.expired_count // 0)"' || true
+            echo "Chat confirmation expire skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Chat confirmation expire dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
