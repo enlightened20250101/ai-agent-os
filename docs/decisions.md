@@ -846,3 +846,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` に「条件リンクをコピー」ボタンを追加し、現在のフィルタ条件付きURL（絶対URL）をクリップボードへ共有できるようにした。
 - Why: オペレーター間で同一条件の監査ビューを即共有し、調査の再現性を高めるため。
+
+- Decision: `/app/chat/audit` ヘッダ直下に `status/scope/intent/skip_reason` の現在条件バッジを常時表示する。
+- Why: 共有リンク経由でも表示条件を瞬時に把握でき、認識齟齬を減らすため。

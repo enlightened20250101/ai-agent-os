@@ -288,6 +288,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           <CopyFilterLinkButton path={currentFilterPath} />
         </div>
       </header>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">status: {statusFilter}</span>
+        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">scope: {scopeFilter}</span>
+        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">intent: {intentFilter}</span>
+        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">skip_reason: {skipReasonFilter}</span>
+      </div>
       {hasActiveExportFilters ? (
         <p className="text-xs text-slate-500">エクスポート条件: {activeFilterSummary}</p>
       ) : null}
