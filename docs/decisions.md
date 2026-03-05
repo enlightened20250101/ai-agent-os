@@ -945,3 +945,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 高失敗intentが閾値（失敗率50%以上）を超える場合、トップページに警告バナーを表示し `status=failed&intent=<type>` の監査ビューへ直接誘導する。
 - Why: ボトルネック意図へのトリアージを1クリック化し、会話起点運用の復旧速度を高めるため。
+
+- Decision: `TOP(/app)` の高失敗intentバナーに「このintentで再実行確認を一括作成（5件）」ボタンを追加し、`bulkRetryFailedCommands` を直接実行できるようにした。
+- Why: 異常検知から復旧アクションまでを同一画面で完結させ、初動時間をさらに短縮するため。
+
+- Decision: `bulkRetryFailedCommands` 実行時に `/app` も再検証対象に追加した。
+- Why: ホーム画面起点の操作後に指標とバナー状態が即時反映されるようにするため。

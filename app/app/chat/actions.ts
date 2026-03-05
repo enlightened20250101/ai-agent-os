@@ -2155,6 +2155,7 @@ export async function bulkRetryFailedCommands(formData: FormData) {
   revalidatePath("/app/chat/shared");
   revalidatePath("/app/chat/me");
   revalidatePath("/app/chat/audit");
+  revalidatePath("/app");
 
   const intentSuffix = intentType && intentType !== "all" ? ` intent=${intentType}` : "";
   const message = `再実行確認を${createdCount}件作成しました${intentSuffix}（pending重複:${skippedPendingCount} / 上限スキップ:${skippedLimitCount} / 失敗:${failedCount}）。`;

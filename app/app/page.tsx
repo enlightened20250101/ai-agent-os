@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { bulkRetryFailedCommands } from "@/app/app/chat/actions";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -615,6 +616,18 @@ export default async function AppHomePage() {
             <Link href={worstIntentHref} className="underline">
               failed一覧で優先対処
             </Link>
+            <form action={bulkRetryFailedCommands} className="mt-2 flex flex-wrap items-center gap-2">
+              <input type="hidden" name="return_to" value="/app" />
+              <input type="hidden" name="scope" value="all" />
+              <input type="hidden" name="intent_type" value={worstFailedIntent.intentType} />
+              <input type="hidden" name="max_items" value="5" />
+              <button
+                type="submit"
+                className="rounded-md border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+              >
+                このintentで再実行確認を一括作成（5件）
+              </button>
+            </form>
           </div>
         ) : null}
       </section>
