@@ -124,3 +124,18 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Mark Tasks/Task Detail/Approvals pages as `force-dynamic`.
 - Why: Avoid stale cached reads after server actions so status and event timelines reflect latest DB writes (including `HUMAN_APPROVED`/`HUMAN_REJECTED`).
+
+### 2026-03-05 - Draft generation and policy MVP
+
+- Decision: Generate structured draft JSON server-side via OpenAI with deterministic prompt/temperature and store results in `MODEL_INFERRED`.
+- Why: Keeps draft generation auditable and reusable by approvals/actions pipeline.
+
+### 2026-03-05 - E2E LLM stub mode
+
+- Decision: When `E2E_MODE=1`, LLM helper returns deterministic server-side stub output and skips real OpenAI calls.
+- Why: Makes E2E stable, fast, and independent of external model/network variability.
+
+### 2026-03-05 - Approval gating by draft policy
+
+- Decision: `Request Approval` is enabled only when latest draft exists and latest policy status is not `block`.
+- Why: Enforces minimal safety policy before human approval flow.

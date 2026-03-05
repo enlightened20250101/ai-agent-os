@@ -20,7 +20,8 @@ type AppendTaskEventArgs = {
   supabase: SupabaseClient;
   orgId: string;
   taskId: string;
-  actorId: string;
+  actorType?: "user" | "agent" | "system";
+  actorId?: string | null;
   eventType: AppEventType;
   payload: Record<string, unknown>;
 };
@@ -31,14 +32,15 @@ export async function appendTaskEvent({
   supabase,
   orgId,
   taskId,
-  actorId,
+  actorType = "user",
+  actorId = null,
   eventType,
   payload
 }: AppendTaskEventArgs) {
   const { error } = await supabase.from("task_events").insert({
     org_id: orgId,
     task_id: taskId,
-    actor_type: "user",
+    actor_type: actorType,
     actor_id: actorId,
     event_type: eventType,
     payload_json: payload

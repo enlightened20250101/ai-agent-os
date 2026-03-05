@@ -84,6 +84,10 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
     taskPath = new URL(page.url()).pathname;
     taskId = taskPath.split("/").pop() ?? null;
 
+    await page.getByRole("button", { name: "Generate Draft" }).click();
+    await expect(page.getByText("MODEL_INFERRED").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("POLICY_CHECKED").first()).toBeVisible({ timeout: 30_000 });
+
     await page.getByRole("button", { name: "Request Approval" }).click();
     await expect(page.getByText("APPROVAL_REQUESTED")).toBeVisible({ timeout: 30_000 });
 
@@ -121,9 +125,9 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
     await page.goto(taskPath);
     const taskHeaderSection = page.locator("section").first();
     await expect(taskHeaderSection.getByText(/^Status: approved$/)).toBeVisible();
-    await expect(page.getByText("TASK_CREATED")).toBeVisible();
-    await expect(page.getByText("APPROVAL_REQUESTED")).toBeVisible();
-    await expect(page.getByText("HUMAN_APPROVED")).toBeVisible();
+    await expect(page.getByText("TASK_CREATED").first()).toBeVisible();
+    await expect(page.getByText("APPROVAL_REQUESTED").first()).toBeVisible();
+    await expect(page.getByText("HUMAN_APPROVED").first()).toBeVisible();
     flowSucceeded = true;
   } finally {
     const didPassByStatus = testInfo.status === testInfo.expectedStatus;

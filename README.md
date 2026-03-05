@@ -37,6 +37,7 @@ Set these in `.env.local`:
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI`
 - `OPENAI_API_KEY`
+- `ALLOWED_EMAIL_DOMAINS` (optional, comma-separated allowlist for policy check)
 - `E2E_PASSWORD` (for Playwright signup/login test account)
 - `E2E_CLEANUP_TOKEN` (required to authorize test cleanup endpoint)
 
