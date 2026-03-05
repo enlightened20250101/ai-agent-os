@@ -834,3 +834,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` の `skip_reason` 集計チップと行バッジをクリック可能にし、その場で同原因フィルタへ切り替えられるUIにした。
 - Why: フィルタ操作を最小化し、一覧確認中のドリルダウン速度を上げるため。
+
+- Decision: `/api/chat/audit/export` に `skip_reason` フィルタを適用し、CSVメタヘッダと `content-disposition` ファイル名へフィルタ値（status/scope/intent/skip_reason）を反映した。
+- Why: 監査提出時に「どの条件で抽出したファイルか」をファイル単体で追跡可能にするため。

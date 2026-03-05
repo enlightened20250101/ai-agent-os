@@ -59,6 +59,7 @@ export async function GET(request: Request) {
     ? (url.searchParams.get("scope") as string)
     : "all";
   const intentFilter = url.searchParams.get("intent")?.trim() || "all";
+  const skipReasonFilter = url.searchParams.get("skip_reason")?.trim() || "all";
   const format = (url.searchParams.get("format") ?? "csv").toLowerCase();
   const limitRaw = Number.parseInt(String(url.searchParams.get("limit") ?? "5000"), 10);
   const offsetRaw = Number.parseInt(String(url.searchParams.get("offset") ?? "0"), 10);
@@ -125,6 +126,12 @@ export async function GET(request: Request) {
   let filtered = commands.filter((row) => {
     if (scopeFilter !== "all" && sessionMap.get(row.session_id)?.scope !== scopeFilter) return false;
     if (intentFilter !== "all" && intentMap.get(row.intent_id)?.intentType !== intentFilter) return false;
+    if (skipReasonFilter !== "all") {
+      const result =
+        row.result_json && typeof row.result_json === "object" ? (row.result_json as Record<string, unknown>) : null;
+      if (!result || result.skipped !== true) return false;
+      if (result.skip_reason !== skipReasonFilter) return false;
+    }
     return true;
   });
 
@@ -165,6 +172,7 @@ export async function GET(request: Request) {
     filter_status: statusFilter,
     filter_scope: scopeFilter,
     filter_intent: intentFilter,
+    filter_skip_reason: skipReasonFilter,
     filter_limit: limit,
     filter_offset: offset,
     filter_include_result: includeResult,
@@ -200,6 +208,7 @@ export async function GET(request: Request) {
     `# filter_status,${csvEscape(meta.filter_status)}`,
     `# filter_scope,${csvEscape(meta.filter_scope)}`,
     `# filter_intent,${csvEscape(meta.filter_intent)}`,
+    `# filter_skip_reason,${csvEscape(meta.filter_skip_reason)}`,
     `# filter_limit,${csvEscape(String(meta.filter_limit))}`,
     `# filter_offset,${csvEscape(String(meta.filter_offset))}`,
     `# filter_include_result,${csvEscape(String(meta.filter_include_result))}`,
@@ -231,7 +240,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const filename = `chat-audit-${orgId}-${exportedAt.slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+  const safeFilter = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32) || "all";
+  const filename = `chat-audit-${orgId}-${safeFilter(statusFilter)}-${safeFilter(scopeFilter)}-${safeFilter(intentFilter)}-${safeFilter(
+    skipReasonFilter
+  )}-${exportedAt.slice(0, 19).replace(/[:T]/g, "-")}.csv`;
   return new NextResponse(lines.join("\n"), {
     headers: {
       "content-type": "text/csv; charset=utf-8",
