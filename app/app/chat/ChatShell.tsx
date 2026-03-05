@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { confirmChatCommand, retryChatCommand } from "@/app/app/chat/actions";
+import { confirmChatCommand, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import type { ChatScope } from "@/lib/chat/sessions";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
@@ -164,7 +164,18 @@ export async function ChatShell({ scope, title, description, submitAction, searc
 
       {confirmations.length > 0 ? (
         <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-900">実行確認待ち</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-amber-900">実行確認待ち</p>
+            <form action={expireStaleChatConfirmations}>
+              <input type="hidden" name="scope" value={scope} />
+              <button
+                type="submit"
+                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+              >
+                期限切れを整理
+              </button>
+            </form>
+          </div>
           {confirmations.map((confirmation) => (
             <div key={confirmation.id} className="rounded-md border border-amber-300 bg-white p-3">
               <p className="text-sm text-slate-800">{intentMap.get(confirmation.intent_id) ?? "実行確認"}</p>
