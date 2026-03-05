@@ -611,6 +611,21 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           </select>
         </label>
         <label className="flex items-center gap-1">
+          intent
+          <select
+            name="intent_type"
+            defaultValue={intentFilter !== "all" ? intentFilter : worstIntent?.intentType ?? "all"}
+            className="rounded-md border border-rose-300 bg-white px-2 py-1"
+          >
+            <option value="all">all</option>
+            {intentOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1">
           件数
           <input
             type="number"
@@ -634,6 +649,11 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         {bulkRetryEmphasis ? (
           <span className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 font-medium text-rose-800">
             failed {statusCount.failed}件: 優先実行
+          </span>
+        ) : null}
+        {worstIntent ? (
+          <span className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 font-medium text-rose-800">
+            高失敗intent: {worstIntent.intentType}
           </span>
         ) : null}
       </form>

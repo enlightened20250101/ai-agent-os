@@ -933,3 +933,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 失敗率が高い意図（件数>=3かつ失敗率>=50%）を `worstIntent` として推奨アクションを表示する。
 - Why: 監査画面を「可視化だけ」で終わらせず、次に取るべき改善行動へ繋げるため。
+
+- Decision: `bulkRetryFailedCommands` に `intent_type` フィルタを追加し、失敗コマンドの一括再実行確認作成を意図別に絞り込めるようにした。
+- Why: 高失敗intentに対する集中的な復旧オペレーションを1操作で実行できるようにするため。
+
+- Decision: `/app/chat/audit` の一括作成フォームに intent セレクトを追加し、既定値を現在フィルタintent（なければ worstIntent）にする。
+- Why: 監査で見つけた失敗クラスターに即追従できるUIにして、復旧までのクリック数を減らすため。

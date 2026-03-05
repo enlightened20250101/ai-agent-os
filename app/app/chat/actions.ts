@@ -2066,13 +2066,14 @@ export async function bulkRetryFailedCommands(formData: FormData) {
   const maxItemsRaw = Number.parseInt(String(formData.get("max_items") ?? "5"), 10);
   const maxItems = Number.isNaN(maxItemsRaw) ? 5 : Math.max(1, Math.min(20, maxItemsRaw));
   const scope = String(formData.get("scope") ?? "").trim();
+  const intentType = String(formData.get("intent_type") ?? "").trim();
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
 
   let commandQuery = supabase
     .from("chat_commands")
-    .select("id, session_id, created_at")
+    .select("id, session_id, intent_id, created_at")
     .eq("org_id", orgId)
     .eq("execution_status", "failed")
     .order("created_at", { ascending: false })
@@ -2092,6 +2093,24 @@ export async function bulkRetryFailedCommands(formData: FormData) {
       redirect(`${returnTo}?ok=${encodeURIComponent("対象scopeに再実行候補がありません。")}`);
     }
     commandQuery = commandQuery.in("session_id", sessionIds);
+  }
+
+  if (intentType && intentType !== "all") {
+    const { data: intents, error: intentsError } = await supabase
+      .from("chat_intents")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("intent_type", intentType)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (intentsError) {
+      redirect(`${returnTo}?error=${encodeURIComponent(`intent取得に失敗しました: ${intentsError.message}`)}`);
+    }
+    const intentIds = (intents ?? []).map((row) => row.id as string);
+    if (intentIds.length === 0) {
+      redirect(`${returnTo}?ok=${encodeURIComponent(`intent=${intentType} の失敗コマンドはありません。`)}`);
+    }
+    commandQuery = commandQuery.in("intent_id", intentIds);
   }
 
   const { data: commands, error: commandsError } = await commandQuery;
@@ -2137,7 +2156,8 @@ export async function bulkRetryFailedCommands(formData: FormData) {
   revalidatePath("/app/chat/me");
   revalidatePath("/app/chat/audit");
 
-  const message = `再実行確認を${createdCount}件作成しました（pending重複:${skippedPendingCount} / 上限スキップ:${skippedLimitCount} / 失敗:${failedCount}）。`;
+  const intentSuffix = intentType && intentType !== "all" ? ` intent=${intentType}` : "";
+  const message = `再実行確認を${createdCount}件作成しました${intentSuffix}（pending重複:${skippedPendingCount} / 上限スキップ:${skippedLimitCount} / 失敗:${failedCount}）。`;
   redirect(`${returnTo}?ok=${encodeURIComponent(message)}`);
 }
 
