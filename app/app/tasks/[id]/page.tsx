@@ -240,6 +240,9 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
           <Link href="/app/tasks" className="text-sm">
             Back to tasks
           </Link>
+          <Link href={`/app/tasks/${task.id as string}/evidence`} className="text-sm">
+            Evidence Pack
+          </Link>
         </div>
 
         {sp.error ? (

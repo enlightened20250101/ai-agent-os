@@ -133,6 +133,17 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
     await expect(page.getByText("TASK_CREATED").first()).toBeVisible();
     await expect(page.getByText("APPROVAL_REQUESTED").first()).toBeVisible();
     await expect(page.getByText("HUMAN_APPROVED").first()).toBeVisible();
+
+    if (!taskId) {
+      throw new Error("Task id not captured.");
+    }
+    await page.goto(`/app/tasks/${taskId}/evidence`);
+    await expect(page.getByText("Task Summary")).toBeVisible();
+    await expect(page.getByText("MODEL_INFERRED").first()).toBeVisible();
+    await expect(page.getByText("POLICY_CHECKED").first()).toBeVisible();
+    await expect(page.getByText("ACTION_EXECUTED").first()).toBeVisible();
+    await expect(page.getByText(`title: ${taskTitle}`).first()).toBeVisible();
+
     flowSucceeded = true;
   } finally {
     const didPassByStatus = testInfo.status === testInfo.expectedStatus;

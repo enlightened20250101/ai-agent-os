@@ -169,3 +169,8 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: In `E2E_MODE=1`, Gmail send returns deterministic message id without external API calls while still writing `actions` and `ACTION_*` events.
 - Why: Preserves end-to-end execution coverage without sending real emails.
+
+### 2026-03-05 - Evidence Pack format for MVP
+
+- Decision: Provide a print-friendly authenticated HTML evidence report per task with structured sections plus raw event/action JSON via collapsible blocks.
+- Why: Delivers audit-readiness immediately without introducing PDF generation complexity.
