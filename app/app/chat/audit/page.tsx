@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type AuditPageProps = {
-  searchParams?: Promise<{ status?: string; scope?: string; intent?: string; ok?: string; error?: string }>;
+  searchParams?: Promise<{ status?: string; scope?: string; intent?: string; skip_reason?: string; ok?: string; error?: string }>;
 };
 
 type CommandRow = {
@@ -82,6 +82,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
       : "all";
   const scopeFilter = sp.scope === "shared" || sp.scope === "personal" ? sp.scope : "all";
   const intentFilter = typeof sp.intent === "string" && sp.intent.length > 0 ? sp.intent : "all";
+  const skipReasonFilter = typeof sp.skip_reason === "string" && sp.skip_reason.length > 0 ? sp.skip_reason : "all";
 
   let commandQuery = supabase
     .from("chat_commands")
@@ -170,6 +171,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   if (intentFilter !== "all") {
     rows = rows.filter((row) => intentMap.get(row.intent_id)?.intentType === intentFilter);
   }
+  if (skipReasonFilter !== "all") {
+    rows = rows.filter((row) => {
+      const result = asObject(row.result_json);
+      return result?.skipped === true && result?.skip_reason === skipReasonFilter;
+    });
+  }
 
   const statusCount = {
     done: rows.filter((row) => row.execution_status === "done").length,
@@ -203,6 +210,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   exportParams.set("status", statusFilter);
   exportParams.set("scope", scopeFilter);
   exportParams.set("intent", intentFilter);
+  exportParams.set("skip_reason", skipReasonFilter);
   exportParams.set("include_result", "1");
   exportParams.set("limit", "5000");
 
@@ -344,6 +352,17 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
             {intentOptions.map((option) => (
               <option key={option} value={option}>
                 {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          skip_reason
+          <select name="skip_reason" defaultValue={skipReasonFilter} className="rounded-md border border-slate-300 bg-white px-2 py-1">
+            <option value="all">all</option>
+            {topSkipReasons.map(([reason]) => (
+              <option key={reason} value={reason}>
+                {reason}
               </option>
             ))}
           </select>

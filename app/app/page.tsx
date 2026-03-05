@@ -125,13 +125,25 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 function skipRecommendation(reason: string | null) {
   if (reason === "approval_not_pending") {
-    return { text: "承認待ちの先行解消が多発。承認キューを先に確認。", href: "/app/approvals", severity: "medium" as const };
+    return {
+      text: "承認待ちの先行解消が多発。承認キューを先に確認。",
+      href: "/app/chat/audit?skip_reason=approval_not_pending",
+      severity: "medium" as const
+    };
   }
   if (reason === "approval_already_pending") {
-    return { text: "重複依頼が多発。既存pending優先に運用統一。", href: "/app/approvals", severity: "low" as const };
+    return {
+      text: "重複依頼が多発。既存pending優先に運用統一。",
+      href: "/app/chat/audit?skip_reason=approval_already_pending",
+      severity: "low" as const
+    };
   }
   if (reason === "stale_top_candidates") {
-    return { text: "TOP候補が陳腐化。先に状況確認を再実行。", href: "/app/chat/shared", severity: "high" as const };
+    return {
+      text: "TOP候補が陳腐化。先に状況確認を再実行。",
+      href: "/app/chat/audit?skip_reason=stale_top_candidates",
+      severity: "high" as const
+    };
   }
   return { text: "skip要因を監査画面で確認。", href: "/app/chat/audit", severity: "low" as const };
 }
@@ -280,6 +292,9 @@ export default async function AppHomePage() {
   const topSkipReason = topSkipReasonEntry?.[0] ?? null;
   const topSkipReasonCount = topSkipReasonEntry?.[1] ?? 0;
   const skipReco = skipRecommendation(topSkipReason);
+  const chatSkipHref = topSkipReason
+    ? `/app/chat/audit?skip_reason=${encodeURIComponent(topSkipReason)}`
+    : "/app/chat/audit";
   const actionSuccessRate =
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
@@ -474,7 +489,7 @@ export default async function AppHomePage() {
             </p>
           </Link>
           <Link
-            href="/app/chat/audit"
+            href={chatSkipHref}
             className={`rounded-lg border p-3 ${
               skippedChatCommands > 0
                 ? skipReco.severity === "high"

@@ -828,3 +828,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` トップの優先対応キューに「チャット skip(7d)」カードを追加し、主因 `skip_reason` と推奨1手（リンク付き）を同時表示する。
 - Why: 監査画面に入る前のダッシュボード段階でチャット運用の詰まりを検知し、初動を速めるため。
+
+- Decision: `/app/chat/audit` に `skip_reason` フィルタを追加し、トップのチャットヘルスカードから `skip_reason=<cause>` 付きで直接遷移する導線を実装した。
+- Why: 原因別トリアージ画面へ1クリックで到達できるようにし、分析開始までの時間を短縮するため。
