@@ -661,3 +661,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` に pending承認の経過時間バッジ（SLA超過判定）と「Slackに再通知」アクションを追加した。
 - Why: 承認滞留を可視化し、承認者への再通知を1クリックで実施できるようにしてリードタイムを短縮するため。
+
+- Decision: `/app/approvals` に `stale_only` フィルタと `oldest/newest` ソートを追加した。
+- Why: SLA超過承認の優先処理と、運用時の確認順序（古い順/新しい順）を明示的に切り替えられるようにするため。

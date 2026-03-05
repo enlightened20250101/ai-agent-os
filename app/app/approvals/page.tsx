@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type ApprovalsPageProps = {
-  searchParams?: Promise<{ error?: string; ok?: string }>;
+  searchParams?: Promise<{ error?: string; ok?: string; stale_only?: string; sort?: string }>;
 };
 
 type ApprovalRow = {
@@ -23,6 +23,8 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const sp = searchParams ? await searchParams : {};
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const staleHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
+  const staleOnly = sp.stale_only === "1";
+  const sort = sp.sort === "newest" ? "newest" : "oldest";
 
   const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }] = await Promise.all([
     supabase
@@ -48,8 +50,20 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   }
 
   const pendingApprovals = (approvals ?? []) as ApprovalRow[];
+  const filteredApprovals = pendingApprovals
+    .filter((approval) => {
+      if (!staleOnly) return true;
+      const ageHours = (Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000);
+      return ageHours >= staleHours;
+    })
+    .sort((a, b) => {
+      if (sort === "newest") {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
   const weeklyRows = weeklyApprovals ?? [];
-  const taskIds = pendingApprovals.map((approval) => approval.task_id);
+  const taskIds = filteredApprovals.map((approval) => approval.task_id);
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
   const pendingCount = weeklyRows.filter((row) => row.status === "pending").length;
@@ -90,6 +104,29 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </p>
       ) : null}
 
+      <form method="get" className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            name="stale_only"
+            value="1"
+            defaultChecked={staleOnly}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          SLA超過のみ
+        </label>
+        <label className="inline-flex items-center gap-2">
+          並び順
+          <select name="sort" defaultValue={sort} className="rounded-md border border-slate-300 px-2 py-1">
+            <option value="oldest">古い順</option>
+            <option value="newest">新しい順</option>
+          </select>
+        </label>
+        <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
+          適用
+        </button>
+      </form>
+
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
           <p className="text-amber-700">7日 pending</p>
@@ -126,9 +163,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </div>
       </div>
 
-      {pendingApprovals.length > 0 ? (
+      {filteredApprovals.length > 0 ? (
         <ul className="mt-5 space-y-4">
-          {pendingApprovals.map((approval) => (
+          {filteredApprovals.map((approval) => (
             <li key={approval.id} className="rounded-md border border-amber-200 bg-amber-50/30 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm text-slate-700">
@@ -193,7 +230,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           ))}
         </ul>
       ) : (
-        <p className="mt-4 text-sm text-slate-600">保留中の承認はありません。</p>
+        <p className="mt-4 text-sm text-slate-600">
+          {staleOnly ? `SLA超過（${staleHours}h以上）の保留承認はありません。` : "保留中の承認はありません。"}
+        </p>
       )}
     </section>
   );
