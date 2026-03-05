@@ -9,6 +9,7 @@ type SlackEventEnvelope = {
   challenge?: string;
   event_id?: string;
   team_id?: string;
+  e2e_org_id?: string;
   team?: { id?: string };
   event?: {
     type?: string;
@@ -24,6 +25,16 @@ type SlackEventEnvelope = {
 
 function json(data: Record<string, unknown>, status = 200) {
   return NextResponse.json(data, { status });
+}
+
+function isE2EMode() {
+  return process.env.NODE_ENV === "test" || process.env.E2E_MODE === "1";
+}
+
+function hasValidE2EToken(request: Request) {
+  const expected = process.env.E2E_CLEANUP_TOKEN;
+  if (!expected) return false;
+  return request.headers.get("x-e2e-cleanup-token") === expected;
 }
 
 function isUniqueViolation(error: unknown) {
@@ -138,21 +149,32 @@ export async function POST(request: Request) {
     (typeof body.team_id === "string" ? body.team_id : null) ??
     (typeof body.team?.id === "string" ? body.team.id : null);
 
-  const ctx = await resolveSlackContext({ teamId });
-  if (!ctx) {
-    return json({ error: "slack_not_configured" }, 400);
-  }
-
-  const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
-  const signature = request.headers.get("x-slack-signature") ?? "";
-  const validSignature = verifySlackSignature({
-    signingSecret: ctx.signingSecret,
-    timestamp,
-    signature,
-    rawBody
-  });
-  if (!validSignature) {
-    return json({ error: "invalid_signature" }, 401);
+  const e2eBypass = isE2EMode() && hasValidE2EToken(request);
+  let ctx = await resolveSlackContext({ teamId });
+  if (e2eBypass) {
+    const e2eOrgId = typeof body.e2e_org_id === "string" ? body.e2e_org_id.trim() : "";
+    if (!e2eOrgId) {
+      return json({ error: "missing_e2e_org_id" }, 400);
+    }
+    ctx = {
+      orgId: e2eOrgId,
+      signingSecret: "e2e-bypass"
+    };
+  } else {
+    if (!ctx) {
+      return json({ error: "slack_not_configured" }, 400);
+    }
+    const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
+    const signature = request.headers.get("x-slack-signature") ?? "";
+    const validSignature = verifySlackSignature({
+      signingSecret: ctx.signingSecret,
+      timestamp,
+      signature,
+      rawBody
+    });
+    if (!validSignature) {
+      return json({ error: "invalid_signature" }, 401);
+    }
   }
 
   if (body.type === "url_verification") {

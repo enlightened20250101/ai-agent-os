@@ -637,3 +637,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` に「優先対応キュー」カードを追加し、滞留承認・24h失敗アクション・block提案・未判断提案を緊急色で可視化した。
 - Why: 運用者が最初に手を付けるべき詰まりを1画面で把握し、例外処理中心の運用を加速するため。
+
+- Decision: `E2E_MODE` で `x-e2e-cleanup-token` が正しい場合のみ、`/api/slack/events` に `e2e_org_id` 指定の署名バイパス経路を追加した。
+- Why: 本番の署名検証を維持しつつ、PlaywrightでSlack外部依存なしに intake 起票フローを回帰検証するため。

@@ -16,6 +16,7 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
   const email = `e2e+${timestamp}@example.com`;
   const agentName = "E2E Agent";
   const taskTitle = `E2E Task ${timestamp}`;
+  const slackTaskText = `Slack intake E2E ${timestamp}`;
   let activeTaskTitle = taskTitle;
   let orgId: string | null = null;
   let taskPath: string | null = null;
@@ -57,6 +58,37 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
     await expect(page).toHaveURL(/\/app$/);
     const orgContextText = await page.getByText(/組織コンテキスト:\s+/).innerText();
     orgId = orgContextText.split("組織コンテキスト:")[1]?.trim() ?? null;
+    if (!orgId) {
+      throw new Error("Could not resolve orgId from app home.");
+    }
+
+    const slackEventResponse = await request.post("/api/slack/events", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: {
+        type: "event_callback",
+        event_id: `EvE2E${timestamp}`,
+        team_id: "TE2E",
+        e2e_org_id: orgId,
+        event: {
+          type: "app_mention",
+          user: "UE2E",
+          text: slackTaskText,
+          channel: "CE2E",
+          ts: `${Math.floor(Date.now() / 1000)}.123456`
+        }
+      }
+    });
+    if (!slackEventResponse.ok()) {
+      throw new Error(`Slack intake failed: ${slackEventResponse.status()} ${await slackEventResponse.text()}`);
+    }
+
+    await page.goto("/app/tasks?source=slack");
+    await expect(page.getByRole("link", { name: slackTaskText })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("link", { name: slackTaskText }).click();
+    await expect(page.getByText("SLACK_TASK_INTAKE").first()).toBeVisible({ timeout: 30_000 });
 
     await page.goto("/app/agents");
     await page.getByPlaceholder("エージェント名").fill(agentName);
