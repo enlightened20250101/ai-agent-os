@@ -33,6 +33,15 @@ function isBlockedByIncident(intentType: string) {
   return intentType === "decide_approval" || intentType === "execute_action";
 }
 
+function isMutatingIntent(intentType: string) {
+  return (
+    intentType === "create_task" ||
+    intentType === "request_approval" ||
+    intentType === "decide_approval" ||
+    intentType === "execute_action"
+  );
+}
+
 async function addSystemMessage(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -106,6 +115,39 @@ async function assertConfirmationGuardrails(args: {
         throw new Error(`確認作成が短時間に連続しています。${cooldown - deltaSec}秒待って再実行してください。`);
       }
     }
+  }
+}
+
+async function assertUserDailyExecutionLimit(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentType: string;
+}) {
+  if (!isMutatingIntent(args.intentType)) {
+    return;
+  }
+
+  const limitRaw = Number.parseInt(process.env.CHAT_DAILY_EXECUTION_LIMIT ?? "30", 10);
+  const limit = Number.isNaN(limitRaw) ? 30 : Math.max(1, Math.min(500, limitRaw));
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayStartIso = dayStart.toISOString();
+
+  const { count, error } = await args.supabase
+    .from("chat_confirmations")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", args.orgId)
+    .eq("decided_by", args.userId)
+    .eq("status", "confirmed")
+    .gte("decided_at", dayStartIso);
+  if (error) {
+    throw new Error(`日次実行上限チェックに失敗しました: ${error.message}`);
+  }
+
+  const current = count ?? 0;
+  if (current >= limit) {
+    throw new Error(`本日のチャット実行上限(${limit})に達しました。必要なら管理者へ連絡してください。`);
   }
 }
 
@@ -1019,6 +1061,39 @@ export async function confirmChatCommand(formData: FormData) {
 
     revalidatePath(pathForScope(scope));
     redirect(withError(scope, "インシデントモード中のため、この実行はブロックされました。"));
+  }
+
+  try {
+    await assertUserDailyExecutionLimit({
+      supabase,
+      orgId,
+      userId,
+      intentType: intent.intent_type as string
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "実行上限チェックに失敗しました。";
+    await supabase
+      .from("chat_confirmations")
+      .update({
+        status: "declined",
+        decided_at: new Date().toISOString(),
+        decided_by: userId
+      })
+      .eq("id", confirmationId)
+      .eq("org_id", orgId);
+    await addSystemMessage({
+      supabase,
+      orgId,
+      sessionId: confirmation.session_id as string,
+      bodyText: `実行は制限されました: ${message}`,
+      metadata: {
+        confirmation_id: confirmationId,
+        intent_id: intent.id,
+        blocked_by_daily_limit: true
+      }
+    });
+    revalidatePath(pathForScope(scope));
+    redirect(withError(scope, message));
   }
 
   const nowIso = new Date().toISOString();

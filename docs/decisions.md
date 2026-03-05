@@ -759,3 +759,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: chat監査エクスポートに `CHAT_EXPORT_TOKEN` を導入し、`x-export-token + org_id` で server-to-server 取得を許可するモードを追加した。
 - Why: UIセッションなしでも安全に定期取得やバックアップを実行できるようにするため。
+
+- Decision: チャット実行確認（confirmed）にユーザー単位の日次上限 `CHAT_DAILY_EXECUTION_LIMIT`（既定30）を追加し、上限超過時は自動で confirmation を declined にする。
+- Why: 会話起点の実行が短時間に集中した際の誤操作・暴走リスクを抑え、安全に運用できるスループットへ制御するため。

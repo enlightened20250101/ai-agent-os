@@ -77,6 +77,7 @@ Set these in `.env.local`:
 - `APPROVAL_REMINDER_STALE_HOURS` (optional; pending承認の再通知対象しきい値。未設定時は `EXCEPTION_PENDING_APPROVAL_HOURS`)
 - `APPROVAL_REMINDER_COOLDOWN_MINUTES` (default `120`; 同一approvalへの再通知クールダウン)
 - `APPROVAL_REMINDER_MAX_TARGETS` (default `20`; 1回のジョブで処理する最大件数)
+- `CHAT_DAILY_EXECUTION_LIMIT` (default `30`; ユーザー単位の1日あたりチャット実行上限)
 
 ## Scripts
 
