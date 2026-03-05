@@ -199,3 +199,378 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Persist Google OAuth state as single-use rows in `google_oauth_states` (nonce + org/user binding + expiry + consumed_at), and verify/consume from DB in callback.
 - Why: Eliminates cross-domain cookie mismatch issues (localhost vs ngrok), improves replay protection, and makes callback failures diagnosable with explicit error codes.
+
+### 2026-03-05 - Canonical Google redirect URI + callback observability
+
+- Decision: Canonicalize redirect URI through `getGoogleRedirectUri()` (`APP_BASE_URL` normalized, deprecated redirect envs as fallback only), and add `error_id` + step-based server logs for OAuth callback failures.
+- Why: Prevents redirect mismatch drift, improves debugging of 307->not-connected failures, and gives actionable UI error feedback without exposing secrets.
+
+### 2026-03-05 - Sender email detection fallback for Google OAuth
+
+- Decision: Detect sender email via Gmail profile first, then OpenID Connect `userinfo` fallback (`openid email` scope requested).
+- Why: Avoids false "not connected" outcomes when Gmail profile endpoint is unavailable/scoped differently in a project while still deriving a reliable sender identity.
+
+### 2026-03-05 - Gmail MIME encoding hardening
+
+- Decision: Encode non-ASCII subjects using RFC 2047 and send UTF-8 body as base64 with explicit `Content-Transfer-Encoding: base64`.
+- Why: Prevents mojibake for Japanese and other multibyte text across common mail clients.
+
+### 2026-03-05 - UI polish pass
+
+- Decision: Apply a lightweight global visual system update (improved typography, app shell/nav clarity, and elevated card styling) without changing core workflows or labels.
+- Why: Improves daily usability and perceived quality while keeping existing E2E flow stable.
+
+### 2026-03-05 - Autonomous Task Proposer MVP
+
+- Decision: Add periodic planner runs that generate org-scoped `task_proposals`, but keep humans in control by requiring explicit accept/reject before converting into executable tasks.
+- Why: Reduces repetitive operator work while preserving existing approval and action-runner safety gates.
+
+### 2026-03-05 - Planner trigger model
+
+- Decision: Provide both in-product manual trigger (`/app/planner`) and cron-friendly endpoint (`/api/planner/run`) protected by `PLANNER_RUN_TOKEN` outside development.
+- Why: Enables immediate MVP usage and easy future automation via GitHub Actions/external schedulers.
+
+### 2026-03-05 - MVP Japanese localization
+
+- Decision: MVPのユーザー向けUI文言と主要エラーメッセージを日本語化し、イベントタイプや内部ステータス値は英語のまま維持する。
+- Why: 運用者の利用言語に合わせつつ、監査ログ・DB値・E2Eの安定性を保つため。
+
+### 2026-03-05 - Next-generation roadmap assumptions
+
+- Decision: L0->L4の段階的自律化を採用し、L3以降も hard policy block は常に優先（リスク/信頼スコアで上書き不可）とする。
+- Why: 安全性・監査可能性を維持しながら自律化率を高めるため。
+
+- Decision: オーケストレーションは `workflow_runs/workflow_steps` ベースの明示的ステートマシンへ移行し、既存 `task_events/actions` を監査台帳の中核として継続利用する。
+- Why: 既存実装との互換性を保ったまま多段ワークフローと例外制御を拡張できるため。
+
+- Decision: 自律実行の判断は `risk_score + trust_score + budget` の3軸で行い、組織単位で閾値と承認ルールを設定可能にする。
+- Why: マルチテナント環境で安全性と運用柔軟性を両立するため。
+
+- Decision: 小規模チーム向けに1-2週間単位の6フェーズ実装計画を採用し、各フェーズで migration + RLS + UI + E2E を同時に完了条件にする。
+- Why: AI支援開発での実装速度を維持しつつ、品質劣化と後戻りコストを防ぐため。
+
+### 2026-03-05 - Phase 1 proposal triage foundation
+
+- Decision: `task_proposals` に `planner_run_id`, `priority_score`, `estimated_impact_json`, `decision_reason` を追加し、プランナーで優先度/影響度を計算して保存する。
+- Why: 提案の運用優先順位を明示し、accept/reject判断の一貫性と監査性を高めるため。
+
+- Decision: `/api/planner/runs/[id]` を追加し、orgスコープで planner run と関連 proposals の診断JSONを返す。
+- Why: Planner品質改善時の運用デバッグをUI依存なしで実施できるようにするため。
+
+### 2026-03-05 - Phase 2 workflow orchestrator baseline
+
+- Decision: `workflow_templates/workflow_runs/workflow_steps` を追加し、タスクに対する実行を明示的ステートマシンで管理する。
+- Why: 多段処理の進捗・再実行・監査を ad-hoc 実装から分離し、L3/L4へ拡張可能な実行基盤を先に作るため。
+
+- Decision: 初期の workflow 実行は `start` と `advance` の手動進行モデルで提供し、各ステップを `WORKFLOW_*` イベントとして task ledger に記録する。
+- Why: 安全な段階移行のため、まずは可観測性と状態整合性を確立し、その後自動遷移を追加するため。
+
+- Decision: migration 未適用環境でも既存フローを壊さないため、workflow 関連クエリ/書き込みには missing table/column フォールバックを入れる。
+- Why: 開発中の段階導入で E2E と運用継続性を維持するため。
+
+### 2026-03-05 - Phase 3 governance baseline (risk/trust/budget)
+
+- Decision: `org_autonomy_settings`, `risk_assessments`, `trust_scores`, `budget_limits`, `budget_usage` を追加し、組織ごとの自律レベルと実行予算をDBで管理する。
+- Why: L3以降の自動実行判定を設定可能かつ監査可能にするため。
+
+- Decision: `evaluateGovernance` を導入し、`policy + risk_score + trust_score + budget` の合議で `allow_auto_execute | require_approval | block` を返す。
+- Why: 単一条件に依存しない安全な承認バイパス判定を実現するため。
+
+- Decision: 自動実行はデフォルト無効とし、`L3/L4` かつ `auto_execute_google_send_email=true` かつ閾値内の場合のみ `APPROVAL_BYPASSED` を記録して実行を許可する。
+- Why: 既存の承認中心運用を維持しつつ、明示的オプトインで段階的に自律化を進めるため。
+
+### 2026-03-05 - Planner API batch mode for cron
+
+- Decision: `POST /api/planner/run` は `org_id` 指定時の単一実行に加え、`org_id` 省略時は `orgs` を最大 `max_orgs` 件巡回実行する batch mode をサポートする。
+- Why: 外部cron/GitHub Actionsから単一ジョブで複数orgを定期実行できるようにし、運用自動化の初期負荷を下げるため。
+
+### 2026-03-05 - Workflow step executor baseline
+
+- Decision: workflow step type `execute_google_send_email` をオーケストレータに実装し、step開始時に Gmail Action Runner を実行する。
+- Why: L3に向けて「テンプレート駆動の実行」と「既存アクション実行基盤」を統合し、手動サーバーアクション依存を減らすため。
+
+- Decision: workflow経由のメール送信でも `policy + governance + idempotency + concurrency` を適用し、失敗時は `workflow_steps=failed` / `workflow_runs=failed` / `WORKFLOW_FAILED` を記録する。
+- Why: 自律実行パスでも監査性と安全性を manual 実行と同等に保つため。
+
+### 2026-03-05 - Budget edit UI (MVP)
+
+- Decision: `/app/governance/budgets` に `google/send_email` 日次上限の編集フォームを追加し、`budget_limits` を org スコープ upsert で更新する。
+- Why: 自律実行の安全運用で最も重要な実行量制御を、SQL操作なしで運用者が調整できるようにするため。
+
+### 2026-03-05 - Workflow failure-path E2E coverage
+
+- Decision: Playwrightに workflow失敗系シナリオ（未承認タスクで `execute_google_send_email` 実行 -> `workflow_runs.status=failed` -> `WORKFLOW_FAILED` 記録）を追加する。
+- Why: 自律実行で最も重要な「危険時に止まる」挙動を継続的に回帰テストで担保するため。
+
+### 2026-03-05 - Workflow failed-step retry UX
+
+- Decision: failed な workflow run に対して `retryFailedWorkflowRun` を追加し、失敗ステップを `running` に戻して再試行できるUIボタンを run detail に配置する。
+- Why: オペレーターが失敗理由を確認して即座に復旧できる運用導線を用意し、ワークフロー停止時間を短縮するため。
+
+### 2026-03-05 - E2E retry navigation synchronization
+
+- Decision: Playwright の retry 検証はボタンクリック後に `/app/workflows/runs/:id?ok=...` または `?error=...` への遷移完了を必須待機してから task detail へ戻る。
+- Why: Server Action の非同期リダイレクト競合で task 画面確認が先走る flaky failure を防ぎ、`WORKFLOW_RETRIED` イベント検証を安定化するため。
+
+### 2026-03-05 - Incident mode circuit breaker (MVP)
+
+- Decision: `org_incidents` を追加し、open incident が1件でも存在する org は `evaluateGovernance` で強制 `block` 判定にする。
+- Why: 障害・誤送信リスク発生時に、設定値やモデル判断に依存せず自動実行を即時停止できる運用安全装置が必要なため。
+
+- Decision: `/app/governance/incidents` で宣言/解決を運用可能にし、`INCIDENT_DECLARED` / `INCIDENT_RESOLVED` を system task ledger に記録する。
+- Why: 緊急停止の発動/解除を UI から即実施でき、監査時に責任追跡可能な証跡を残すため。
+
+### 2026-03-05 - Trust score auto-update from execution outcomes
+
+- Decision: `recordTrustOutcome` を追加し、`google/send_email` の Action 実行結果（success/failed）ごとに `trust_scores` へ新しいスナップショット行を追記する。
+- Why: 自律判定で使う trust を静的設定ではなく実績ベースにし、継続運用で自動実行の精度を改善するため。
+
+- Decision: trust更新は本処理の失敗要因にしない（失敗時はログ出力のみ）。
+- Why: メール実行やワークフロー本体の可用性を優先し、補助メトリクス更新障害で主要フローを止めないため。
+
+- Decision: 承認却下（`HUMAN_REJECTED`）時にも、対象ドラフトが `google/send_email` なら trust を失敗側に補正する。
+- Why: 人間による差し戻しを「自律判断の不一致シグナル」として学習し、過度な自動実行を抑制するため。
+
+- Decision: `/app/governance/trust` を追加し、最新スナップショットと直近履歴（metadata含む）を可視化する。
+- Why: trust 閾値運用をブラックボックス化せず、運用者が理由を確認しながら調整できるようにするため。
+
+- Decision: Trust画面に期間フィルタ（7/30/90/365日）と role_key フィルタ、success/failed 件数サマリーを追加する。
+- Why: 閾値調整時に「最近の挙動」と「担当ロール別の傾向」を短時間で把握できる運用性を優先するため。
+
+- Decision: Trust画面に `provider/action_type` フィルタと `min_trust_score` 差分表示を追加する。
+- Why: 実行種別ごとの自律可否ギャップを即時に可視化し、しきい値調整・原因切り分けの時間を短縮するため。
+
+### 2026-03-05 - Dashboard-first UI readability pass
+
+- Decision: `TOP(/app)` と `tasks/approvals/planner` に軽量ダッシュボード可視化（KPIカード、ステータス分布バー、7日サマリー）を追加する。
+- Why: 運用者が詳細ページに入る前に全体状態とボトルネックを把握できるようにし、日次オペレーションの確認コストを下げるため。
+
+- Decision: 可視化バーは縦棒を標準とし、`0件` は棒を描画しない。緊急度の高い指標（failed/pending/incident/policy block）は警戒色で強調する。
+- Why: 運用画面での視線誘導と異常検知速度を優先し、ノイズとなるゼロ値の棒を排除するため。
+
+- Decision: SPヘッダーは1行上段（ロゴ/ログアウト）+ 1行横スクロールナビに再構成し、メール表示は省スペース化する。
+- Why: モバイルでのヘッダー占有面積を削減し、ファーストビューで主要コンテンツが見える量を増やすため。
+
+### 2026-03-05 - Governance recommendations center (MVP)
+
+- Decision: `/app/governance/recommendations` を追加し、インシデント・承認滞留・実行失敗率・policy block・trust低下・予算残量を横断集計して優先度付き改善提案を表示する。
+- Why: 自律運用を拡大する上で、運用者が「次に何を直すべきか」を即時判断できる導線が必要なため。
+
+- Decision: 提案優先度は `critical/high/medium/low` の4段階とし、縦棒分布・緊急色・アクションリンクをセットで提示する。
+- Why: 監視ダッシュボードだけでは対処が遅れるため、可視化と実行導線を同画面で提供して改善サイクルを短縮するため。
+
+- Decision: `TOP(/app)` に `critical/high` 件数カードと「AI改善提案（上位3件）」ウィジェットを常設する。
+- Why: 運用者がホーム滞在中に優先課題を即把握し、ガバナンス改善ページへ最短遷移できるようにするため。
+
+- Decision: 改善提案の一部をワンクリック実行可能にする（`trust低下/失敗急増 -> auto_execute_google_send_email=false`、`承認滞留 -> Slack催促送信`）。
+- Why: 観測だけでなく即時の安全対策を実行できるようにし、異常時の初動時間を短縮するため。
+
+- Decision: 改善提案実行時に `baseline_summary`（適用時点メトリクス）を `GOVERNANCE_RECOMMENDATION_APPLIED` payload に保存し、画面で現在値との差分を表示する。
+- Why: 改善施策の効果検証をイベント台帳だけで追跡可能にし、運用改善のPDCAを回しやすくするため。
+
+- Decision: 実行履歴には差分値に加えて `improved / worsened / mixed / flat` バッジを表示し、低いほど良い指標（failed/pending/incidents）で判定する。
+- Why: 値の読み取りコストを下げ、施策の成否を数秒で判断できるようにするため。
+
+- Decision: 改善提案履歴に `actor_id/actor_type` と `followup_href` を表示し、実行者トレースと後続オペレーション導線を同時提供する。
+- Why: 監査性（誰が適用したか）と運用性（次の画面に即遷移）を両立するため。
+
+- Decision: 改善提案の危険操作（`disable_auto_execute`）は確認チェック（`confirm_risky=yes`）を必須化し、未確認時はサーバー側で拒否する。
+- Why: UI操作ミスによる意図しない運用モード変更を防ぐため。
+
+- Decision: Playwright E2Eに改善提案の危険操作検証（未チェックで拒否 -> チェック後成功）を追加する。
+- Why: セーフティガードの回帰を継続的に防ぐため。
+
+- Decision: 改善提案アクション失敗時は `GOVERNANCE_RECOMMENDATION_FAILED` を ledger に記録し、`retry_action_kind/retry_recommendation_id` をURLに付けて再試行フォームを表示する。
+- Why: 失敗の監査証跡を残しつつ、運用者が即時に同一操作をリトライできるようにするため。
+
+- Decision: 改善提案の実行履歴に `action_kind` / `result(success|failed)` フィルタを追加する。
+- Why: 提案運用の失敗傾向分析と改善優先度付けを短時間で行えるようにするため。
+
+- Decision: `POST /api/governance/recommendations/run` を追加し、org単位または全orgバッチで改善提案再評価を実行して `GOVERNANCE_RECOMMENDATIONS_REVIEWED` を台帳記録する。
+- Why: 日次cron運用で改善提案の鮮度を維持し、運用者が最新シグナルを元に対処できるようにするため。
+
+- Decision: `/app/governance/recommendations` に「今すぐ再評価」ボタンと「最新レビュー結果」セクションを追加する。
+- Why: 手動運用時でも即時リフレッシュと結果確認を1画面で完結させるため。
+
+- Decision: `.github/workflows/autonomy-cron.yml` を追加し、30分間隔で planner batch と governance recommendations review batch を順次実行する。
+- Why: 人手の起動操作なしで提案・改善シグナルを継続更新し、L2/L3運用の鮮度を維持するため。
+
+- Decision: `/app/operations/jobs` を追加し、`planner_runs` と `GOVERNANCE_RECOMMENDATIONS_REVIEWED/FAILED` イベントを同一画面で監視可能にする。
+- Why: cron運用の成否をアプリ内で追跡し、失敗時の一次切り分けを迅速化するため。
+
+- Decision: governance recommendations review の失敗時は `GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED` を system event として記録する。
+- Why: バッチ失敗をレスポンスログだけに依存せず、監査可能なイベント台帳に残すため。
+
+- Decision: `/app/operations/jobs` に `失敗のみ表示` フィルタと、planner/review の失敗詳細 JSON 展開（`<details>`）を追加する。
+- Why: 障害調査時にノイズを減らし、根本原因に最短で到達できるようにするため。
+
+- Decision: ジョブ履歴に `直近失敗からの経過時間` と `連続失敗回数` を追加表示する。
+- Why: 障害の継続性と緊急度を一目で判断し、エスカレーション判断を高速化するため。
+
+- Decision: `TOP(/app)` にジョブ連続失敗バナーを追加し、`planner` または `governance review` が2連続失敗以上の場合に `failed_only=1` 付きジョブ履歴へ誘導する。
+- Why: オペレーターがホーム画面の時点で異常を即検知し、障害調査画面へ1クリックで遷移できるようにするため。
+
+- Decision: ヘッダー直下（全 `/app/*`）にも同条件のミニ異常バナーを表示し、任意ページ滞在中でもジョブ連続失敗を即認知できるようにする。
+- Why: TOP以外の画面作業中に異常を見落とさないため。
+
+- Decision: ヘッダーミニ異常バナーに `planner/review` の最終失敗時刻を併記する。
+- Why: 失敗の新鮮度（いま起きた障害か、過去障害か）を瞬時に判断できるようにするため。
+
+- Decision: `ENABLE_OPS_SLACK_ALERTS=1` のとき、`/api/governance/recommendations/run` 実行後に連続失敗閾値を評価し、超過時はSlackへ運用アラートを投稿する。
+- Why: 異常を画面確認待ちにせず、運用チャネルへ能動通知して初動を短縮するため。
+
+- Decision: Opsアラートは30分バケット + 失敗件数をキーに重複抑止し、`OPS_ALERT_POSTED/OPS_ALERT_FAILED` を台帳に記録する。
+- Why: 通知スパムを防ぎつつ、通知成否自体を監査可能にするため。
+
+- Decision: `/app/operations/jobs` に `OPS_ALERT_POSTED/FAILED` 履歴セクションを追加し、`failed_only=1` フィルタに連動させる。
+- Why: 通知結果（送信成功/失敗）と通知時ヘルス情報をUI上で追跡できるようにするため。
+
+- Decision: Ops Alert投稿時に `chat.getPermalink` をbest-effortで取得し、`task_events.payload_json.slack_permalink` に保存してジョブ履歴から直接遷移可能にする。
+- Why: 通知の存在確認だけでなく、実際のSlackメッセージ内容へ即アクセスできる運用性を確保するため。
+
+- Decision: `/app/operations/jobs` に `Opsアラートを手動再送` ボタンを追加し、`maybeSendOpsFailureAlert(force=true, source=manual)` を実行できるようにする。
+- Why: 重大障害時にしきい値待ちや dedupe 待ちをせず、運用者が即時に再通知できるようにするため。
+
+- Decision: Ops Alert履歴に `alert_key` を明示表示する。
+- Why: 重複抑止（dedupe）で通知が1件に集約される挙動を、運用画面から追跡可能にするため。
+
+- Decision: `/api/governance/recommendations/run` のレスポンスにも `alert_key` を返す。
+- Why: GitHub Actions などの実行ログとアプリ内イベント履歴を同じキーで突合できるようにするため。
+
+- Decision: `autonomy-cron.yml` は API レスポンスJSONを整形出力し、governance review 実行時に `org_id / alert_reason / alert_key` サマリーをログ出力する。
+- Why: 運用者がCIログ上で通知有無と dedupe 状態を即把握できるようにするため。
+
+- Decision: `autonomy-cron.yml` の planner/review API呼び出しに簡易リトライ（最大2回、5秒待機）を追加する。
+- Why: 一時的なネットワーク不安定や短時間障害でジョブ全体が即失敗しないようにするため。
+
+- Decision: `autonomy-cron.yml` のリトライ回数/待機秒は GitHub Actions Variables (`AUTONOMY_API_RETRY_COUNT`, `AUTONOMY_API_RETRY_WAIT_SECONDS`) で調整可能にする。
+- Why: 環境ごとのAPI安定性に合わせて、コード変更なしで運用パラメータを調整できるようにするため。
+
+- Decision: Slackコネクタ設定UIに `alert_channel_id` 入力を追加し、Opsアラート通知先を org 単位で分離可能にする。
+- Why: 承認通知チャネルと運用アラートチャネルを分離できるようにし、通知ノイズ管理を改善するため。
+
+- Decision: Slack連携画面に `Opsアラート テスト送信` ボタンを追加し、alert経路の疎通をUIから検証可能にする。
+- Why: cron待ちや障害発生を待たずに、運用通知経路の初期確認を短時間で完了させるため。
+
+- Decision: `/app/operations/jobs` のKPIに `manual resend (30)` を追加し、直近30件の `OPS_ALERT_POSTED(source=manual)` 件数を可視化する。
+- Why: 自動通知だけでなく、運用者の介入頻度（手動再送の多さ）を先行指標として把握し、しきい値や監視設計の見直し判断に使えるようにするため。
+
+- Decision: ワークフローの自律前進のため、`POST /api/workflows/tick` を追加し、`workflow_runs(status=running)` を org 単位でバッチ進行できるようにした（本番は `WORKFLOW_TICK_TOKEN`、未設定時は `PLANNER_RUN_TOKEN` を利用）。
+- Why: 手動の「進める」操作に依存せず、承認済み後続ステップを定期ジョブで継続実行して自律化を前進させるため。
+
+- Decision: `/app/operations/jobs` に `Workflow Tick実行` ボタンを追加し、運用者がUIから即時にワークフローキューを消化できるようにした。
+- Why: cron待ちをせずに滞留を解消し、障害時の一次切り分け（手動で進むか）を短時間で行えるようにするため。
+
+- Decision: 連続失敗に対する安全弁として、自動インシデント判定 (`evaluateAndMaybeOpenIncident`) を追加し、planner/review の連続失敗または `ACTION_FAILED` バーストで `org_incidents` を自動宣言する。
+- Why: 人手監視に依存せず Safe Mode へ移行し、L3/L4運用時の暴走リスクを早期遮断するため。
+
+- Decision: 自動インシデントの監査台帳として `incident_events` テーブルを追加し、`INCIDENT_AUTO_DECLARED` を記録する。
+- Why: インシデントが「なぜ」「どの閾値で」開いたかを task_events とは独立に追跡し、監査/事後分析を容易にするため。
+
+- Decision: `/api/incidents/auto-open` を追加し、GitHub Actions cron から org バッチ実行できるようにした（token guard付き）。
+- Why: 手動UI操作なしで定期的に安全判定を実行し、自律運用の停止判断を自動化するため。
+
+- Decision: `/app/operations/jobs` に `自動インシデント判定` ボタンと Auto Incident履歴セクションを追加した。
+- Why: 運用者がUIから即時に安全判定を再実行し、直近の自動宣言トリガーを可視化できるようにするため。
+
+- Decision: `/app/operations/exceptions` を新設し、`failed actions / failed workflow runs / stale pending approvals / policy-blocked tasks` を単一画面でトリアージ可能にした。
+- Why: 例外対応の起点を集約し、L3/L4運用で人間が介入すべき案件を最短で処理できるようにするため。
+
+- Decision: 例外キューから `retryFailedWorkflowRun` を直接実行できる server action を追加した。
+- Why: ワークフロー失敗時に run 詳細画面へ遷移せず復旧操作を実行でき、MTTRを短縮するため。
+
+- Decision: 例外キューに簡易 priority score（P0-100相当）を導入し、failed action/workflow・承認滞留・policy block を優先順に並べる。
+- Why: 例外が増えたときに“どれから対応すべきか”を即判断できるようにし、運用の意思決定コストを下げるため。
+
+- Decision: 例外キューに `上位N件の失敗workflow一括再試行` を追加した（既存 `retryFailedWorkflowRun` を再利用）。
+- Why: 障害復旧時の反復操作を削減し、再試行の初動を短縮するため。
+
+- Decision: 例外対応の運用管理用に `exception_cases` テーブルを追加し、例外キー（kind/ref_id）単位で `owner_user_id` と `status(open/in_progress/resolved)` を保持する。
+- Why: 例外キューが閲覧専用だと対応漏れが発生するため、担当と進捗を永続化して責任追跡を可能にするため。
+
+- Decision: 例外キュー各行に `status/owner/note` 編集フォームを追加し、未登録ケースは upsert で自動作成する。
+- Why: 画面遷移なしで最小操作でトリアージ更新できるようにし、運用負荷を下げるため。
+
+- Decision: `exception_cases` に `due_at` と `last_alerted_at` を追加し、期限超過・未割当の未解決ケースを Slack 通知対象とする。
+- Why: 例外ケースの放置を防ぎ、SLA違反の早期検知を自動化するため。
+
+- Decision: `notifyExceptionCases` と `POST /api/operations/exceptions/alerts` を追加し、UI手動実行とcron実行の両方で例外通知できるようにする。
+- Why: 日中運用だけでなく定期監視でも例外を拾い上げ、オペレーションの追跡漏れを減らすため。
+
+- Decision: 例外キューに「未解決件数 / 期限超過件数 / 最大期限超過時間」と「担当者別バックログ」を追加した。
+- Why: 単票ベースの確認だけでなく、運用負荷の偏りとSLA劣化を集計視点で即把握できるようにするため。
+
+- Decision: 例外キューに `owner / case_status / overdue_only` フィルタを追加し、一覧・KPI・優先対応リストを同一条件で絞り込むようにした。
+- Why: ケース数が増えた際に担当者や状態別のオペレーションを素早く切り替え、ノイズを減らして対応速度を上げるため。
+
+- Decision: 例外キューに `sort(priority_desc|due_asc|updated_desc)` と `view` プリセット（`all`, `overdue_unassigned`, `my_open`）を追加した。
+- Why: オペレーション目的別の表示切替をURLで再現可能にし、引き継ぎや共有時の再現性を高めるため。
+
+- Decision: 例外キューに `選択ケース一括更新` を追加し、複数ケースの `status/owner/due` をまとめて更新可能にした。
+- Why: 大量アラート時の手動更新回数を減らし、トリアージ処理速度を改善するため。
+
+- Decision: 例外キューの現在フィルタ条件を引き継ぐ CSV エクスポート (`/api/operations/exceptions/export`) を追加した。
+- Why: 週次レビューや外部共有向けに、画面上の絞り込み結果をそのまま再利用できる監査データ出力を提供するため。
+
+- Decision: `exception_case_events` テーブルを追加し、ケース作成/更新/一括更新/通知送信を append-only で記録する。
+- Why: 例外対応の責任追跡（誰がいつ何を変更したか）を監査可能にし、運用レビューの再現性を高めるため。
+
+- Decision: Evidence Pack (`/app/tasks/[id]/evidence`) にタスク紐づき `exception_cases` と `exception_case_events` の監査セクションを追加した。
+- Why: 実行・承認だけでなく例外対応の履歴まで1つの証跡に統合し、監査レビュー時の追跡工数を削減するため。
+
+- Decision: Playwright主要E2Eに Evidence Pack の例外監査セクション (`例外ケース監査`, `Exception Case Events`) の表示アサーションを追加した。
+- Why: 例外監査統合が今後のUI変更で欠落しないよう、回帰検知を自動化するため。
+
+- Decision: 例外キューCSVに `exception_case_events` 要約列（件数・最新イベント種別/時刻/ペイロード）を追加した。
+- Why: ケース状態だけでなく直近の操作履歴までCSV上で確認できるようにし、監査提出時の情報欠落を防ぐため。
+
+- Decision: 例外CSVの先頭に `# exported_at / # filter_* / # row_count` のメタ情報行を追加した。
+- Why: 出力条件と件数をCSV単体で自己完結させ、監査提出時の再現性と説明可能性を高めるため。
+
+- Decision: 例外エクスポートAPIに `format=json` を追加し、CSVと同等のフィルタ/ソート結果とメタ情報をJSONで返すようにした。
+- Why: BI連携や自動処理パイプラインでの再利用性を高めるため。
+
+- Decision: 例外キュー画面のフィルタバーに `JSONエクスポート` ボタンを追加し、現在条件で `format=json` を直接取得できるようにした。
+- Why: API URLを手で組み立てずに機械可読データを取得できるようにして、運用者の作業手順を短縮するため。
+
+- Decision: 例外エクスポートAPIに `limit` / `offset` を追加し、CSV/JSONの両形式でページング取得を可能にした。
+- Why: 件数増加時でもレスポンスサイズを制御しながら段階的にデータ取得できるようにするため。
+
+- Decision: 例外キュー画面に `export_limit` / `export_offset` 入力を追加し、CSV/JSONエクスポートボタンへ反映するようにした。
+- Why: UI操作のみで大規模データの分割エクスポートを実行できるようにし、運用手順を簡素化するため。
+
+- Decision: 例外エクスポートに `include_payload=0|1` を追加し、最新イベントpayload列の出力有無を切り替え可能にした。
+- Why: 大規模データ時にレスポンスサイズを抑えつつ、必要時のみ詳細payloadを取得できるようにするため。
+
+- Decision: エクスポートメタに `has_more` / `next_offset` を追加した。
+- Why: ページング取得をクライアント側で継続処理しやすくするため。
+
+- Decision: 例外エクスポートAPIに `x-export-token` (`EXCEPTION_EXPORT_TOKEN`) + `org_id` のサーバー間呼び出しモードを追加した。
+- Why: セッションCookieに依存せず、運用バッチやCLIから安全にエクスポートできるようにするため。
+
+- Decision: `scripts/export-exceptions-json.mjs` を追加し、`next_offset` を辿って全ページを結合出力するCLIを提供した。
+- Why: 監査データ取得の反復作業を削減し、定常運用で再利用しやすくするため。
+
+- Decision: 例外エクスポートCLIに `--resume-from` と `--shard-size` を追加した。
+- Why: 大規模データ取得時に途中失敗からの再開を容易にし、巨大JSONを分割して保管/転送しやすくするため。
+
+- Decision: planner/governance/workflow/incident/exception-alert のバッチAPI実行に共通リトライ (`OPS_JOB_RETRY_MAX_ATTEMPTS`, `OPS_JOB_RETRY_BACKOFF_MS`) を導入し、`OPS_JOB_RETRY_*` を `task_events` に監査記録する。
+- Why: 一時的障害でジョブ全体が不安定になるリスクを下げ、再試行の成否と枯渇を証跡として追跡できるようにするため。
+
+- Decision: `org_job_circuit_breakers` を追加し、同一job種別の連続失敗でサーキットを開いて一定時間スキップする仕組み（`OPS_JOB_CIRCUIT_BREAKER_*`）を導入した。
+- Why: 障害継続時の無限再試行・ノイズ増大を防ぎ、運用者が復旧までの間に安定してトリアージできるようにするため。
+
+- Decision: `/app/operations/jobs` にジョブ単位/全体のサーキット手動解除アクションを追加し、`OPS_JOB_CIRCUIT_MANUALLY_CLEARED` を task_events に記録する。
+- Why: 障害復旧後にオペレーターが明示的に実行再開できる導線を提供し、再開判断の監査証跡を残すため。
+
+- Decision: サーキット手動解除フォームに「解除理由」を追加し、`OPS_JOB_CIRCUIT_MANUALLY_CLEARED.payload_json.reason` として必須保存する（未入力時は `manual_clear`）。
+- Why: なぜ再開したかの判断根拠を後から追跡できるようにし、運用品質レビューとインシデント振り返りを容易にするため。
+
+- Decision: 運用ジョブ画面の監査イベント一覧で `OPS_JOB_CIRCUIT_MANUALLY_CLEARED` の解除理由をバッジ表示で強調する。
+- Why: 監査レビュー時にJSONを展開しなくても再開判断の根拠を即確認できるようにするため。
+
+- Decision: バッチ系APIはサーキットオープン時にHTTPエラーではなく `ok: true, skipped_circuit: true` を返し、org単位結果にも `paused_until` を含める。
+- Why: 予定された一時停止を障害として扱わず、cron運用のノイズを減らしつつ停止状態を機械判定可能にするため。
+
+- Decision: サーキット開放時に Slack 運用チャネルへ通知し、`OPS_JOB_CIRCUIT_ALERT_POSTED/FAILED` を台帳記録する（既存 `ENABLE_OPS_SLACK_ALERTS` ガードを再利用）。
+- Why: 自動停止が発生したことを運用者へ即時に伝え、再開判断と復旧初動を早めるため。

@@ -15,7 +15,7 @@ export async function createAgent(formData: FormData) {
   const roleKey = String(formData.get("role_key") ?? "").trim();
 
   if (!name || !roleKey) {
-    redirect(toErrorRedirect("Name and role key are required."));
+    redirect(toErrorRedirect("name と role_key は必須です。"));
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -62,7 +62,7 @@ export async function toggleAgentStatus(formData: FormData) {
   const currentStatus = String(formData.get("current_status") ?? "");
 
   if (!agentId || (currentStatus !== "active" && currentStatus !== "disabled")) {
-    redirect(toErrorRedirect("Invalid agent status update request."));
+    redirect(toErrorRedirect("エージェント状態更新リクエストが不正です。"));
   }
 
   const nextStatus = currentStatus === "active" ? "disabled" : "active";

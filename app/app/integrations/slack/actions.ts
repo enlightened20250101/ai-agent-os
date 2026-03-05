@@ -18,11 +18,12 @@ export async function saveSlackConnector(formData: FormData) {
   const botToken = String(formData.get("bot_token") ?? "").trim();
   const signingSecret = String(formData.get("signing_secret") ?? "").trim();
   const approvalChannelId = String(formData.get("approval_channel_id") ?? "").trim();
+  const alertChannelId = String(formData.get("alert_channel_id") ?? "").trim();
   const workspaceId = String(formData.get("workspace_id") ?? "").trim();
   const displayName = String(formData.get("display_name") ?? "").trim();
 
   if (!botToken || !signingSecret || !approvalChannelId) {
-    redirect(withMessage("error", "bot_token, signing_secret, approval_channel_id are required."));
+    redirect(withMessage("error", "bot_token, signing_secret, approval_channel_id は必須です。"));
   }
 
   try {
@@ -35,15 +36,16 @@ export async function saveSlackConnector(formData: FormData) {
       secrets: {
         bot_token: botToken,
         signing_secret: signingSecret,
-        approval_channel_id: approvalChannelId
+        approval_channel_id: approvalChannelId,
+        alert_channel_id: alertChannelId || null
       }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to save Slack connector.";
+    const message = error instanceof Error ? error.message : "Slackコネクタ保存に失敗しました。";
     redirect(withMessage("error", message));
   }
 
-  redirect(withMessage("ok", "Slack connector saved."));
+  redirect(withMessage("ok", "Slackコネクタを保存しました。"));
 }
 
 export async function sendSlackTestMessage() {
@@ -51,28 +53,63 @@ export async function sendSlackTestMessage() {
   const supabase = await createClient();
   const cfg = await resolveSlackRuntimeConfig({ supabase, orgId });
   if (!cfg.botToken || !cfg.approvalChannelId) {
-    redirect(withMessage("error", "Slack connector is not configured (DB or env fallback)."));
+    redirect(withMessage("error", "Slackコネクタが未設定です（DB または env フォールバック）。"));
   }
 
   try {
     await postSlackMessage({
       botToken: cfg.botToken,
       channel: cfg.approvalChannelId,
-      text: "AI Agent OS Slack integration test message.",
+      text: "AI Agent OS Slack連携テストメッセージ",
       blocks: [
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*AI Agent OS*\nSlack integration test message delivered successfully."
+            text: "*AI Agent OS*\nSlack連携のテストメッセージ送信に成功しました。"
           }
         }
       ]
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Slack error.";
+    const message = error instanceof Error ? error.message : "不明なSlackエラーです。";
     redirect(withMessage("error", message));
   }
 
-  redirect(withMessage("ok", "Test message sent successfully."));
+  redirect(withMessage("ok", "テストメッセージを送信しました。"));
+}
+
+export async function sendSlackOpsAlertTestMessage() {
+  const { orgId } = await requireOrgContext();
+  const supabase = await createClient();
+  const cfg = await resolveSlackRuntimeConfig({ supabase, orgId });
+  const alertChannelId = cfg.alertChannelId || cfg.approvalChannelId;
+  if (!cfg.botToken || !alertChannelId) {
+    redirect(withMessage("error", "Slackコネクタが未設定です（alert/approval channel が必要）。"));
+  }
+
+  try {
+    await postSlackMessage({
+      botToken: cfg.botToken,
+      channel: alertChannelId,
+      text: "AI Agent OS Opsアラート疎通テスト",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text:
+              "*AI Agent OS Ops Alert Test*\n" +
+              `org_id: ${orgId}\n` +
+              "このメッセージは運用アラート経路の疎通確認です。"
+          }
+        }
+      ]
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "不明なSlackエラーです。";
+    redirect(withMessage("error", message));
+  }
+
+  redirect(withMessage("ok", "Opsアラート疎通テストを送信しました。"));
 }

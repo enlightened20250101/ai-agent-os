@@ -45,7 +45,7 @@ export function checkDraftPolicy(input: PolicyInput): {
     return {
       result: {
         status: "block",
-        reasons: ["No proposed action found in model output."]
+        reasons: ["モデル出力に提案アクションがありません。"]
       },
       evaluatedAction: null
     };
@@ -57,25 +57,25 @@ export function checkDraftPolicy(input: PolicyInput): {
     if (!toDomain || !allowedDomains.includes(toDomain)) {
       status = "block";
       reasons.push(
-        `Recipient domain ${toDomain ?? "(invalid)"} is not in ALLOWED_EMAIL_DOMAINS.`
+        `宛先ドメイン ${toDomain ?? "(無効)"} は ALLOWED_EMAIL_DOMAINS に含まれていません。`
       );
     }
   } else {
-    reasons.push("ALLOWED_EMAIL_DOMAINS is not set; recipient domain check is informational only.");
+    reasons.push("ALLOWED_EMAIL_DOMAINS が未設定のため、宛先ドメインチェックは参考情報です。");
   }
 
   if (PHONE_REGEX.test(action.body_text)) {
     if (status !== "block") {
       status = "warn";
     }
-    reasons.push("Body text appears to contain phone-like content.");
+    reasons.push("本文に電話番号らしき内容が含まれています。");
   }
 
   if (CREDIT_CARD_REGEX.test(action.body_text)) {
     if (status !== "block") {
       status = "warn";
     }
-    reasons.push("Body text appears to contain credit-card-like numeric content.");
+    reasons.push("本文にクレジットカード番号らしき数値列が含まれています。");
   }
 
   return {

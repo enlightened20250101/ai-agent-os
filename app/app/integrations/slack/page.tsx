@@ -1,4 +1,8 @@
-import { saveSlackConnector, sendSlackTestMessage } from "@/app/app/integrations/slack/actions";
+import {
+  saveSlackConnector,
+  sendSlackOpsAlertTestMessage,
+  sendSlackTestMessage
+} from "@/app/app/integrations/slack/actions";
 import { getConnectorAccount } from "@/lib/connectors/getConnectorAccount";
 import { getSlackEnvStatus } from "@/lib/connectors/runtime";
 import { requireOrgContext } from "@/lib/org/context";
@@ -21,17 +25,17 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
     botToken: typeof dbSecrets.bot_token === "string" && dbSecrets.bot_token.length > 0,
     signingSecret: typeof dbSecrets.signing_secret === "string" && dbSecrets.signing_secret.length > 0,
     approvalChannelId:
-      typeof dbSecrets.approval_channel_id === "string" && dbSecrets.approval_channel_id.length > 0
+      typeof dbSecrets.approval_channel_id === "string" && dbSecrets.approval_channel_id.length > 0,
+    alertChannelId: typeof dbSecrets.alert_channel_id === "string" && dbSecrets.alert_channel_id.length > 0
   };
   const sp = searchParams ? await searchParams : {};
 
   return (
     <section className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <div>
-        <h1 className="text-xl font-semibold">Slack Integration</h1>
+        <h1 className="text-xl font-semibold">Slack 連携</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Configure Slack as an optional approval channel. Web approvals remain available even if Slack
-          is not configured.
+          Slack を任意の承認チャネルとして設定できます。Slack未設定でもWeb承認は利用可能です。
         </p>
       </div>
 
@@ -48,55 +52,73 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Connector source</p>
-          <p className="text-slate-700">{connector ? "database (primary)" : "env fallback"}</p>
+          <p className="font-medium">コネクタソース</p>
+          <p className="text-slate-700">{connector ? "データベース（優先）" : "env フォールバック"}</p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Saved workspace</p>
+          <p className="font-medium">保存済みワークスペース</p>
           <p className="text-slate-700">
-            {connector ? `${connector.external_account_id}${connector.display_name ? ` (${connector.display_name})` : ""}` : "(none)"}
+            {connector ? `${connector.external_account_id}${connector.display_name ? ` (${connector.display_name})` : ""}` : "（なし）"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
           <p className="font-medium">DB bot_token</p>
           <p className={dbStatus.botToken ? "text-emerald-700" : "text-rose-700"}>
-            {dbStatus.botToken ? "configured" : "missing"}
+            {dbStatus.botToken ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
           <p className="font-medium">DB signing_secret</p>
           <p className={dbStatus.signingSecret ? "text-emerald-700" : "text-rose-700"}>
-            {dbStatus.signingSecret ? "configured" : "missing"}
+            {dbStatus.signingSecret ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
           <p className="font-medium">DB approval_channel_id</p>
           <p className={dbStatus.approvalChannelId ? "text-emerald-700" : "text-rose-700"}>
-            {dbStatus.approvalChannelId ? "configured" : "missing"}
+            {dbStatus.approvalChannelId ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Env fallback status</p>
-          <p className={envStatus.botToken && envStatus.signingSecret && envStatus.approvalChannelId ? "text-emerald-700" : "text-amber-700"}>
+          <p className="font-medium">DB alert_channel_id</p>
+          <p className={dbStatus.alertChannelId ? "text-emerald-700" : "text-amber-700"}>
+            {dbStatus.alertChannelId ? "設定済み" : "未設定（approval_channel_idにフォールバック）"}
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">Envフォールバック状態</p>
+          <p
+            className={
+              envStatus.botToken && envStatus.signingSecret && envStatus.approvalChannelId
+                ? "text-emerald-700"
+                : "text-amber-700"
+            }
+          >
             {envStatus.botToken && envStatus.signingSecret && envStatus.approvalChannelId
-              ? "fully configured"
-              : "partial or missing"}
+              ? "設定完了"
+              : "不足あり"}
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">Env alert channel</p>
+          <p className={envStatus.alertChannelId ? "text-emerald-700" : "text-amber-700"}>
+            {envStatus.alertChannelId ? "設定済み" : "未設定（approval channelへフォールバック）"}
           </p>
         </div>
       </div>
 
       <form action={saveSlackConnector} className="grid gap-3 rounded-md border border-slate-200 p-4">
-        <p className="text-sm font-medium text-slate-900">Save org Slack connector</p>
+        <p className="text-sm font-medium text-slate-900">組織のSlackコネクタを保存</p>
         <input
           type="text"
           name="workspace_id"
-          placeholder="workspace/team id (optional)"
+          placeholder="workspace/team id（任意）"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <input
           type="text"
           name="display_name"
-          placeholder="display name (optional)"
+          placeholder="表示名（任意）"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <input
@@ -120,32 +142,49 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           required
         />
+        <input
+          type="text"
+          name="alert_channel_id"
+          placeholder="運用アラート通知先channel_id（任意）"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+        />
         <div>
           <button
             type="submit"
             className="rounded-md bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
           >
-            Save connector
+            コネクタを保存
           </button>
         </div>
       </form>
 
       <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-        <p className="font-medium text-slate-900">Setup Instructions</p>
+        <p className="font-medium text-slate-900">設定手順</p>
         <ol className="mt-2 list-decimal space-y-1 pl-5">
-          <li>Create a Slack app and enable Interactivity.</li>
-          <li>Set Request URL to `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/actions`.</li>
-          <li>Install app to workspace and save bot token/signing secret/channel in this page.</li>
-          <li>Env vars remain fallback when no DB connector is configured.</li>
+          <li>Slackアプリを作成し、Interactivityを有効化します。</li>
+          <li>Request URL を `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/actions` に設定します。</li>
+          <li>ワークスペースへアプリをインストールし、この画面で bot token/signing secret/channel を保存します。</li>
+          <li>DBコネクタ未設定時は env 変数をフォールバックとして使用します。</li>
         </ol>
       </div>
 
       <form action={sendSlackTestMessage}>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="submit"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+          >
+            承認チャネル テスト送信
+          </button>
+        </div>
+      </form>
+
+      <form action={sendSlackOpsAlertTestMessage}>
         <button
           type="submit"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+          className="rounded-md bg-indigo-700 px-4 py-2 text-sm text-white hover:bg-indigo-600"
         >
-          Send test message
+          Opsアラート テスト送信
         </button>
       </form>
     </section>

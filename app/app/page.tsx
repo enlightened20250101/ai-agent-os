@@ -1,43 +1,401 @@
 import Link from "next/link";
+import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
+import { createClient } from "@/lib/supabase/server";
 
 const links = [
   {
-    title: "Agents",
+    title: "エージェント",
     href: "/app/agents",
-    description: "Manage connector-capable agents and drafting behavior."
+    description: "接続先ごとの実行を担当するエージェントを管理します。"
   },
   {
-    title: "Tasks",
+    title: "タスク",
     href: "/app/tasks",
-    description: "Review incoming Slack tasks and processing status."
+    description: "受け付けたタスクと処理ステータスを確認します。"
   },
   {
-    title: "Approvals",
+    title: "承認",
     href: "/app/approvals",
-    description: "Inspect pending approvals and recent decisions."
+    description: "保留中の承認と最近の判断結果を確認します。"
+  },
+  {
+    title: "提案",
+    href: "/app/proposals",
+    description: "自律提案を確認し、実タスクに変換します。"
+  },
+  {
+    title: "プランナー",
+    href: "/app/planner",
+    description: "プランナー実行と結果サマリーを確認します。"
+  },
+  {
+    title: "ワークフロー",
+    href: "/app/workflows",
+    description: "テンプレートと実行ステップを管理します。"
+  },
+  {
+    title: "ジョブ履歴",
+    href: "/app/operations/jobs",
+    description: "定期実行ジョブ（planner/review）の成功・失敗を監視します。"
+  },
+  {
+    title: "例外キュー",
+    href: "/app/operations/exceptions",
+    description: "失敗アクション、失敗ワークフロー、承認滞留を集中トリアージします。"
+  },
+  {
+    title: "自律設定",
+    href: "/app/governance/autonomy",
+    description: "自律レベル、リスク閾値、Trust閾値を組織単位で設定します。"
+  },
+  {
+    title: "改善提案",
+    href: "/app/governance/recommendations",
+    description: "運用データから優先度付きの改善アクションを提示します。"
+  },
+  {
+    title: "予算",
+    href: "/app/governance/budgets",
+    description: "コネクタ実行の利用上限と日次使用量を確認します。"
+  },
+  {
+    title: "Trust",
+    href: "/app/governance/trust",
+    description: "実行結果と承認却下から算出される信頼スコアを確認します。"
+  },
+  {
+    title: "インシデント",
+    href: "/app/governance/incidents",
+    description: "障害時に自動実行を緊急停止し、復旧後に解除します。"
   }
 ];
 
+function statusColor(status: string) {
+  if (status === "failed") return "bg-rose-500";
+  if (status === "ready_for_approval") return "bg-amber-500";
+  if (status === "approved") return "bg-sky-500";
+  if (status === "done") return "bg-emerald-500";
+  if (status === "executing") return "bg-indigo-500";
+  return "bg-slate-500";
+}
+
+function consecutiveFailuresByStatus(rows: Array<{ status: string | null }>) {
+  let count = 0;
+  for (const row of rows) {
+    if (row.status === "failed") {
+      count += 1;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+function consecutiveFailuresByEvent(rows: Array<{ event_type: string | null }>, failedType: string) {
+  let count = 0;
+  for (const row of rows) {
+    if (row.event_type === failedType) {
+      count += 1;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
 export default async function AppHomePage() {
   const { orgId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select("id, status, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("approvals")
+      .select("id, status, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("actions")
+      .select("id, status, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
+      .limit(500),
+    supabase.from("org_incidents").select("id, status").eq("org_id", orgId).eq("status", "open").limit(20),
+    buildGovernanceRecommendations({ supabase, orgId }),
+    supabase
+      .from("planner_runs")
+      .select("status, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("task_events")
+      .select("event_type, created_at")
+      .eq("org_id", orgId)
+      .in("event_type", ["GOVERNANCE_RECOMMENDATIONS_REVIEWED", "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED"])
+      .order("created_at", { ascending: false })
+      .limit(10)
+  ]);
+
+  if (tasksRes.error) {
+    throw new Error(`Failed to load task metrics: ${tasksRes.error.message}`);
+  }
+  if (approvalsRes.error) {
+    throw new Error(`Failed to load approval metrics: ${approvalsRes.error.message}`);
+  }
+  if (actionsRes.error) {
+    throw new Error(`Failed to load action metrics: ${actionsRes.error.message}`);
+  }
+  if (
+    incidentsRes.error &&
+    !incidentsRes.error.message.includes('relation "org_incidents" does not exist') &&
+    !incidentsRes.error.message.includes("Could not find the table 'public.org_incidents'")
+  ) {
+    throw new Error(`Failed to load incident metrics: ${incidentsRes.error.message}`);
+  }
+  if (
+    plannerRunsRes.error &&
+    !plannerRunsRes.error.message.includes('relation "planner_runs" does not exist') &&
+    !plannerRunsRes.error.message.includes("Could not find the table 'public.planner_runs'")
+  ) {
+    throw new Error(`Failed to load planner run metrics: ${plannerRunsRes.error.message}`);
+  }
+  if (reviewEventsRes.error) {
+    throw new Error(`Failed to load governance review metrics: ${reviewEventsRes.error.message}`);
+  }
+
+  const tasks = tasksRes.data ?? [];
+  const approvals = approvalsRes.data ?? [];
+  const actions = actionsRes.data ?? [];
+  const openIncidents = incidentsRes.data ?? [];
+  const plannerRuns = plannerRunsRes.data ?? [];
+  const reviewEvents = reviewEventsRes.data ?? [];
+
+  const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
+  const taskStatusCounts = new Map<string, number>();
+  for (const task of tasks) {
+    const key = String(task.status ?? "unknown");
+    taskStatusCounts.set(key, (taskStatusCounts.get(key) ?? 0) + 1);
+  }
+
+  const maxTaskCount = Math.max(1, ...Array.from(taskStatusCounts.values()));
+  const pendingApprovals = approvals.filter((row) => row.status === "pending").length;
+  const rejectedApprovals = approvals.filter((row) => row.status === "rejected").length;
+  const executedActions = actions.filter((row) => row.status === "success").length;
+  const failedActions = actions.filter((row) => row.status === "failed").length;
+  const actionSuccessRate =
+    executedActions + failedActions > 0
+      ? Math.round((executedActions / (executedActions + failedActions)) * 100)
+      : null;
+
+  const urgentSignals = [
+    openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
+    (taskStatusCounts.get("failed") ?? 0) > 0 ? `失敗タスク ${taskStatusCounts.get("failed") ?? 0}件` : null,
+    pendingApprovals > 5 ? `承認待ち ${pendingApprovals}件` : null,
+    failedActions > 0 ? `直近7日アクション失敗 ${failedActions}件` : null
+  ].filter((v): v is string => Boolean(v));
+  const criticalRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "critical");
+  const highRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "high");
+  const topRecommendations = recommendationPack.recommendations.slice(0, 3);
+  const plannerConsecutiveFailures = consecutiveFailuresByStatus(
+    plannerRuns.map((row) => ({ status: (row.status as string | null) ?? null }))
+  );
+  const reviewConsecutiveFailures = consecutiveFailuresByEvent(
+    reviewEvents.map((row) => ({ event_type: (row.event_type as string | null) ?? null })),
+    "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED"
+  );
+  const needsOpsAttention = plannerConsecutiveFailures >= 2 || reviewConsecutiveFailures >= 2;
 
   return (
-    <section className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
-        <p className="mt-2 text-slate-600">Start from one of the core MVP areas below.</p>
-        <p className="mt-1 text-xs text-slate-500">Org context: {orgId}</p>
+    <section className="space-y-7">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 p-6 text-white shadow-lg">
+        <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-teal-200/90">Operations Console</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight">AI Agent OS ワークスペース</h1>
+            <p className="mt-3 text-sm text-slate-200/90">
+              日次オペレーションの状態を一画面で確認し、異常や滞留があれば優先的に対処できます。
+            </p>
+            <p className="mt-4 inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs text-slate-100">
+              組織コンテキスト: {orgId}
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur">
+            <p className="text-xs font-medium text-teal-100">緊急シグナル</p>
+            {urgentSignals.length > 0 ? (
+              <ul className="mt-3 space-y-2 text-sm">
+                {urgentSignals.map((signal) => (
+                  <li key={signal} className="rounded-md border border-rose-200/30 bg-rose-500/20 px-3 py-2 text-rose-100">
+                    {signal}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 rounded-md border border-emerald-200/30 bg-emerald-500/20 px-3 py-2 text-sm text-emerald-100">
+                緊急度の高いアラートはありません。
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {needsOpsAttention ? (
+        <section className="rounded-xl border border-rose-300 bg-rose-50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-rose-900">要対応: ジョブ連続失敗を検知</p>
+              <p className="mt-1 text-xs text-rose-800">
+                planner連続失敗 {plannerConsecutiveFailures}件 / review連続失敗 {reviewConsecutiveFailures}件
+              </p>
+            </div>
+            <Link
+              href="/app/operations/jobs?failed_only=1"
+              className="rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-medium text-rose-800 hover:bg-rose-100"
+            >
+              失敗ジョブを確認
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs text-slate-500">タスク総数</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{tasks.length}</p>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-xs text-amber-700">承認待ち</p>
+          <p className="mt-1 text-2xl font-semibold text-amber-900">{pendingApprovals}</p>
+        </div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
+          <p className="text-xs text-rose-700">却下数</p>
+          <p className="mt-1 text-2xl font-semibold text-rose-900">{rejectedApprovals}</p>
+        </div>
+        <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 shadow-sm">
+          <p className="text-xs text-teal-700">7日成功率</p>
+          <p className="mt-1 text-2xl font-semibold text-teal-900">{actionSuccessRate !== null ? `${actionSuccessRate}%` : "-"}</p>
+        </div>
+        <div className={`rounded-xl border p-4 shadow-sm ${openIncidents.length > 0 ? "border-rose-300 bg-rose-100" : "border-emerald-200 bg-emerald-50"}`}>
+          <p className={`text-xs ${openIncidents.length > 0 ? "text-rose-700" : "text-emerald-700"}`}>オープンインシデント</p>
+          <p className={`mt-1 text-2xl font-semibold ${openIncidents.length > 0 ? "text-rose-900" : "text-emerald-900"}`}>{openIncidents.length}</p>
+        </div>
+        <Link
+          href="/app/governance/recommendations"
+          className={`rounded-xl border p-4 shadow-sm ${
+            criticalRecommendations.length > 0
+              ? "border-rose-300 bg-rose-100"
+              : highRecommendations.length > 0
+                ? "border-amber-300 bg-amber-100"
+                : "border-sky-200 bg-sky-50"
+          }`}
+        >
+          <p
+            className={`text-xs ${
+              criticalRecommendations.length > 0
+                ? "text-rose-700"
+                : highRecommendations.length > 0
+                  ? "text-amber-700"
+                  : "text-sky-700"
+            }`}
+          >
+            改善提案
+          </p>
+          <p
+            className={`mt-1 text-2xl font-semibold ${
+              criticalRecommendations.length > 0
+                ? "text-rose-900"
+                : highRecommendations.length > 0
+                  ? "text-amber-900"
+                  : "text-sky-900"
+            }`}
+          >
+            C:{criticalRecommendations.length} / H:{highRecommendations.length}
+          </p>
+        </Link>
       </div>
-      <div className="grid gap-4 md:grid-cols-3">
-        {links.map((item) => (
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-slate-900">AI改善提案（上位）</h2>
+          <Link href="/app/governance/recommendations" className="text-xs font-medium text-sky-700 hover:text-sky-800">
+            すべて見る
+          </Link>
+        </div>
+        {topRecommendations.length > 0 ? (
+          <ul className="mt-4 grid gap-3 md:grid-cols-3">
+            {topRecommendations.map((item) => (
+              <li key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
+                    item.priority === "critical"
+                      ? "bg-rose-100 text-rose-700"
+                      : item.priority === "high"
+                        ? "bg-amber-100 text-amber-700"
+                        : item.priority === "medium"
+                          ? "bg-sky-100 text-sky-700"
+                          : "bg-emerald-100 text-emerald-700"
+                  }`}
+                >
+                  {item.priority}
+                </p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {item.metricLabel}: <span className="font-semibold text-slate-700">{item.metricValue}</span>
+                </p>
+                <p className="mt-2 line-clamp-2 text-xs text-slate-600">{item.description}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-slate-600">改善提案はありません。</p>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">タスクステータス分布</h2>
+          <span className="text-xs text-slate-500">0件は棒を表示しません</span>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          {taskStatusOrder.map((status) => {
+            const count = taskStatusCounts.get(status) ?? 0;
+            const heightPct = count > 0 ? Math.max(12, Math.round((count / maxTaskCount) * 100)) : 0;
+            return (
+              <div key={status} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <div className="flex h-36 items-end justify-center rounded-md bg-white px-2">
+                  {count > 0 ? (
+                    <div className={`w-10 rounded-t-md ${statusColor(status)}`} style={{ height: `${heightPct}%` }} />
+                  ) : null}
+                </div>
+                <p className="mt-2 text-center font-mono text-[11px] text-slate-600">{status}</p>
+                <p className="text-center text-sm font-semibold text-slate-900">{count}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
+        {links.map((item, idx) => (
           <Link
             key={item.href}
             href={item.href}
-            className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow"
+            className={`group rounded-xl border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${idx % 5 === 0 ? "xl:col-span-5 bg-gradient-to-br from-white to-teal-50 border-teal-200" : idx % 5 === 1 ? "xl:col-span-3 bg-gradient-to-br from-white to-slate-50 border-slate-200" : "xl:col-span-4 bg-white border-slate-200"}`}
           >
             <h2 className="font-medium text-slate-900">{item.title}</h2>
             <p className="mt-2 text-sm text-slate-600">{item.description}</p>
+            <p className="mt-4 text-xs font-medium uppercase tracking-wide text-teal-700 group-hover:text-teal-800">
+              {item.title}を開く
+            </p>
           </Link>
         ))}
       </div>

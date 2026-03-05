@@ -6,6 +6,8 @@ import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency"
 import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { sendEmailWithGmail } from "@/lib/google/gmail";
+import { evaluateGovernance, incrementBudgetUsage } from "@/lib/governance/evaluate";
+import { recordTrustOutcome } from "@/lib/governance/trust";
 import { requireOrgContext } from "@/lib/org/context";
 import { generateDraftWithOpenAI } from "@/lib/llm/openai";
 import { checkDraftPolicy } from "@/lib/policy/check";
@@ -107,7 +109,7 @@ function isUniqueViolation(error: unknown) {
 export async function setTaskReadyForApproval(formData: FormData) {
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) {
-    redirect("/app/tasks?error=Missing+task+id");
+    redirect("/app/tasks?error=task_id+がありません");
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -115,7 +117,7 @@ export async function setTaskReadyForApproval(formData: FormData) {
 
   const { data: task, error: taskError } = await supabase
     .from("tasks")
-    .select("id, status")
+    .select("id, status, agent_id")
     .eq("id", taskId)
     .eq("org_id", orgId)
     .single();
@@ -161,7 +163,7 @@ export async function setTaskReadyForApproval(formData: FormData) {
 export async function requestApproval(formData: FormData) {
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) {
-    redirect("/app/tasks?error=Missing+task+id");
+    redirect("/app/tasks?error=task_id+がありません");
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -192,7 +194,7 @@ export async function requestApproval(formData: FormData) {
     redirect(errorPath(taskId, modelEventError.message));
   }
   if (!latestModelEvent) {
-    redirect(errorPath(taskId, "Generate a draft before requesting approval."));
+    redirect(errorPath(taskId, "承認依頼の前にドラフトを生成してください。"));
   }
 
   const { data: latestPolicyEvent, error: policyEventError } = await supabase
@@ -209,12 +211,12 @@ export async function requestApproval(formData: FormData) {
     redirect(errorPath(taskId, policyEventError.message));
   }
   if (!latestPolicyEvent) {
-    redirect(errorPath(taskId, "Policy check missing. Generate a draft first."));
+    redirect(errorPath(taskId, "ポリシーチェック結果がありません。先にドラフトを生成してください。"));
   }
 
   const policyPayload = latestPolicyEvent.payload_json as { status?: string } | null;
   if (policyPayload?.status === "block") {
-    redirect(errorPath(taskId, "Policy status is block. Approval request is disabled."));
+    redirect(errorPath(taskId, "ポリシーステータスが block のため承認依頼できません。"));
   }
 
   const { data: pendingApproval, error: pendingLookupError } = await supabase
@@ -231,7 +233,7 @@ export async function requestApproval(formData: FormData) {
   }
 
   if (pendingApproval?.id) {
-    redirect(errorPath(taskId, "A pending approval already exists for this task."));
+    redirect(errorPath(taskId, "このタスクにはすでに保留中の承認があります。"));
   }
 
   const { data: approval, error: approvalError } = await supabase
@@ -321,7 +323,7 @@ export async function requestApproval(formData: FormData) {
       });
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Slack approval post failed.";
+    const message = error instanceof Error ? error.message : "Slack承認投稿に失敗しました。";
     console.error(`[SLACK_APPROVAL_POST_FAILED] task_id=${taskId} approval_id=${approval.id as string} ${message}`);
   }
 
@@ -333,7 +335,7 @@ export async function requestApproval(formData: FormData) {
 export async function generateDraft(formData: FormData) {
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) {
-    redirect("/app/tasks?error=Missing+task+id");
+    redirect("/app/tasks?error=task_id+がありません");
   }
 
   const { orgId } = await requireOrgContext();
@@ -358,7 +360,7 @@ export async function generateDraft(formData: FormData) {
     .single();
 
   if (agentError) {
-    redirect(errorPath(taskId, `Agent lookup failed: ${agentError.message}`));
+    redirect(errorPath(taskId, `エージェント取得に失敗しました: ${agentError.message}`));
   }
 
   let inferredPayload: Record<string, unknown>;
@@ -391,7 +393,7 @@ export async function generateDraft(formData: FormData) {
       raw_model_output: result.metadata.rawModelOutput
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown model error.";
+    const message = error instanceof Error ? error.message : "不明なモデルエラーです。";
     inferredPayload = {
       error: {
         message
@@ -434,7 +436,7 @@ export async function generateDraft(formData: FormData) {
 export async function executeDraftAction(formData: FormData) {
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) {
-    redirect("/app/tasks?error=Missing+task+id");
+    redirect("/app/tasks?error=task_id+がありません");
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -463,7 +465,7 @@ export async function executeDraftAction(formData: FormData) {
     redirect(errorPath(taskId, modelError.message));
   }
   if (!latestModelEvent) {
-    redirect(errorPath(taskId, "No model draft found."));
+    redirect(errorPath(taskId, "モデルドラフトが見つかりません。"));
   }
 
   const { data: latestPolicyEvent, error: policyError } = await supabase
@@ -479,30 +481,39 @@ export async function executeDraftAction(formData: FormData) {
     redirect(errorPath(taskId, policyError.message));
   }
   if (!latestPolicyEvent) {
-    redirect(errorPath(taskId, "No policy result found."));
+    redirect(errorPath(taskId, "ポリシー結果が見つかりません。"));
   }
 
   const action = parseLatestDraftAction(latestModelEvent.payload_json);
   if (!action) {
-    redirect(errorPath(taskId, "No executable google/send_email draft action found."));
+    redirect(errorPath(taskId, "実行可能な google/send_email ドラフトが見つかりません。"));
   }
   const policyStatus = parsePolicyStatus(latestPolicyEvent.payload_json);
   if (!policyStatus) {
-    redirect(errorPath(taskId, "Policy status is invalid."));
+    redirect(errorPath(taskId, "ポリシーステータスが不正です。"));
   }
 
   const eligibilityReasons: string[] = [];
-  if (task.status !== "approved") {
-    eligibilityReasons.push("Task must be approved before execution.");
-  }
   if (policyStatus === "block") {
-    eligibilityReasons.push("Policy status is block.");
+    eligibilityReasons.push("ポリシーステータスが block です。");
   }
 
   const allowedDomains = getAllowedDomains();
   const toDomain = getEmailDomain(action.to);
   if (allowedDomains.length > 0 && (!toDomain || !allowedDomains.includes(toDomain))) {
-    eligibilityReasons.push(`Recipient domain ${toDomain ?? "(invalid)"} not allowed.`);
+    eligibilityReasons.push(`宛先ドメイン ${toDomain ?? "(無効)"} は許可されていません。`);
+  }
+
+  const taskAgentId = (task as { agent_id?: string | null }).agent_id ?? null;
+  let agentRoleKey: string | null = null;
+  if (taskAgentId) {
+    const { data: agentRes } = await supabase
+      .from("agents")
+      .select("role_key")
+      .eq("id", taskAgentId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    agentRoleKey = (agentRes?.role_key as string | undefined) ?? null;
   }
 
   const googleCfg = await resolveGoogleRuntimeConfig({ supabase, orgId });
@@ -511,11 +522,73 @@ export async function executeDraftAction(formData: FormData) {
     !isE2EStubMode &&
     (!googleCfg.clientId || !googleCfg.clientSecret || !googleCfg.refreshToken || !googleCfg.senderEmail)
   ) {
-    eligibilityReasons.push("Google connector is not configured.");
+    eligibilityReasons.push("Googleコネクタが未設定です。");
+  }
+
+  const governance = await evaluateGovernance({
+    supabase,
+    orgId,
+    taskId,
+    provider: "google",
+    actionType: "send_email",
+    to: action.to,
+    subject: action.subject,
+    bodyText: action.body_text,
+    policyStatus,
+    agentRoleKey
+  });
+
+  const canAutoExecute = governance.decision === "allow_auto_execute";
+  if (task.status !== "approved" && !canAutoExecute) {
+    eligibilityReasons.push("実行前にタスクが approved である必要があります。");
+  }
+  if (governance.decision === "block") {
+    eligibilityReasons.push(`ガバナンス評価で block: ${governance.reasons.join(" ") || "リスク閾値違反"}`);
   }
 
   if (eligibilityReasons.length > 0) {
     redirect(errorPath(taskId, eligibilityReasons.join(" ")));
+  }
+
+  if (task.status !== "approved" && canAutoExecute) {
+    const { error: taskAutoApproveError } = await supabase
+      .from("tasks")
+      .update({ status: "approved" })
+      .eq("id", taskId)
+      .eq("org_id", orgId);
+    if (taskAutoApproveError) {
+      redirect(errorPath(taskId, taskAutoApproveError.message));
+    }
+
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "system",
+      actorId: null,
+      eventType: "APPROVAL_BYPASSED",
+      payload: {
+        reason: "governance_allow_auto_execute",
+        governance
+      }
+    });
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "system",
+      actorId: null,
+      eventType: "TASK_UPDATED",
+      payload: {
+        changed_fields: {
+          status: {
+            from: task.status,
+            to: "approved"
+          }
+        },
+        source: "autonomy_auto_approval"
+      }
+    });
   }
 
   const idempotencyKey = computeGoogleSendEmailIdempotencyKey({
@@ -553,7 +626,7 @@ export async function executeDraftAction(formData: FormData) {
       }
     });
     revalidatePath(taskPath(taskId));
-    redirect(errorPath(taskId, "Already executed successfully for this draft action."));
+    redirect(errorPath(taskId, "このドラフトアクションはすでに実行済みです。"));
   }
 
   const { data: runningForTask, error: runningForTaskError } = await supabase
@@ -581,7 +654,7 @@ export async function executeDraftAction(formData: FormData) {
       }
     });
     revalidatePath(taskPath(taskId));
-    redirect(errorPath(taskId, "Execution already in progress for this task."));
+    redirect(errorPath(taskId, "このタスクはすでに実行中です。"));
   }
 
   const { data: createdAction, error: createActionError } = await supabase
@@ -643,8 +716,8 @@ export async function executeDraftAction(formData: FormData) {
           errorPath(
             taskId,
             existingAction.status === "success"
-              ? "Already executed successfully for this draft action."
-              : "Execution is already queued or running for this draft action."
+              ? "このドラフトアクションはすでに実行済みです。"
+              : "このドラフトアクションはすでにキュー済みまたは実行中です。"
           )
         );
       }
@@ -703,7 +776,7 @@ export async function executeDraftAction(formData: FormData) {
         .eq("id", createdAction.id)
         .eq("org_id", orgId);
       revalidatePath(taskPath(taskId));
-      redirect(errorPath(taskId, "Execution already in progress for this task."));
+      redirect(errorPath(taskId, "このタスクはすでに実行中です。"));
     }
     redirect(errorPath(taskId, runningError.message));
   }
@@ -750,8 +823,30 @@ export async function executeDraftAction(formData: FormData) {
         stubbed: sendResult.stubbed
       }
     });
+    try {
+      await recordTrustOutcome({
+        supabase,
+        orgId,
+        provider: "google",
+        actionType: "send_email",
+        outcome: "success",
+        agentRoleKey,
+        taskId,
+        actionId: createdAction.id as string,
+        source: "manual_action_runner"
+      });
+    } catch (trustError) {
+      const message = trustError instanceof Error ? trustError.message : "unknown_trust_error";
+      console.error(`[TRUST_UPDATE_FAILED] task_id=${taskId} action_id=${createdAction.id as string} ${message}`);
+    }
+    await incrementBudgetUsage({
+      supabase,
+      orgId,
+      provider: "google",
+      actionType: "send_email"
+    });
   } catch (error) {
-    const summary = error instanceof Error ? error.message.slice(0, 500) : "Unknown send error.";
+    const summary = error instanceof Error ? error.message.slice(0, 500) : "不明な送信エラーです。";
 
     await supabase
       .from("actions")
@@ -779,8 +874,24 @@ export async function executeDraftAction(formData: FormData) {
         error: summary
       }
     });
+    try {
+      await recordTrustOutcome({
+        supabase,
+        orgId,
+        provider: "google",
+        actionType: "send_email",
+        outcome: "failed",
+        agentRoleKey,
+        taskId,
+        actionId: createdAction.id as string,
+        source: "manual_action_runner"
+      });
+    } catch (trustError) {
+      const message = trustError instanceof Error ? trustError.message : "unknown_trust_error";
+      console.error(`[TRUST_UPDATE_FAILED] task_id=${taskId} action_id=${createdAction.id as string} ${message}`);
+    }
 
-    redirect(errorPath(taskId, `Execution failed: ${summary}`));
+    redirect(errorPath(taskId, `実行に失敗しました: ${summary}`));
   }
 
   revalidatePath(taskPath(taskId));

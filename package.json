@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test": "npm run lint && npm run typecheck && npm run test:e2e",
+    "export:exceptions": "node scripts/export-exceptions-json.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

@@ -5,6 +5,7 @@ export type SlackRuntimeConfig = {
   botToken: string;
   signingSecret: string;
   approvalChannelId: string;
+  alertChannelId: string;
   source: "db" | "env" | "none";
 };
 
@@ -20,10 +21,11 @@ function envSlackConfig(): SlackRuntimeConfig {
   const botToken = process.env.SLACK_BOT_TOKEN ?? "";
   const signingSecret = process.env.SLACK_SIGNING_SECRET ?? "";
   const approvalChannelId = process.env.SLACK_APPROVAL_CHANNEL_ID ?? "";
+  const alertChannelId = process.env.SLACK_ALERTS_CHANNEL_ID ?? "";
   if (botToken && signingSecret && approvalChannelId) {
-    return { botToken, signingSecret, approvalChannelId, source: "env" };
+    return { botToken, signingSecret, approvalChannelId, alertChannelId, source: "env" };
   }
-  return { botToken: "", signingSecret: "", approvalChannelId: "", source: "none" };
+  return { botToken: "", signingSecret: "", approvalChannelId: "", alertChannelId: "", source: "none" };
 }
 
 function envGoogleConfig(): GoogleRuntimeConfig {
@@ -52,9 +54,10 @@ export async function resolveSlackRuntimeConfig(args: {
     const signingSecret = typeof secrets.signing_secret === "string" ? secrets.signing_secret : "";
     const approvalChannelId =
       typeof secrets.approval_channel_id === "string" ? secrets.approval_channel_id : "";
+    const alertChannelId = typeof secrets.alert_channel_id === "string" ? secrets.alert_channel_id : "";
 
     if (botToken && signingSecret && approvalChannelId) {
-      return { botToken, signingSecret, approvalChannelId, source: "db" };
+      return { botToken, signingSecret, approvalChannelId, alertChannelId, source: "db" };
     }
   }
   return envSlackConfig();
@@ -90,7 +93,8 @@ export function getSlackEnvStatus() {
   return {
     botToken: Boolean(env.botToken),
     signingSecret: Boolean(env.signingSecret),
-    approvalChannelId: Boolean(env.approvalChannelId)
+    approvalChannelId: Boolean(env.approvalChannelId),
+    alertChannelId: Boolean(env.alertChannelId)
   };
 }
 

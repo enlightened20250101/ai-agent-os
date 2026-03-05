@@ -10,6 +10,13 @@ type EvidencePageProps = {
   params: Promise<{ id: string }>;
 };
 
+function isMissingTableError(message: string, tableName: string) {
+  return (
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`Could not find the table 'public.${tableName}'`)
+  );
+}
+
 function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
@@ -158,10 +165,64 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       : Promise.resolve({ data: { user: null }, error: null })
   ]);
 
+  const { data: exceptionCasesRaw, error: exceptionCasesError } = await supabase
+    .from("exception_cases")
+    .select("id, kind, ref_id, status, owner_user_id, note, due_at, last_alerted_at, updated_at, created_at")
+    .eq("org_id", orgId)
+    .eq("task_id", id)
+    .order("updated_at", { ascending: false })
+    .limit(50);
+  if (exceptionCasesError && !isMissingTableError(exceptionCasesError.message, "exception_cases")) {
+    throw new Error(`Failed to load exception cases: ${exceptionCasesError.message}`);
+  }
+  const exceptionCases =
+    exceptionCasesError && isMissingTableError(exceptionCasesError.message, "exception_cases")
+      ? []
+      : (exceptionCasesRaw ?? []);
+
+  const exceptionCaseIds = exceptionCases.map((row) => row.id as string).filter(Boolean);
+  const exceptionCaseById = new Map(
+    exceptionCases.map((row) => [
+      row.id as string,
+      {
+        kind: row.kind as string,
+        refId: row.ref_id as string
+      }
+    ])
+  );
+  const exceptionCaseEvents =
+    exceptionCaseIds.length > 0
+      ? await (async () => {
+          const { data, error } = await supabase
+            .from("exception_case_events")
+            .select("id, exception_case_id, actor_user_id, event_type, payload_json, created_at")
+            .eq("org_id", orgId)
+            .in("exception_case_id", exceptionCaseIds)
+            .order("created_at", { ascending: false })
+            .limit(200);
+          if (error) {
+            if (isMissingTableError(error.message, "exception_case_events")) {
+              return [];
+            }
+            throw new Error(`Failed to load exception case events: ${error.message}`);
+          }
+          return data ?? [];
+        })()
+      : [];
+
   const eventRows = events ?? [];
   const latestModel = getLatestEvent(eventRows, "MODEL_INFERRED");
   const latestPolicy = getLatestEvent(eventRows, "POLICY_CHECKED");
   const latestSlackPosted = getLatestEvent(eventRows, "SLACK_APPROVAL_POSTED");
+  const proposalOriginEvent = eventRows.find((event) => {
+    if (event.event_type !== "TASK_CREATED") return false;
+    const payload = asObject(event.payload_json);
+    return typeof payload?.proposal_id === "string";
+  });
+  const proposalOriginId = (() => {
+    const payload = asObject(proposalOriginEvent?.payload_json);
+    return typeof payload?.proposal_id === "string" ? payload.proposal_id : null;
+  })();
 
   const draft = parseDraft(latestModel?.payload_json);
   const policy = parsePolicy(latestPolicy?.payload_json);
@@ -180,18 +241,16 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       <header className="rounded-lg border border-slate-300 bg-white p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-wide text-slate-500">AI Agent OS Evidence Pack</p>
-            <h1 className="mt-1 text-2xl font-semibold">Task Evidence Report</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Evidence generated at {new Date().toLocaleString()}
-            </p>
+            <p className="text-sm uppercase tracking-wide text-slate-500">AI Agent OS 証跡パック</p>
+            <h1 className="mt-1 text-2xl font-semibold">タスク証跡レポート</h1>
+            <p className="mt-2 text-sm text-slate-600">生成日時 {new Date().toLocaleString()}</p>
           </div>
           <div className="flex gap-2 print-hidden">
             <Link
               href={`/app/tasks/${task.id as string}`}
               className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
             >
-              Back to task
+              タスクへ戻る
             </Link>
             <PrintButton />
           </div>
@@ -199,27 +258,41 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       </header>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">A. Task Summary</h2>
+        <h2 className="text-lg font-semibold">A. タスク概要</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          <p>task id: {task.id as string}</p>
-          <p>title: {task.title as string}</p>
-          <p>status: {task.status as string}</p>
-          <p>created_at: {new Date(task.created_at as string).toLocaleString()}</p>
-          <p>created_by_user_id: {task.created_by_user_id as string}</p>
-          <p>created_by_email: {creatorRes.data.user?.email ?? "(not available)"}</p>
-          <p>agent: {agentRes.data?.name ?? "(none)"}</p>
-          <p>agent role_key: {agentRes.data?.role_key ?? "(none)"}</p>
+          <p>タスクID: {task.id as string}</p>
+          <p>タイトル: {task.title as string}</p>
+          <p>ステータス: {task.status as string}</p>
+          <p>作成日時: {new Date(task.created_at as string).toLocaleString()}</p>
+          <p>作成ユーザーID: {task.created_by_user_id as string}</p>
+          <p>作成ユーザーメール: {creatorRes.data.user?.email ?? "（取得不可）"}</p>
+          <p>エージェント: {agentRes.data?.name ?? "（なし）"}</p>
+          <p>エージェント role_key: {agentRes.data?.role_key ?? "（なし）"}</p>
+          <p>
+            提案元:{" "}
+            {proposalOriginId ? (
+              <>
+                {proposalOriginId} (
+                <Link href="/app/proposals" className="underline">
+                  提案一覧を見る
+                </Link>
+                )
+              </>
+            ) : (
+              "（なし）"
+            )}
+          </p>
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">B. Draft (latest MODEL_INFERRED)</h2>
+        <h2 className="text-lg font-semibold">B. ドラフト（最新 MODEL_INFERRED）</h2>
         {draft ? (
           <div className="mt-3 space-y-3 text-sm text-slate-700">
-            <p>model: {draft.model ?? "(unknown)"}</p>
-            <p>latency_ms: {draft.latencyMs ?? "(unknown)"}</p>
-            <p>summary: {draft.summary}</p>
-            <p className="font-medium">risks:</p>
+            <p>モデル: {draft.model ?? "（不明）"}</p>
+            <p>遅延ms: {draft.latencyMs ?? "（不明）"}</p>
+            <p>要約: {draft.summary}</p>
+            <p className="font-medium">リスク:</p>
             {draft.risks.length > 0 ? (
               <ul className="list-disc pl-5">
                 {draft.risks.map((risk) => (
@@ -227,36 +300,36 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                 ))}
               </ul>
             ) : (
-              <p>(none)</p>
+              <p>（なし）</p>
             )}
-            <p className="font-medium">proposed_actions:</p>
+            <p className="font-medium">提案アクション:</p>
             {draft.proposedActions.length > 0 ? (
               <ul className="space-y-2">
                 {draft.proposedActions.map((action, idx) => (
                   <li key={`${action.to}-${idx}`} className="rounded-md border border-slate-200 p-3">
-                    <p>provider: {action.provider}</p>
-                    <p>action_type: {action.actionType}</p>
-                    <p>to: {action.to}</p>
-                    <p>subject: {action.subject}</p>
-                    <p className="whitespace-pre-wrap">body_text: {action.bodyText}</p>
+                    <p>プロバイダー: {action.provider}</p>
+                    <p>アクション種別: {action.actionType}</p>
+                    <p>宛先: {action.to}</p>
+                    <p>件名: {action.subject}</p>
+                    <p className="whitespace-pre-wrap">本文: {action.bodyText}</p>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p>(none)</p>
+              <p>（なし）</p>
             )}
           </div>
         ) : (
-          <p className="mt-3 text-sm text-slate-600">No MODEL_INFERRED event found.</p>
+          <p className="mt-3 text-sm text-slate-600">MODEL_INFERRED イベントが見つかりません。</p>
         )}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">C. Policy (latest POLICY_CHECKED)</h2>
+        <h2 className="text-lg font-semibold">C. ポリシー（最新 POLICY_CHECKED）</h2>
         {policy ? (
           <div className="mt-3 space-y-2 text-sm text-slate-700">
-            <p>status: {policy.status}</p>
-            <p className="font-medium">reasons:</p>
+            <p>ステータス: {policy.status}</p>
+            <p className="font-medium">理由:</p>
             {policy.reasons.length > 0 ? (
               <ul className="list-disc pl-5">
                 {policy.reasons.map((reason) => (
@@ -264,56 +337,56 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                 ))}
               </ul>
             ) : (
-              <p>(none)</p>
+              <p>（なし）</p>
             )}
             <details>
-              <summary className="cursor-pointer font-medium">evaluated_action</summary>
+              <summary className="cursor-pointer font-medium">評価対象アクション</summary>
               <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
                 {pretty(policy.evaluatedAction)}
               </pre>
             </details>
           </div>
         ) : (
-          <p className="mt-3 text-sm text-slate-600">No POLICY_CHECKED event found.</p>
+          <p className="mt-3 text-sm text-slate-600">POLICY_CHECKED イベントが見つかりません。</p>
         )}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">D. Approval</h2>
+        <h2 className="text-lg font-semibold">D. 承認</h2>
         {approvals && approvals.length > 0 ? (
           <ul className="mt-3 space-y-2 text-sm text-slate-700">
             {approvals.map((approval) => (
               <li key={approval.id} className="rounded-md border border-slate-200 p-3">
-                <p>status: {approval.status as string}</p>
-                <p>requested_by: {approval.requested_by as string}</p>
-                <p>approver_user_id: {(approval.approver_user_id as string) ?? "(none)"}</p>
-                <p>created_at: {new Date(approval.created_at as string).toLocaleString()}</p>
+                <p>ステータス: {approval.status as string}</p>
+                <p>依頼者: {approval.requested_by as string}</p>
+                <p>承認者ユーザーID: {(approval.approver_user_id as string) ?? "（なし）"}</p>
+                <p>作成日時: {new Date(approval.created_at as string).toLocaleString()}</p>
                 <p>
-                  decided_at:{" "}
-                  {approval.decided_at ? new Date(approval.decided_at as string).toLocaleString() : "(none)"}
+                  判断日時:{" "}
+                  {approval.decided_at ? new Date(approval.decided_at as string).toLocaleString() : "（なし）"}
                 </p>
-                <p>reason: {(approval.reason as string) ?? "(none)"}</p>
+                <p>理由: {(approval.reason as string) ?? "（なし）"}</p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-slate-600">No approvals recorded.</p>
+          <p className="mt-3 text-sm text-slate-600">承認履歴はありません。</p>
         )}
         <div className="mt-4 text-sm text-slate-700">
-          <p className="font-medium">Slack approval post</p>
+          <p className="font-medium">Slack承認投稿</p>
           {slackPayload ? (
             <p>
-              channel_id: {String(slackPayload.channel_id ?? "(unknown)")} | slack_ts:{" "}
-              {String(slackPayload.slack_ts ?? "(unknown)")}
+              チャネルID: {String(slackPayload.channel_id ?? "（不明）")} | slack_ts:{" "}
+              {String(slackPayload.slack_ts ?? "（不明）")}
             </p>
           ) : (
-            <p>(none)</p>
+            <p>（なし）</p>
           )}
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">E. Execution (Actions)</h2>
+        <h2 className="text-lg font-semibold">E. 実行（Actions）</h2>
         {actions && actions.length > 0 ? (
           <ul className="mt-3 space-y-3 text-sm text-slate-700">
             {actions.map((action) => {
@@ -321,19 +394,19 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
               return (
                 <li key={action.id} className="rounded-md border border-slate-200 p-3">
                   <p>
-                    {action.provider as string}/{action.action_type as string} | status:{" "}
+                    {action.provider as string}/{action.action_type as string} | ステータス:{" "}
                     {action.status as string}
                   </p>
-                  <p>created_at: {new Date(action.created_at as string).toLocaleString()}</p>
-                  <p>gmail_message_id: {String(resultObj?.gmail_message_id ?? "(none)")}</p>
+                  <p>作成日時: {new Date(action.created_at as string).toLocaleString()}</p>
+                  <p>GmailメッセージID: {String(resultObj?.gmail_message_id ?? "（なし）")}</p>
                   <details className="mt-2">
-                    <summary className="cursor-pointer font-medium">request_json</summary>
+                    <summary className="cursor-pointer font-medium">リクエストJSON</summary>
                     <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
                       {pretty(action.request_json)}
                     </pre>
                   </details>
                   <details className="mt-2">
-                    <summary className="cursor-pointer font-medium">result_json</summary>
+                    <summary className="cursor-pointer font-medium">結果JSON</summary>
                     <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
                       {pretty(action.result_json)}
                     </pre>
@@ -343,22 +416,22 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             })}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-slate-600">No actions executed.</p>
+          <p className="mt-3 text-sm text-slate-600">実行されたアクションはありません。</p>
         )}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">F. Event Timeline (raw)</h2>
+        <h2 className="text-lg font-semibold">F. イベントタイムライン（raw）</h2>
         {eventRows.length > 0 ? (
           <div className="mt-3 overflow-x-auto">
             <table className="min-w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="px-2 py-2">created_at</th>
-                  <th className="px-2 py-2">event_type</th>
-                  <th className="px-2 py-2">actor_type</th>
-                  <th className="px-2 py-2">actor_id</th>
-                  <th className="px-2 py-2">payload_json</th>
+                  <th className="px-2 py-2">作成日時</th>
+                  <th className="px-2 py-2">イベント種別</th>
+                  <th className="px-2 py-2">アクター種別</th>
+                  <th className="px-2 py-2">アクターID</th>
+                  <th className="px-2 py-2">ペイロードJSON</th>
                 </tr>
               </thead>
               <tbody>
@@ -369,10 +442,10 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                     </td>
                     <td className="px-2 py-2 font-medium">{event.event_type as string}</td>
                     <td className="px-2 py-2">{event.actor_type as string}</td>
-                    <td className="px-2 py-2">{(event.actor_id as string) ?? "(none)"}</td>
+                    <td className="px-2 py-2">{(event.actor_id as string) ?? "（なし）"}</td>
                     <td className="px-2 py-2">
                       <details>
-                        <summary className="cursor-pointer">view payload</summary>
+                        <summary className="cursor-pointer">ペイロードを見る</summary>
                         <pre className="mt-2 max-w-xl overflow-x-auto rounded bg-slate-50 p-3 text-xs">
                           {pretty(event.payload_json)}
                         </pre>
@@ -384,15 +457,74 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             </table>
           </div>
         ) : (
-          <p className="mt-3 text-sm text-slate-600">No events recorded.</p>
+          <p className="mt-3 text-sm text-slate-600">イベント記録はありません。</p>
         )}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">G. Integrity Notes</h2>
+        <h2 className="text-lg font-semibold">G. 例外ケース監査</h2>
+        {exceptionCases.length > 0 ? (
+          <ul className="mt-3 space-y-2 text-sm text-slate-700">
+            {exceptionCases.map((row) => (
+              <li key={row.id as string} className="rounded-md border border-slate-200 p-3">
+                <p>
+                  {row.kind as string}/{row.ref_id as string} | status: {row.status as string}
+                </p>
+                <p>
+                  owner: {(row.owner_user_id as string) ?? "unassigned"} | due:{" "}
+                  {row.due_at ? new Date(row.due_at as string).toLocaleString() : "（なし）"}
+                </p>
+                <p>
+                  last_alerted:{" "}
+                  {row.last_alerted_at ? new Date(row.last_alerted_at as string).toLocaleString() : "（なし）"}
+                </p>
+                <p>note: {(row.note as string) || "（なし）"}</p>
+                <p>updated_at: {new Date(row.updated_at as string).toLocaleString()}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-slate-600">このタスクに紐づく例外ケースはありません。</p>
+        )}
+        <div className="mt-4">
+          <p className="text-sm font-medium text-slate-900">Exception Case Events</p>
+          {exceptionCaseEvents.length > 0 ? (
+            <ul className="mt-2 space-y-2 text-sm text-slate-700">
+              {exceptionCaseEvents.map((event) => {
+                const related = exceptionCaseById.get(event.exception_case_id as string) ?? null;
+                return (
+                  <li key={event.id as string} className="rounded-md border border-slate-200 p-3">
+                    <p>
+                      {event.event_type as string} |{" "}
+                      {related
+                        ? `${related.kind}/${related.refId}`
+                        : (event.exception_case_id as string)}
+                    </p>
+                    <p>
+                      actor: {(event.actor_user_id as string) ?? "system"} | at:{" "}
+                      {new Date(event.created_at as string).toLocaleString()}
+                    </p>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer font-medium">payload JSON</summary>
+                      <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
+                        {pretty(event.payload_json)}
+                      </pre>
+                    </details>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-slate-600">例外ケースイベントはありません。</p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-6">
+        <h2 className="text-lg font-semibold">H. 完全性ノート</h2>
         <p className="mt-3 text-sm text-slate-700">
-          Evidence generated at {new Date().toLocaleString()}. LLM outputs are normalized before
-          persistence, and all workflow mutations are audited in task_events/actions.
+          生成日時 {new Date().toLocaleString()}。LLM出力は保存前に正規化され、
+          すべてのワークフロー変更は task_events/actions に監査記録されます。
         </p>
       </section>
     </div>

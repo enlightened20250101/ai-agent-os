@@ -21,6 +21,19 @@ function toBase64Url(input: string) {
     .replace(/=+$/, "");
 }
 
+function toBase64WithLineWrap(input: string) {
+  const b64 = Buffer.from(input, "utf8").toString("base64");
+  return b64.replace(/.{1,76}/g, "$&\r\n").trimEnd();
+}
+
+function encodeHeaderValue(value: string) {
+  // RFC 2047 encoded-word for non-ASCII-safe subject headers.
+  if (/^[\x20-\x7E]*$/.test(value)) {
+    return value;
+  }
+  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -84,11 +97,12 @@ export async function sendEmailWithGmail(args: SendEmailArgs): Promise<SendEmail
   const rawMessage = [
     `From: ${args.senderEmail}`,
     `To: ${args.to}`,
-    `Subject: ${args.subject}`,
+    `Subject: ${encodeHeaderValue(args.subject)}`,
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
     "",
-    args.bodyText
+    toBase64WithLineWrap(args.bodyText)
   ].join("\r\n");
 
   const encodedMessage = toBase64Url(rawMessage);

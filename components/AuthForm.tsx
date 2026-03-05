@@ -38,7 +38,7 @@ export function AuthForm({ mode }: AuthFormProps) {
     }
 
     if (!isLogin && !authResult.data.session) {
-      setError("Signup succeeded. Check your email to confirm your account before logging in.");
+      setError("登録は完了しました。メール確認後にログインしてください。");
       return;
     }
 
@@ -48,15 +48,17 @@ export function AuthForm({ mode }: AuthFormProps) {
 
   return (
     <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-semibold">{isLogin ? "Login" : "Create account"}</h1>
+      <h1 className="text-2xl font-semibold">{isLogin ? "ログイン" : "アカウント作成"}</h1>
       <p className="mt-2 text-sm text-slate-600">
-        {isLogin ? "Sign in to continue to your workspace." : "Create an account to access AI Agent OS."}
+        {isLogin
+          ? "ワークスペースにアクセスするためにログインしてください。"
+          : "AI Agent OS を利用するためのアカウントを作成します。"}
       </p>
 
       <form className="mt-6 space-y-4" onSubmit={onSubmit}>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="email">
-            Email
+            メールアドレス
           </label>
           <input
             id="email"
@@ -69,7 +71,7 @@ export function AuthForm({ mode }: AuthFormProps) {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="password">
-            Password
+            パスワード
           </label>
           <input
             id="password"
@@ -93,14 +95,14 @@ export function AuthForm({ mode }: AuthFormProps) {
           disabled={isSubmitting}
           className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isSubmitting ? "Please wait..." : isLogin ? "Login" : "Sign up"}
+          {isSubmitting ? "処理中..." : isLogin ? "ログイン" : "新規登録"}
         </button>
       </form>
 
       <p className="mt-4 text-sm text-slate-600">
-        {isLogin ? "Need an account?" : "Already have an account?"}{" "}
+        {isLogin ? "アカウントをお持ちでないですか？" : "すでにアカウントをお持ちですか？"}{" "}
         <Link className="font-medium" href={isLogin ? "/signup" : "/login"}>
-          {isLogin ? "Sign up" : "Login"}
+          {isLogin ? "新規登録" : "ログイン"}
         </Link>
       </p>
     </div>

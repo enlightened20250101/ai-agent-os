@@ -42,13 +42,13 @@ export async function postApprovalRequestToSlack(args: PostApprovalToSlackArgs):
   const message = await postSlackMessage({
     botToken: cfg.botToken,
     channel: cfg.approvalChannelId,
-    text: `Approval requested for task ${args.taskTitle}`,
+    text: `タスク「${args.taskTitle}」の承認依頼`,
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Approval Request*\n*Task:* ${args.taskTitle}\n*Draft summary:* ${args.draftSummary ?? "(none)"}\n*Policy status:* ${args.policyStatus ?? "(none)"}\n*Task link:* ${taskUrl}`
+          text: `*承認依頼*\n*タスク:* ${args.taskTitle}\n*ドラフト要約:* ${args.draftSummary ?? "（なし）"}\n*ポリシーステータス:* ${args.policyStatus ?? "（なし）"}\n*タスクリンク:* ${taskUrl}`
         }
       },
       {
@@ -56,14 +56,14 @@ export async function postApprovalRequestToSlack(args: PostApprovalToSlackArgs):
         elements: [
           {
             type: "button",
-            text: { type: "plain_text", text: "Approve" },
+            text: { type: "plain_text", text: "承認" },
             style: "primary",
             action_id: "approval_approve",
             value: approveToken
           },
           {
             type: "button",
-            text: { type: "plain_text", text: "Reject" },
+            text: { type: "plain_text", text: "却下" },
             style: "danger",
             action_id: "approval_reject",
             value: rejectToken

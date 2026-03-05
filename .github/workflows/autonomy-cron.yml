@@ -1,0 +1,229 @@
+name: Autonomy Cron
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_orgs:
+        description: "Max orgs to process"
+        required: false
+        default: "20"
+
+jobs:
+  run-autonomy-loops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate required secrets
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_BASE_URL}"
+          test -n "${PLANNER_RUN_TOKEN}"
+
+      - name: Run planner batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Planner batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/planner/run?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-planner-token: ${PLANNER_RUN_TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Planner batch failed after retry."
+              exit 1
+            fi
+            echo "Planner batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Planner skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
+
+      - name: Run governance recommendations review batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          GOV_RECOMMENDATIONS_TOKEN: ${{ secrets.GOV_RECOMMENDATIONS_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${GOV_RECOMMENDATIONS_TOKEN:-${PLANNER_RUN_TOKEN}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Governance review batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/governance/recommendations/run?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-governance-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Governance review batch failed after retry."
+              exit 1
+            fi
+            echo "Governance review batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Alert key summary:"
+            echo "$RESP" | jq -r '.results[]? | select(.alert_key != null) | "\(.org_id)\t\(.alert_reason)\t\(.alert_key)"' || true
+            echo "Governance skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
+
+      - name: Run workflow tick batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          WORKFLOW_TICK_TOKEN: ${{ secrets.WORKFLOW_TICK_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${WORKFLOW_TICK_TOKEN:-${PLANNER_RUN_TOKEN}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Workflow tick batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/workflows/tick?max_orgs=${MAX_ORGS}&limit=20"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-workflow-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Workflow tick batch failed after retry."
+              exit 1
+            fi
+            echo "Workflow tick batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Workflow tick summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tscanned=\(.scanned // 0)\tcompleted=\(.completed // 0)\trunning=\(.running // 0)\tfailed=\(.failed // 0)"' || true
+            echo "Workflow tick skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
+
+      - name: Run auto-incident safety check batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          INCIDENT_AUTOMATION_TOKEN: ${{ secrets.INCIDENT_AUTOMATION_TOKEN }}
+          GOV_RECOMMENDATIONS_TOKEN: ${{ secrets.GOV_RECOMMENDATIONS_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${INCIDENT_AUTOMATION_TOKEN:-${GOV_RECOMMENDATIONS_TOKEN:-${PLANNER_RUN_TOKEN}}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Auto-incident batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/incidents/auto-open?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-incident-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Auto-incident batch failed after retry."
+              exit 1
+            fi
+            echo "Auto-incident batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Auto-incident opened summary:"
+            echo "$RESP" | jq -r '.results[]? | select(.opened == true) | "\(.org_id)\t\(.incident_id)\t\(.trigger // "-")"' || true
+            echo "Auto-incident skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
+
+      - name: Run exception alerts batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          EXCEPTION_ALERTS_TOKEN: ${{ secrets.EXCEPTION_ALERTS_TOKEN }}
+          INCIDENT_AUTOMATION_TOKEN: ${{ secrets.INCIDENT_AUTOMATION_TOKEN }}
+          GOV_RECOMMENDATIONS_TOKEN: ${{ secrets.GOV_RECOMMENDATIONS_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${EXCEPTION_ALERTS_TOKEN:-${INCIDENT_AUTOMATION_TOKEN:-${GOV_RECOMMENDATIONS_TOKEN:-${PLANNER_RUN_TOKEN}}}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Exception alerts batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/operations/exceptions/alerts?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-exception-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Exception alerts batch failed after retry."
+              exit 1
+            fi
+            echo "Exception alerts batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Exception alert summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tsent=\(.sent // false)\ttarget_count=\(.target_count // 0)\treason=\(.reason // "-")"' || true
+            echo "Exception alerts skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+          else
+            echo "$RESP"
+          fi

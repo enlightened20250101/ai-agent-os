@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { recordTrustOutcome } from "@/lib/governance/trust";
 
 type Decision = "approved" | "rejected";
 
@@ -22,6 +23,31 @@ export type DecideApprovalResult = {
   approvalStatus: Decision;
   taskStatus: "approved" | "draft";
 };
+
+function parseLatestDraftAction(payload: unknown): { provider: "google"; actionType: "send_email" } | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const eventPayload = payload as Record<string, unknown>;
+  const output = eventPayload.output;
+  if (typeof output !== "object" || output === null) {
+    return null;
+  }
+  const draft = output as Record<string, unknown>;
+  const proposedActions = draft.proposed_actions;
+  if (!Array.isArray(proposedActions) || proposedActions.length === 0) {
+    return null;
+  }
+  const first = proposedActions[0];
+  if (typeof first !== "object" || first === null) {
+    return null;
+  }
+  const action = first as Record<string, unknown>;
+  if (action.provider !== "google" || action.action_type !== "send_email") {
+    return null;
+  }
+  return { provider: "google", actionType: "send_email" };
+}
 
 export async function decideApprovalShared(params: DecideApprovalParams): Promise<DecideApprovalResult> {
   const {
@@ -128,6 +154,57 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
       approval_id: approvalId
     }
   });
+
+  if (decision === "rejected") {
+    try {
+      const [{ data: latestModelEvent }, { data: taskRow }] = await Promise.all([
+        supabase
+          .from("task_events")
+          .select("payload_json")
+          .eq("org_id", orgId)
+          .eq("task_id", taskId)
+          .eq("event_type", "MODEL_INFERRED")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("tasks")
+          .select("agent_id")
+          .eq("id", taskId)
+          .eq("org_id", orgId)
+          .maybeSingle()
+      ]);
+
+      const parsedAction = parseLatestDraftAction(latestModelEvent?.payload_json);
+      if (parsedAction) {
+        let agentRoleKey: string | null = null;
+        const agentId = (taskRow?.agent_id as string | undefined) ?? null;
+        if (agentId) {
+          const { data: agentRes } = await supabase
+            .from("agents")
+            .select("role_key")
+            .eq("id", agentId)
+            .eq("org_id", orgId)
+            .maybeSingle();
+          agentRoleKey = (agentRes?.role_key as string | undefined) ?? null;
+        }
+
+        await recordTrustOutcome({
+          supabase,
+          orgId,
+          provider: parsedAction.provider,
+          actionType: parsedAction.actionType,
+          outcome: "failed",
+          agentRoleKey,
+          taskId,
+          source: "approval_rejection"
+        });
+      }
+    } catch (trustError) {
+      const message = trustError instanceof Error ? trustError.message : "unknown_trust_error";
+      console.error(`[TRUST_REJECTION_UPDATE_FAILED] approval_id=${approvalId} task_id=${taskId} ${message}`);
+    }
+  }
 
   return {
     approvalId,

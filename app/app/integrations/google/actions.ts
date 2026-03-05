@@ -19,8 +19,8 @@ export async function disconnectGoogleConnector() {
     .eq("provider", "google");
 
   if (error) {
-    redirect(withMessage("error", `Failed to disconnect Google connector: ${error.message}`));
+    redirect(withMessage("error", `Googleコネクタの切断に失敗しました: ${error.message}`));
   }
 
-  redirect(withMessage("ok", "Google connector disconnected."));
+  redirect(withMessage("ok", "Googleコネクタを切断しました。"));
 }

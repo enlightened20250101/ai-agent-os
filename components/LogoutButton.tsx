@@ -24,7 +24,7 @@ export function LogoutButton() {
       onClick={onLogout}
       disabled={isPending}
     >
-      {isPending ? "Logging out..." : "Logout"}
+      {isPending ? "ログアウト中..." : "ログアウト"}
     </button>
   );
 }

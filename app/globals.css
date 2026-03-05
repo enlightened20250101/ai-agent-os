@@ -2,15 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ui-bg: #f8fafc;
+  --ui-fg: #0f172a;
+  --ui-accent: #0f766e;
+}
+
 html,
 body {
   min-height: 100%;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  font-family: var(--font-sans), "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(20, 184, 166, 0.12), transparent 38%),
+    radial-gradient(circle at 88% 0%, rgba(14, 165, 233, 0.1), transparent 30%),
+    var(--ui-bg);
+  color: var(--ui-fg);
+  @apply antialiased;
 }
 
 a {
-  @apply text-blue-700 hover:text-blue-900;
+  @apply text-teal-700 hover:text-teal-900;
+}
+
+code,
+pre {
+  font-family: var(--font-mono), "SFMono-Regular", Consolas, monospace;
 }

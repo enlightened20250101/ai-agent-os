@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { buildGoogleOAuthAuthUrl, createGoogleOAuthState } from "@/lib/google/oauth";
+import {
+  buildGoogleOAuthAuthUrl,
+  createGoogleOAuthState,
+  getGoogleRedirectUri,
+  getNormalizedAppBaseUrl
+} from "@/lib/google/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-function integrationsUrl(request: Request, params: Record<string, string>) {
-  const url = new URL("/app/integrations/google", request.url);
+function integrationsUrl(appBaseUrl: string, params: Record<string, string>) {
+  const url = new URL("/app/integrations/google", appBaseUrl);
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.set(key, value);
   });
@@ -12,8 +17,10 @@ function integrationsUrl(request: Request, params: Record<string, string>) {
 }
 
 export async function GET(request: Request) {
+  const appBaseUrl = getNormalizedAppBaseUrl();
+
   if (process.env.E2E_MODE === "1") {
-    return NextResponse.redirect(integrationsUrl(request, { success: "1", message: "oauth_noop_e2e" }));
+    return NextResponse.redirect(integrationsUrl(appBaseUrl, { success: "1", message: "oauth_noop_e2e" }));
   }
 
   const supabase = await createClient();
@@ -35,7 +42,7 @@ export async function GET(request: Request) {
       code: membershipError.code ?? null
     });
     return NextResponse.redirect(
-      integrationsUrl(request, {
+      integrationsUrl(appBaseUrl, {
         error: "membership_lookup_failed",
         error_description: "Failed to resolve org membership."
       })
@@ -64,12 +71,20 @@ export async function GET(request: Request) {
         code: stateInsertError.code ?? null
       });
       return NextResponse.redirect(
-        integrationsUrl(request, {
+        integrationsUrl(appBaseUrl, {
           error: "state_insert_failed",
           error_description: "Failed to initialize OAuth state."
         })
       );
     }
+
+    const redirectUri = getGoogleRedirectUri();
+    console.info("[GOOGLE_OAUTH_AUTH_START]", {
+      appBaseUrl,
+      redirectUri,
+      orgIdPresent: Boolean(orgId),
+      userIdPresent: Boolean(user.id)
+    });
 
     const authUrl = buildGoogleOAuthAuthUrl(state.token);
     return NextResponse.redirect(authUrl);
@@ -81,7 +96,7 @@ export async function GET(request: Request) {
       message
     });
     return NextResponse.redirect(
-      integrationsUrl(request, {
+      integrationsUrl(appBaseUrl, {
         error: "oauth_init_failed",
         error_description: "Google OAuth initialization failed."
       })

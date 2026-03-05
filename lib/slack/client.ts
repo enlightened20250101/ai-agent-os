@@ -10,6 +10,7 @@ type PostSlackMessageArgs = {
 export async function postSlackMessage(args: PostSlackMessageArgs): Promise<{
   ts: string;
   channel: string;
+  permalink?: string;
 }> {
   if (!args.botToken) {
     throw new Error("Missing SLACK_BOT_TOKEN.");
@@ -43,8 +44,35 @@ export async function postSlackMessage(args: PostSlackMessageArgs): Promise<{
     throw new Error(`Slack API failed: ${payload.error ?? "unknown error"}`);
   }
 
+  let permalink: string | undefined;
+  try {
+    const permalinkResponse = await fetch("https://slack.com/api/chat.getPermalink", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${args.botToken}`
+      },
+      body: JSON.stringify({
+        channel: payload.channel,
+        message_ts: payload.ts
+      })
+    });
+    if (permalinkResponse.ok) {
+      const permalinkPayload = (await permalinkResponse.json()) as {
+        ok?: boolean;
+        permalink?: string;
+      };
+      if (permalinkPayload.ok && typeof permalinkPayload.permalink === "string") {
+        permalink = permalinkPayload.permalink;
+      }
+    }
+  } catch {
+    // Permalink is best-effort; message post result remains successful.
+  }
+
   return {
     ts: payload.ts,
-    channel: payload.channel
+    channel: payload.channel,
+    permalink
   };
 }

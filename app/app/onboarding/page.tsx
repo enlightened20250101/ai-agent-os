@@ -24,9 +24,9 @@ export default async function OnboardingPage() {
 
   return (
     <section className="mx-auto mt-16 w-full max-w-xl rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-      <h1 className="text-2xl font-semibold tracking-tight">Onboarding</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">オンボーディング</h1>
       <p className="mt-2 text-slate-600">
-        Complete setup to create your organization workspace.
+        組織ワークスペースの初期設定を完了します。
       </p>
       <div className="mt-6">
         <form id="onboarding-form" action={completeOnboarding}>

@@ -17,9 +17,34 @@ function getGoogleOAuthClientConfig() {
   return { clientId, clientSecret };
 }
 
-export function getGoogleOAuthRedirectUri() {
-  const appBaseUrl = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  return `${appBaseUrl}/api/google/callback`;
+export function getNormalizedAppBaseUrl() {
+  const appBaseUrl = process.env.APP_BASE_URL?.trim();
+  if (appBaseUrl) {
+    return appBaseUrl.replace(/\/+$/, "");
+  }
+
+  const deprecatedRedirect =
+    process.env.GOOGLE_REDIRECT_URI?.trim() || process.env.GOOGLE_REDIRECT_URL?.trim() || "";
+  if (deprecatedRedirect) {
+    try {
+      const parsed = new URL(deprecatedRedirect);
+      console.warn("[GOOGLE_OAUTH_DEPRECATED_REDIRECT_ENV]", {
+        usedEnv:
+          process.env.GOOGLE_REDIRECT_URI?.trim() && !process.env.APP_BASE_URL
+            ? "GOOGLE_REDIRECT_URI"
+            : "GOOGLE_REDIRECT_URL"
+      });
+      return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, "");
+    } catch {
+      // Fall through to default.
+    }
+  }
+
+  return "http://localhost:3000";
+}
+
+export function getGoogleRedirectUri() {
+  return `${getNormalizedAppBaseUrl()}/api/google/callback`;
 }
 
 function signStatePayload(payloadEncoded: string) {
@@ -79,12 +104,12 @@ export function verifyGoogleOAuthState(args: { token: string }) {
 
 export function buildGoogleOAuthAuthUrl(state: string) {
   const { clientId } = getGoogleOAuthClientConfig();
-  const redirectUri = getGoogleOAuthRedirectUri();
+  const redirectUri = getGoogleRedirectUri();
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/gmail.send",
+    scope: "https://www.googleapis.com/auth/gmail.send openid email",
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
@@ -95,7 +120,7 @@ export function buildGoogleOAuthAuthUrl(state: string) {
 
 export async function exchangeGoogleCodeForTokens(code: string) {
   const { clientId, clientSecret } = getGoogleOAuthClientConfig();
-  const redirectUri = getGoogleOAuthRedirectUri();
+  const redirectUri = getGoogleRedirectUri();
 
   const params = new URLSearchParams({
     code,
@@ -129,19 +154,35 @@ export async function exchangeGoogleCodeForTokens(code: string) {
 }
 
 export async function getGoogleSenderEmail(accessToken: string) {
-  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+  const gmailProfileResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
     headers: {
       authorization: `Bearer ${accessToken}`
     }
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Gmail profile lookup failed (${response.status}): ${text.slice(0, 300)}`);
+  if (gmailProfileResponse.ok) {
+    const payload = (await gmailProfileResponse.json()) as { emailAddress?: string };
+    const email = payload.emailAddress?.trim();
+    if (email) {
+      return email;
+    }
   }
-  const payload = (await response.json()) as { emailAddress?: string };
-  const email = payload.emailAddress?.trim();
-  if (!email) {
-    throw new Error("Gmail profile response did not include emailAddress.");
+
+  const userInfoResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    }
+  });
+  if (!userInfoResponse.ok) {
+    const gmailProfileText = gmailProfileResponse.ok ? "" : await gmailProfileResponse.text();
+    const userInfoText = await userInfoResponse.text();
+    throw new Error(
+      `Sender email lookup failed (gmail_profile=${gmailProfileResponse.status}, userinfo=${userInfoResponse.status}): ${gmailProfileText.slice(0, 120)} | ${userInfoText.slice(0, 120)}`
+    );
   }
-  return email;
+  const userInfoPayload = (await userInfoResponse.json()) as { email?: string };
+  const userInfoEmail = userInfoPayload.email?.trim();
+  if (!userInfoEmail) {
+    throw new Error("Userinfo response did not include email.");
+  }
+  return userInfoEmail;
 }

@@ -22,24 +22,24 @@ export async function POST(request: Request) {
   const formData = new URLSearchParams(rawBody);
   const payloadRaw = formData.get("payload");
   if (!payloadRaw) {
-    return textResponse("Missing payload.", 400);
+    return textResponse("payload がありません。", 400);
   }
 
   let payload: SlackActionPayload;
   try {
     payload = JSON.parse(payloadRaw) as SlackActionPayload;
   } catch {
-    return textResponse("Invalid payload.", 400);
+    return textResponse("payload が不正です。", 400);
   }
 
   const actionValue = payload.actions?.[0]?.value;
   if (!actionValue) {
-    return textResponse("Missing action value.", 400);
+    return textResponse("action value がありません。", 400);
   }
 
   const approvalId = actionValue.split(":")[0];
   if (!approvalId) {
-    return textResponse("Invalid action token.", 400);
+    return textResponse("action token が不正です。", 400);
   }
 
   const admin = createAdminClient();
@@ -49,13 +49,13 @@ export async function POST(request: Request) {
     .eq("id", approvalId)
     .maybeSingle();
   if (approvalLookupError || !approval) {
-    return textResponse("Approval not found.", 400);
+    return textResponse("承認対象が見つかりません。", 400);
   }
 
   const orgId = approval.org_id as string;
   const cfg = await resolveSlackRuntimeConfig({ supabase: admin, orgId });
   if (!cfg.signingSecret) {
-    return textResponse("Slack integration is not configured.", 400);
+    return textResponse("Slack連携が設定されていません。", 400);
   }
 
   const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     rawBody
   });
   if (!isValid) {
-    return textResponse("Invalid signature.", 401);
+    return textResponse("署名が不正です。", 401);
   }
 
   const verifiedToken = verifyApprovalActionToken({
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     token: actionValue
   });
   if (!verifiedToken) {
-    return textResponse("Invalid action token.", 400);
+    return textResponse("action token が不正です。", 400);
   }
 
   try {
@@ -91,19 +91,19 @@ export async function POST(request: Request) {
 
     const appBaseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
     const taskUrl = `${appBaseUrl}/app/tasks/${result.taskId}`;
-    const verb = result.approvalStatus === "approved" ? "Approved" : "Rejected";
+    const verb = result.approvalStatus === "approved" ? "承認しました" : "却下しました";
 
     return NextResponse.json({
       response_type: "ephemeral",
-      text: `${verb}. View task: ${taskUrl}`
+      text: `${verb}。タスク: ${taskUrl}`
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown approval error.";
+    const message = error instanceof Error ? error.message : "不明な承認エラーです。";
     console.error(`[SLACK_ACTION_ERROR] ${message}`);
     return NextResponse.json(
       {
         response_type: "ephemeral",
-        text: `Failed to process action: ${message}`
+        text: `アクション処理に失敗しました: ${message}`
       },
       { status: 400 }
     );

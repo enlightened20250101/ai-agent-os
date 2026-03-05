@@ -16,7 +16,7 @@ export async function decideApproval(formData: FormData) {
   const reason = String(formData.get("reason") ?? "").trim();
 
   if (!approvalId || (decision !== "approved" && decision !== "rejected")) {
-    redirect(errorRedirect("Invalid approval decision request."));
+    redirect(errorRedirect("承認判断リクエストが不正です。"));
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -35,7 +35,7 @@ export async function decideApproval(formData: FormData) {
       expectedOrgId: orgId
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Approval decision failed.";
+    const message = error instanceof Error ? error.message : "承認判断に失敗しました。";
     redirect(errorRedirect(message));
   }
 
