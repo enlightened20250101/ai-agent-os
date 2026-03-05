@@ -915,3 +915,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `run_workflow` は対象タスクの `workflow_template_id` を必須とし、未設定時は実行せず明確な修正導線（`/app/tasks` で設定）を返す。
 - Why: 誤起動・不完全起動を防ぎ、失敗時もオペレーターが次に取るべき行動を即判断できるようにするため。
+
+- Decision: チャット意図に `bulk_retry_failed_workflows` を追加し、「失敗ワークフローをまとめて再試行」要求を確認付きで実行できるようにした（最大件数はメッセージから解釈、既定3）。
+- Why: 例外復旧の初動をチャットから完結させ、障害時のオペレーター負荷を下げるため。
+
+- Decision: 再試行実行は `/app/operations/exceptions` と同じ `retryFailedWorkflowRun` を再利用し、成功/失敗件数と対象run IDsを `chat_commands.result_json` に残す。
+- Why: 実装の一貫性を保ちつつ、復旧実行の監査性を強化するため。

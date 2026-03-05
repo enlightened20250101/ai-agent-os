@@ -42,6 +42,12 @@ export type ParsedChatIntent =
       plan: { summary: string; maxItems: number; scope: "current" | "shared" | "personal" | "all" };
     }
   | {
+      intentType: "bulk_retry_failed_workflows";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; maxItems: number };
+    }
+  | {
       intentType: "quick_top_action";
       confidence: number;
       requiresConfirmation: true;
@@ -227,6 +233,22 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     };
   }
 
+  const bulkWorkflowRetryLike =
+    /(失敗ワークフロー|failed workflow|workflow run)/i.test(text) &&
+    /(再試行|再実行|まとめて|一括|bulk retry)/i.test(text);
+  if (bulkWorkflowRetryLike) {
+    const maxItems = parsedCount ?? 3;
+    return {
+      intentType: "bulk_retry_failed_workflows",
+      confidence: 0.78,
+      requiresConfirmation: true,
+      plan: {
+        summary: `失敗workflow runを最大${maxItems}件再試行します。`,
+        maxItems
+      }
+    };
+  }
+
   const quickIndexMatch = text.match(/(?:#|No\.?|番号)?\s*([1-3])(?:番)?/i);
   const quickIndex = quickIndexMatch ? Number.parseInt(quickIndexMatch[1] ?? "0", 10) : Number.NaN;
   if (!Number.isNaN(quickIndex) && quickIndex >= 1 && quickIndex <= 3) {
@@ -372,7 +394,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     requiresConfirmation: false,
     plan: {
       summary:
-        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認、プランナー実行、ワークフロー実行として具体的に指示してください。"
+        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認、プランナー実行、ワークフロー実行、失敗workflow再試行として具体的に指示してください。"
     }
   };
 }

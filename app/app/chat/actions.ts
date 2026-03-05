@@ -14,7 +14,7 @@ import { runPlanner } from "@/lib/planner/runPlanner";
 import { acceptProposalShared } from "@/lib/proposals/decide";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
-import { startWorkflowRun } from "@/lib/workflows/orchestrator";
+import { retryFailedWorkflowRun, startWorkflowRun } from "@/lib/workflows/orchestrator";
 
 function pathForScope(scope: ChatScope) {
   return scope === "shared" ? "/app/chat/shared" : "/app/chat/me";
@@ -39,7 +39,8 @@ function isBlockedByIncident(intentType: string) {
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
     intentType === "run_planner" ||
-    intentType === "run_workflow"
+    intentType === "run_workflow" ||
+    intentType === "bulk_retry_failed_workflows"
   );
 }
 
@@ -51,6 +52,7 @@ function isMutatingIntent(intentType: string) {
     intentType === "decide_approval" ||
     intentType === "bulk_decide_approvals" ||
     intentType === "bulk_retry_failed_commands" ||
+    intentType === "bulk_retry_failed_workflows" ||
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
     intentType === "run_planner" ||
@@ -1367,6 +1369,74 @@ async function runWorkflowFromChatCommand(args: {
   };
 }
 
+async function runBulkRetryFailedWorkflowsCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const maxItemsRaw =
+    typeof args.intentJson.maxItems === "number"
+      ? args.intentJson.maxItems
+      : Number.parseInt(String(args.intentJson.maxItems ?? "3"), 10);
+  const maxItems = Number.isNaN(maxItemsRaw) ? 3 : Math.max(1, Math.min(10, maxItemsRaw));
+
+  const { data: runs, error: runsError } = await args.supabase
+    .from("workflow_runs")
+    .select("id")
+    .eq("org_id", args.orgId)
+    .eq("status", "failed")
+    .order("finished_at", { ascending: false })
+    .limit(maxItems);
+  if (runsError) {
+    throw new Error(`失敗workflow run取得に失敗しました: ${runsError.message}`);
+  }
+
+  const targets = (runs ?? []).map((row) => row.id as string).filter(Boolean);
+  if (targets.length === 0) {
+    return {
+      executionRefType: "workflow_run",
+      executionRefId: null,
+      result: {
+        retried: 0,
+        failed: 0,
+        target_count: 0
+      },
+      message: "再試行対象の失敗workflow runはありません。",
+      touchedTaskId: null
+    };
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+  for (const workflowRunId of targets) {
+    try {
+      await retryFailedWorkflowRun({
+        supabase: args.supabase,
+        orgId: args.orgId,
+        workflowRunId,
+        actorId: args.userId
+      });
+      successCount += 1;
+    } catch {
+      failCount += 1;
+    }
+  }
+
+  return {
+    executionRefType: "workflow_run",
+    executionRefId: targets[0] ?? null,
+    result: {
+      retried: successCount,
+      failed: failCount,
+      target_count: targets.length,
+      workflow_run_ids: targets
+    },
+    message: `失敗workflow runを再試行しました: success=${successCount}, failed=${failCount} (/app/workflows/runs)`,
+    touchedTaskId: null
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -1404,6 +1474,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "run_workflow") {
     return runWorkflowFromChatCommand(args);
+  }
+  if (args.intentType === "bulk_retry_failed_workflows") {
+    return runBulkRetryFailedWorkflowsCommand(args);
   }
   throw new Error("この実行タイプは未対応です。");
 }
