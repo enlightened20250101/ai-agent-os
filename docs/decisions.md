@@ -891,3 +891,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `failRunningStepAndRun` のDB更新にエラーチェックを追加し、失敗更新の取りこぼしを防止した。
 - Why: 失敗処理自体の失敗を明示化し、状態不整合を減らすため。
+
+- Decision: `retryFailedWorkflowRun` に `WORKFLOW_STEP_MAX_RETRIES`（既定3）を導入し、stepごとの再試行回数上限を超えた場合は再試行を拒否する。
+- Why: 無限リトライによるジョブ占有と障害長期化を防ぎ、原因調査へ確実にエスカレーションするため。

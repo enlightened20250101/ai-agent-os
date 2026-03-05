@@ -219,6 +219,12 @@ function getWorkflowStepTimeoutSeconds() {
   return Math.max(60, Math.min(24 * 60 * 60, raw));
 }
 
+function getWorkflowStepMaxRetries() {
+  const raw = Number.parseInt(process.env.WORKFLOW_STEP_MAX_RETRIES ?? "3", 10);
+  if (Number.isNaN(raw)) return 3;
+  return Math.max(0, Math.min(20, raw));
+}
+
 async function moveQueuedStepToRunning(args: {
   supabase: SupabaseClient;
   orgId: string;
@@ -1206,6 +1212,11 @@ export async function retryFailedWorkflowRun({
   if (!failedStep) {
     throw new Error("再試行対象の failed step が見つかりません。");
   }
+  const currentRetryCount = Number(failedStep.retry_count ?? 0);
+  const maxRetries = getWorkflowStepMaxRetries();
+  if (currentRetryCount >= maxRetries) {
+    throw new Error(`step再試行上限に達しました (${currentRetryCount}/${maxRetries})。`);
+  }
 
   const nowIso = new Date().toISOString();
   const { error: retryStepError } = await supabase
@@ -1216,7 +1227,7 @@ export async function retryFailedWorkflowRun({
       finished_at: null,
       error_json: {},
       output_json: {},
-      retry_count: Number(failedStep.retry_count ?? 0) + 1
+      retry_count: currentRetryCount + 1
     })
     .eq("id", failedStep.id)
     .eq("org_id", orgId);
