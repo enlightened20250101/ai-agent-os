@@ -840,3 +840,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` のCSV/JSONエクスポートUIに `filtered export` バッジと条件サマリ表示を追加し、現在の絞り込みが出力対象に反映されることを明示した。
 - Why: 誤った条件での監査出力を防ぎ、オペレーターが抽出範囲を視覚的に確認できるようにするため。
+
+- Decision: `/app/chat/audit` のフィルタフォームに「フィルタをリセット」導線を追加し、ワンクリックで初期一覧へ戻せるようにした。
+- Why: 絞り込みを重ねた後の復帰操作を簡略化し、運用時の探索スピードを上げるため。
