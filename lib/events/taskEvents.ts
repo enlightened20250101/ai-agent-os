@@ -14,6 +14,7 @@ export type AppEventType =
   | "MODEL_INFERRED"
   | "POLICY_CHECKED"
   | "ACTION_QUEUED"
+  | "ACTION_SKIPPED"
   | "ACTION_EXECUTED"
   | "ACTION_FAILED";
 

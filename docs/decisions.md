@@ -174,3 +174,8 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Provide a print-friendly authenticated HTML evidence report per task with structured sections plus raw event/action JSON via collapsible blocks.
 - Why: Delivers audit-readiness immediately without introducing PDF generation complexity.
+
+### 2026-03-05 - Action runner idempotency and concurrency guard
+
+- Decision: Add `actions.idempotency_key` with unique `(org_id, idempotency_key)` constraint and enforce single `running` action per task, emitting `ACTION_SKIPPED` when execution is deduped or blocked.
+- Why: Prevents duplicate Gmail sends under retries/concurrent clicks while keeping all skipped decisions auditable in the event ledger.

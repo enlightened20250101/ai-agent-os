@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { sendEmailWithGmail } from "@/lib/google/gmail";
 import { requireOrgContext } from "@/lib/org/context";
@@ -92,6 +93,14 @@ function getEmailDomain(email: string) {
     return null;
   }
   return email.slice(at + 1).toLowerCase();
+}
+
+function isUniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const code = (error as { code?: string }).code;
+  return code === "23505";
 }
 
 export async function setTaskReadyForApproval(formData: FormData) {
@@ -497,6 +506,72 @@ export async function executeDraftAction(formData: FormData) {
     redirect(errorPath(taskId, eligibilityReasons.join(" ")));
   }
 
+  const idempotencyKey = computeGoogleSendEmailIdempotencyKey({
+    taskId,
+    provider: "google",
+    actionType: "send_email",
+    to: action.to,
+    subject: action.subject,
+    bodyText: action.body_text
+  });
+
+  const { data: existingSuccess, error: existingSuccessError } = await supabase
+    .from("actions")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("idempotency_key", idempotencyKey)
+    .eq("status", "success")
+    .limit(1)
+    .maybeSingle();
+  if (existingSuccessError) {
+    redirect(errorPath(taskId, existingSuccessError.message));
+  }
+  if (existingSuccess?.id) {
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "user",
+      actorId: userId,
+      eventType: "ACTION_SKIPPED",
+      payload: {
+        reason: "idempotency_already_success",
+        idempotency_key: idempotencyKey,
+        existing_action_id: existingSuccess.id
+      }
+    });
+    revalidatePath(taskPath(taskId));
+    redirect(errorPath(taskId, "Already executed successfully for this draft action."));
+  }
+
+  const { data: runningForTask, error: runningForTaskError } = await supabase
+    .from("actions")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("task_id", taskId)
+    .eq("status", "running")
+    .limit(1)
+    .maybeSingle();
+  if (runningForTaskError) {
+    redirect(errorPath(taskId, runningForTaskError.message));
+  }
+  if (runningForTask?.id) {
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId,
+      actorType: "user",
+      actorId: userId,
+      eventType: "ACTION_SKIPPED",
+      payload: {
+        reason: "already_running",
+        running_action_id: runningForTask.id
+      }
+    });
+    revalidatePath(taskPath(taskId));
+    redirect(errorPath(taskId, "Execution already in progress for this task."));
+  }
+
   const { data: createdAction, error: createActionError } = await supabase
     .from("actions")
     .insert({
@@ -504,6 +579,7 @@ export async function executeDraftAction(formData: FormData) {
       task_id: taskId,
       provider: "google",
       action_type: "send_email",
+      idempotency_key: idempotencyKey,
       request_json: {
         to: action.to,
         subject: action.subject,
@@ -516,6 +592,51 @@ export async function executeDraftAction(formData: FormData) {
     .single();
 
   if (createActionError) {
+    if (isUniqueViolation(createActionError)) {
+      const { data: existingAction, error: existingActionError } = await supabase
+        .from("actions")
+        .select("id, status")
+        .eq("org_id", orgId)
+        .eq("idempotency_key", idempotencyKey)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingActionError) {
+        redirect(errorPath(taskId, existingActionError.message));
+      }
+
+      if (existingAction?.id) {
+        const reason =
+          existingAction.status === "success"
+            ? "idempotency_already_success"
+            : existingAction.status === "running"
+              ? "already_running"
+              : "idempotency_existing_action";
+        await appendTaskEvent({
+          supabase,
+          orgId,
+          taskId,
+          actorType: "user",
+          actorId: userId,
+          eventType: "ACTION_SKIPPED",
+          payload: {
+            reason,
+            idempotency_key: idempotencyKey,
+            existing_action_id: existingAction.id,
+            existing_status: existingAction.status
+          }
+        });
+        revalidatePath(taskPath(taskId));
+        redirect(
+          errorPath(
+            taskId,
+            existingAction.status === "success"
+              ? "Already executed successfully for this draft action."
+              : "Execution is already queued or running for this draft action."
+          )
+        );
+      }
+    }
     redirect(errorPath(taskId, createActionError.message));
   }
 
@@ -528,6 +649,7 @@ export async function executeDraftAction(formData: FormData) {
     eventType: "ACTION_QUEUED",
     payload: {
       action_id: createdAction.id,
+      idempotency_key: idempotencyKey,
       provider: "google",
       action_type: "send_email",
       request: {
@@ -541,8 +663,36 @@ export async function executeDraftAction(formData: FormData) {
     .from("actions")
     .update({ status: "running" })
     .eq("id", createdAction.id)
-    .eq("org_id", orgId);
+    .eq("org_id", orgId)
+    .eq("status", "queued");
   if (runningError) {
+    if (isUniqueViolation(runningError)) {
+      await appendTaskEvent({
+        supabase,
+        orgId,
+        taskId,
+        actorType: "user",
+        actorId: userId,
+        eventType: "ACTION_SKIPPED",
+        payload: {
+          reason: "already_running",
+          action_id: createdAction.id,
+          idempotency_key: idempotencyKey
+        }
+      });
+      await supabase
+        .from("actions")
+        .update({
+          status: "failed",
+          result_json: {
+            error: "Skipped due to concurrent running action."
+          }
+        })
+        .eq("id", createdAction.id)
+        .eq("org_id", orgId);
+      revalidatePath(taskPath(taskId));
+      redirect(errorPath(taskId, "Execution already in progress for this task."));
+    }
     redirect(errorPath(taskId, runningError.message));
   }
 
@@ -577,6 +727,7 @@ export async function executeDraftAction(formData: FormData) {
       eventType: "ACTION_EXECUTED",
       payload: {
         action_id: createdAction.id,
+        idempotency_key: idempotencyKey,
         provider: "google",
         action_type: "send_email",
         gmail_message_id: sendResult.messageId,
@@ -606,6 +757,7 @@ export async function executeDraftAction(formData: FormData) {
       eventType: "ACTION_FAILED",
       payload: {
         action_id: createdAction.id,
+        idempotency_key: idempotencyKey,
         provider: "google",
         action_type: "send_email",
         error: summary

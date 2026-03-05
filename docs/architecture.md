@@ -20,7 +20,7 @@ Primary workflow:
 
 - Responsibility: Immutable audit events for every state change and external action.
 - Backing store: Supabase Postgres table(s) with RLS.
-- Event examples: `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`, `APPROVAL_REQUESTED`, `HUMAN_APPROVED`, `ACTION_EXECUTED`, `ACTION_FAILED`.
+- Event examples: `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`, `APPROVAL_REQUESTED`, `HUMAN_APPROVED`, `ACTION_SKIPPED`, `ACTION_EXECUTED`, `ACTION_FAILED`.
 - Requirement: All modules write to ledger through a shared server-side writer.
 
 ### 2) Policy Engine
@@ -94,6 +94,7 @@ Primary workflow:
 - `MODEL_INFERRED`
 - `POLICY_CHECKED`
 - `ACTION_QUEUED`
+- `ACTION_SKIPPED`
 - `ACTION_EXECUTED`
 - `ACTION_FAILED`
 

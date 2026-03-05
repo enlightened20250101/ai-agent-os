@@ -129,6 +129,13 @@ test("agents -> tasks -> approvals flow", async ({ page, request }, testInfo) =>
     await page.getByRole("button", { name: "Execute Email" }).click();
     await expect(page.getByText("ACTION_EXECUTED").first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/Latest action status:\s*success/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Current draft action already executed successfully.")).toBeVisible({
+      timeout: 30_000
+    });
+
+    await page.getByRole("button", { name: "Execute Email" }).click();
+    await expect(page.getByText("ACTION_SKIPPED").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("ACTION_EXECUTED")).toHaveCount(1);
 
     await expect(page.getByText("TASK_CREATED").first()).toBeVisible();
     await expect(page.getByText("APPROVAL_REQUESTED").first()).toBeVisible();

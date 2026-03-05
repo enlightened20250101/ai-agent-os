@@ -6,6 +6,7 @@ import {
   requestApproval,
   setTaskReadyForApproval
 } from "@/app/app/tasks/[id]/actions";
+import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -35,6 +36,7 @@ type PolicyView = {
 
 type ActionRow = {
   id: string;
+  idempotency_key: string;
   provider: string;
   action_type: string;
   status: string;
@@ -160,7 +162,7 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         .order("created_at", { ascending: false }),
       supabase
         .from("actions")
-        .select("id, provider, action_type, status, created_at, result_json")
+        .select("id, idempotency_key, provider, action_type, status, created_at, result_json")
         .eq("org_id", orgId)
         .eq("task_id", id)
         .order("created_at", { ascending: false })
@@ -193,25 +195,35 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
     latestDraft?.proposed_actions.find(
       (action) => action.provider === "google" && action.action_type === "send_email"
     ) ?? null;
-  const executeEligibilityReasons: string[] = [];
+  const executeBaseReasons: string[] = [];
+  const currentIdempotencyKey = proposedEmailAction
+    ? computeGoogleSendEmailIdempotencyKey({
+        taskId: id,
+        provider: "google",
+        actionType: "send_email",
+        to: proposedEmailAction.to,
+        subject: proposedEmailAction.subject,
+        bodyText: proposedEmailAction.body_text
+      })
+    : null;
 
   if ((task.status as string) !== "approved") {
-    executeEligibilityReasons.push("Task status must be approved.");
+    executeBaseReasons.push("Task status must be approved.");
   }
   if (!latestDraft || !proposedEmailAction) {
-    executeEligibilityReasons.push("No executable google/send_email action found in latest draft.");
+    executeBaseReasons.push("No executable google/send_email action found in latest draft.");
   }
   if (!latestPolicy) {
-    executeEligibilityReasons.push("Policy check result is missing.");
+    executeBaseReasons.push("Policy check result is missing.");
   } else if (latestPolicy.status === "block") {
-    executeEligibilityReasons.push("Policy status is block.");
+    executeBaseReasons.push("Policy status is block.");
   }
 
   const allowedDomains = getAllowedDomains();
   if (proposedEmailAction && allowedDomains.length > 0) {
     const domain = extractDomain(proposedEmailAction.to);
     if (!domain || !allowedDomains.includes(domain)) {
-      executeEligibilityReasons.push(`Recipient domain ${domain ?? "(invalid)"} is not allowed.`);
+      executeBaseReasons.push(`Recipient domain ${domain ?? "(invalid)"} is not allowed.`);
     }
   }
 
@@ -222,11 +234,19 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
       Boolean(process.env.GOOGLE_REFRESH_TOKEN) &&
       Boolean(process.env.GOOGLE_SENDER_EMAIL));
   if (!hasGmailEnv) {
-    executeEligibilityReasons.push("Gmail env is not fully configured.");
+    executeBaseReasons.push("Gmail env is not fully configured.");
   }
 
-  const canExecuteEmail = executeEligibilityReasons.length === 0;
   const actionHistory = (actions ?? []) as ActionRow[];
+  const runningAction = actionHistory.find((action) => action.status === "running") ?? null;
+  const existingSuccessForDraft =
+    currentIdempotencyKey
+      ? actionHistory.find(
+          (action) => action.idempotency_key === currentIdempotencyKey && action.status === "success"
+        ) ?? null
+      : null;
+
+  const canExecuteEmailFinal = executeBaseReasons.length === 0;
   const latestAction = actionHistory[0] ?? null;
 
   return (
@@ -293,7 +313,7 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
                 : "Generate a draft before requesting approval."}
             </p>
           )}
-          {canExecuteEmail ? (
+          {canExecuteEmailFinal ? (
             <form action={executeDraftAction}>
               <input type="hidden" name="task_id" value={task.id as string} />
               <button
@@ -305,7 +325,7 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
             </form>
           ) : (
             <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              Execute Email unavailable: {executeEligibilityReasons.join(" ")}
+              Execute Email unavailable: {executeBaseReasons.join(" ")}
             </p>
           )}
         </div>
@@ -382,6 +402,13 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Action Runner</h2>
+        {existingSuccessForDraft ? (
+          <p className="mt-2 text-sm text-emerald-700">Current draft action already executed successfully.</p>
+        ) : runningAction ? (
+          <p className="mt-2 text-sm text-amber-700">Execution in progress.</p>
+        ) : canExecuteEmailFinal ? (
+          <p className="mt-2 text-sm text-slate-700">Eligible to execute.</p>
+        ) : null}
         {latestAction ? (
           <p className="mt-2 text-sm text-slate-700">
             Latest action status: <span className="font-medium">{latestAction.status}</span>
