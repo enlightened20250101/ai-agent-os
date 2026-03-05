@@ -43,6 +43,35 @@ function skipReasonClass() {
   return "border-amber-300 bg-amber-50 text-amber-800";
 }
 
+function recommendationForSkipReason(reason: string) {
+  if (reason === "approval_not_pending") {
+    return {
+      severity: "medium",
+      text: "承認待ちが先に解消されています。実行前に最新状況確認を増やし、並行オペレーションを調整してください。",
+      href: "/app/approvals"
+    };
+  }
+  if (reason === "approval_already_pending") {
+    return {
+      severity: "low",
+      text: "重複承認依頼が発生しています。既存pendingを優先処理し、再依頼は抑制してください。",
+      href: "/app/approvals"
+    };
+  }
+  if (reason === "stale_top_candidates") {
+    return {
+      severity: "high",
+      text: "TOP候補の鮮度切れが多発しています。状況確認を先に再実行し、必要ならTTLを短縮してください。",
+      href: "/app/chat/shared"
+    };
+  }
+  return {
+    severity: "low",
+    text: "スキップ理由の詳細を確認し、対象フローの前提条件を見直してください。",
+    href: "/app/chat/audit"
+  };
+}
+
 export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -160,6 +189,8 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   const topSkipReasons = Array.from(skipReasonCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6);
+  const topSkipReason = topSkipReasons[0]?.[0] ?? null;
+  const topSkipRecommendation = topSkipReason ? recommendationForSkipReason(topSkipReason) : null;
 
   const intentOptions = Array.from(
     new Set(
@@ -252,6 +283,23 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           <p className="mt-2 text-xs text-amber-800">直近7日の skip はありません。</p>
         )}
       </div>
+      {topSkipRecommendation ? (
+        <div
+          className={`rounded-md border p-3 text-sm ${
+            topSkipRecommendation.severity === "high"
+              ? "border-rose-300 bg-rose-50"
+              : topSkipRecommendation.severity === "medium"
+                ? "border-amber-300 bg-amber-50"
+                : "border-sky-300 bg-sky-50"
+          }`}
+        >
+          <p className="font-medium text-slate-900">推奨アクション（skip対策）</p>
+          <p className="mt-1 text-xs text-slate-700">{topSkipRecommendation.text}</p>
+          <Link href={topSkipRecommendation.href} className="mt-2 inline-block text-xs text-sky-700 underline">
+            対応ページを開く
+          </Link>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
