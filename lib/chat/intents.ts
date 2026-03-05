@@ -18,6 +18,12 @@ export type ParsedChatIntent =
       plan: { summary: string; taskHint: string | null };
     }
   | {
+      intentType: "accept_proposal";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; proposalHint: string | null; autoRequestApproval: boolean };
+    }
+  | {
       intentType: "decide_approval";
       confidence: number;
       requiresConfirmation: true;
@@ -93,6 +99,27 @@ export function parseChatIntent(message: string): ParsedChatIntent {
 
   const quoted = extractQuoted(text);
   const explicitTaskHint = quoted ?? taskIdHint;
+
+  const acceptProposalLike =
+    /(提案.*(受け入れ|採用)|受け入れ.*提案|accept proposal|提案を.*承認依頼|提案を.*タスク化)/i.test(text) ||
+    (/提案/.test(text) && /(受け入れて|採択|取り込んで)/.test(text));
+  if (acceptProposalLike) {
+    const autoRequestApproval = /(承認依頼|承認まで|approval)/i.test(text);
+    return {
+      intentType: "accept_proposal",
+      confidence: 0.81,
+      requiresConfirmation: true,
+      plan: {
+        summary: quoted
+          ? `提案「${quoted}」を受け入れてタスク化${autoRequestApproval ? "し、承認依頼まで作成" : ""}します。`
+          : taskIdHint
+            ? `提案ID ${taskIdHint} を受け入れてタスク化${autoRequestApproval ? "し、承認依頼まで作成" : ""}します。`
+            : `最優先の提案を受け入れてタスク化${autoRequestApproval ? "し、承認依頼まで作成" : ""}します。`,
+        proposalHint: quoted ?? taskIdHint,
+        autoRequestApproval
+      }
+    };
+  }
 
   const requestApprovalLike =
     /(承認依頼|承認を依頼|承認リクエスト|request approval)/i.test(text) ||
@@ -180,7 +207,8 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     confidence: 0.4,
     requiresConfirmation: false,
     plan: {
-      summary: "要望を理解できませんでした。タスク追加、承認依頼、承認/却下、状況確認として具体的に指示してください。"
+      summary:
+        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下、状況確認として具体的に指示してください。"
     }
   };
 }

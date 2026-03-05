@@ -10,6 +10,7 @@ import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
+import { acceptProposalShared } from "@/lib/proposals/decide";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
 
@@ -36,6 +37,7 @@ function isBlockedByIncident(intentType: string) {
 function isMutatingIntent(intentType: string) {
   return (
     intentType === "create_task" ||
+    intentType === "accept_proposal" ||
     intentType === "request_approval" ||
     intentType === "decide_approval" ||
     intentType === "execute_action"
@@ -350,6 +352,68 @@ async function findPendingApprovalForChat(args: {
     approvalId: approval.id as string,
     taskId: approval.task_id as string,
     taskTitle: ((taskRow?.title as string | undefined) ?? approval.task_id) as string
+  };
+}
+
+async function findProposalForChat(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  proposalHint: string | null;
+}) {
+  const { supabase, orgId, proposalHint } = args;
+  let query = supabase
+    .from("task_proposals")
+    .select("id, title, status, policy_status, priority_score, created_at")
+    .eq("org_id", orgId)
+    .eq("status", "proposed")
+    .neq("policy_status", "block");
+
+  if (proposalHint) {
+    query = query.or(`title.ilike.%${proposalHint}%,id.eq.${proposalHint}`);
+  }
+
+  const { data, error } = await query
+    .order("priority_score", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(6);
+  if (error) {
+    throw new Error(`対象提案の検索に失敗しました: ${error.message}`);
+  }
+  const rows = data ?? [];
+  if (rows.length === 0) {
+    throw new Error(
+      proposalHint ? `「${proposalHint}」に一致する受け入れ可能な提案がありません。` : "受け入れ可能な提案がありません。"
+    );
+  }
+
+  if (proposalHint) {
+    const exactById = rows.find((row) => String(row.id) === proposalHint);
+    if (exactById) {
+      return {
+        id: exactById.id as string,
+        title: exactById.title as string
+      };
+    }
+    const exactByTitle = rows.find((row) => String(row.title) === proposalHint);
+    if (exactByTitle) {
+      return {
+        id: exactByTitle.id as string,
+        title: exactByTitle.title as string
+      };
+    }
+    if (rows.length > 1) {
+      const previews = rows
+        .slice(0, 3)
+        .map((row) => `- ${row.title as string} (${row.id as string})`)
+        .join("\n");
+      throw new Error(`候補提案が複数あります。proposal_id か完全な提案名を指定してください:\n${previews}`);
+    }
+  }
+
+  const first = rows[0];
+  return {
+    id: first.id as string,
+    title: first.title as string
   };
 }
 
@@ -674,6 +738,48 @@ async function runExecuteActionCommand(args: {
   };
 }
 
+async function runAcceptProposalCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const proposalHint = typeof intentJson.proposalHint === "string" ? intentJson.proposalHint : null;
+  const autoRequestApproval = intentJson.autoRequestApproval !== false;
+
+  const proposal = await findProposalForChat({
+    supabase,
+    orgId,
+    proposalHint
+  });
+
+  const accepted = await acceptProposalShared({
+    supabase,
+    orgId,
+    userId,
+    proposalId: proposal.id,
+    decisionReason: "accepted_chat:auto_accept_from_chat",
+    autoRequestApproval,
+    source: "chat"
+  });
+
+  return {
+    executionRefType: "task",
+    executionRefId: accepted.taskId,
+    result: {
+      proposal_id: accepted.proposalId,
+      task_id: accepted.taskId,
+      approval_id: accepted.approvalId,
+      auto_request_approval: autoRequestApproval
+    },
+    message: autoRequestApproval
+      ? `提案を受け入れて承認依頼まで作成しました: ${accepted.proposalTitle} (/app/tasks/${accepted.taskId})`
+      : `提案を受け入れてタスク化しました: ${accepted.proposalTitle} (/app/tasks/${accepted.taskId})`,
+    touchedTaskId: accepted.taskId
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -687,6 +793,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "request_approval") {
     return runRequestApprovalCommand(args);
+  }
+  if (args.intentType === "accept_proposal") {
+    return runAcceptProposalCommand(args);
   }
   if (args.intentType === "decide_approval") {
     return runDecideApprovalCommand(args);

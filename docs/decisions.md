@@ -777,3 +777,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status_query` の返答には必ず「次アクション」(優先順3件) と運用画面パスを含める形式を採用した。
 - Why: 状況説明だけで止まらず、会話から即オペレーションへ遷移できる導線を標準化するため。
+
+- Decision: チャットに `accept_proposal` 意図を追加し、「提案を受け入れて（任意で承認依頼まで）進める」複合コマンドを確認付きで実行できるようにした。
+- Why: 提案画面での手動操作を減らし、会話だけで L2 フロー（提案採択→タスク化→承認依頼）を短縮するため。
+
+- Decision: 提案受け入れロジックは `acceptProposalShared` (`lib/proposals/decide.ts`) へ共通化し、UI とチャットで同一のイベント記録/Slack投稿/検証を使う設計にした。
+- Why: 分岐実装による監査差分と不整合を防ぎ、将来の API 実行経路追加にも再利用しやすくするため。

@@ -249,12 +249,12 @@ export async function ChatShell({ scope, title, description, submitAction, searc
             name="body"
             rows={3}
             required
-            placeholder="例: 「請求書確認タスクを追加して」 / 「task_id」を指定して承認依頼して / 「〇〇」を実行して"
+            placeholder="例: 「請求書確認タスクを追加して」 / 「提案『○○』を受け入れて承認依頼して」 / 「task_id」で承認依頼して / 「〇〇」を実行して"
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
           />
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-500">
-              起票・承認依頼・承認判断・実行は確認ステップを挟みます（実行系は日次上限あり）。
+              提案受け入れ・起票・承認依頼・承認判断・実行は確認ステップを挟みます（実行系は日次上限あり）。
             </p>
             <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
               送信
