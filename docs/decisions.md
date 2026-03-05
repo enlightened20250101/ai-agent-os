@@ -921,3 +921,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 再試行実行は `/app/operations/exceptions` と同じ `retryFailedWorkflowRun` を再利用し、成功/失敗件数と対象run IDsを `chat_commands.result_json` に残す。
 - Why: 実装の一貫性を保ちつつ、復旧実行の監査性を強化するため。
+
+- Decision: チャットの曖昧一致エラー（複数タスク/複数提案/複数承認待ち）時に、候補一覧だけでなく「そのまま再送できる具体コマンド例」を返すようにした。
+- Why: 再入力の試行錯誤を減らし、チャットコマンドの失敗率を下げるため。
+
+- Decision: `unknown` 意図のシステム返答を具体例付きのガイドに変更し、主要操作（作成/承認依頼/承認/実行/プランナー/失敗workflow再試行）を明示した。
+- Why: 初回利用者でも正しい文型へ即到達できるようにし、会話起点オペレーションの学習コストを下げるため。

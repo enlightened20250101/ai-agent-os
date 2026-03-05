@@ -32,6 +32,13 @@ function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+function candidateTaskExamples(rows: Array<{ id: string; title: string }>, actionLabel: string) {
+  return rows
+    .slice(0, 2)
+    .map((row) => `- 「${row.title}」を${actionLabel}（task_id: ${row.id}）`)
+    .join("\n");
+}
+
 function isBlockedByIncident(intentType: string) {
   return (
     intentType === "decide_approval" ||
@@ -230,7 +237,13 @@ async function findTaskForChat(args: {
       .slice(0, 3)
       .map((row) => `- ${row.title as string} (${row.id as string})`)
       .join("\n");
-    throw new Error(`対象タスクが複数あります。タスク名を「」で指定してください:\n${previews}`);
+    const examples = candidateTaskExamples(
+      rows.map((row) => ({ id: row.id as string, title: row.title as string })),
+      "承認依頼して"
+    );
+    throw new Error(
+      `対象タスクが複数あります。タスク名を「」で指定してください:\n${previews}\n\n次のように指定できます:\n${examples}`
+    );
   }
 
   if (taskHint) {
@@ -255,7 +268,13 @@ async function findTaskForChat(args: {
         .slice(0, 3)
         .map((row) => `- ${row.title as string} (${row.id as string})`)
         .join("\n");
-      throw new Error(`候補が複数あります。task_id か完全なタスク名を指定してください:\n${previews}`);
+      const examples = candidateTaskExamples(
+        rows.map((row) => ({ id: row.id as string, title: row.title as string })),
+        "実行して"
+      );
+      throw new Error(
+        `候補が複数あります。task_id か完全なタスク名を指定してください:\n${previews}\n\n次のように指定できます:\n${examples}`
+      );
     }
   }
 
@@ -393,7 +412,9 @@ async function findPendingApprovalForChat(args: {
       .slice(0, 3)
       .map((row) => `- ${titleById.get(row.task_id as string) ?? (row.task_id as string)} (${row.task_id as string})`)
       .join("\n");
-    throw new Error(`承認待ちが複数あります。対象タスクを指定してください:\n${previews}`);
+    throw new Error(
+      `承認待ちが複数あります。対象タスクを指定してください:\n${previews}\n\n例: 「対象タスク名」を承認して`
+    );
   }
   const approval = approvals[0];
 
@@ -462,7 +483,9 @@ async function findProposalForChat(args: {
         .slice(0, 3)
         .map((row) => `- ${row.title as string} (${row.id as string})`)
         .join("\n");
-      throw new Error(`候補提案が複数あります。proposal_id か完全な提案名を指定してください:\n${previews}`);
+      throw new Error(
+        `候補提案が複数あります。proposal_id か完全な提案名を指定してください:\n${previews}\n\n例: 「提案名」を受け入れて`
+      );
     }
   }
 
