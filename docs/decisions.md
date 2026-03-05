@@ -870,3 +870,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 件数サマリに `直近7日 filtered比率(%)` を追加した。
 - Why: 絞り込み条件が直近運用に対してどれだけ支配的かを即座に判断できるようにするため。
+
+- Decision: `直近7日 filtered比率` は閾値（50%/80%）で色分けし、高比率時は警戒色で表示する。
+- Why: 異常傾向の視認性を高め、優先調査対象を即判定できるようにするため。
