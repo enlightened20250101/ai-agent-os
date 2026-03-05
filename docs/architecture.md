@@ -37,6 +37,7 @@ Primary workflow:
   - Slack: intake and approval interactions.
   - Gmail: final outbound send.
 - Constraint: Secrets used only server-side; connector actions always ledgered.
+- Config source: per-org `connector_accounts` first, env fallback second for local/dev.
 
 ### 4) Approval Service
 
@@ -69,6 +70,7 @@ Primary workflow:
 - `task_events`: append-only event ledger entries per task.
 - `approvals`: human approval state for tasks.
 - `connector_accounts`: org connector identities and encrypted secret blobs.
+- MVP note: `secrets_json` is stored as plain JSON in MVP; encryption hardening is future work.
 - `actions`: outbound provider action attempts and results.
 
 ## Schema Notes

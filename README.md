@@ -81,6 +81,14 @@ Set these in `.env.local`:
    - `SLACK_APPROVAL_CHANNEL_ID`
 4. Open `/app/integrations/slack` and use "Send test message" to verify.
 
+## Connector Configuration (Org-Scoped)
+
+- Primary runtime config source is `connector_accounts` per org:
+  - Slack config in `/app/integrations/slack`
+  - Google config in `/app/integrations/google`
+- Env vars remain fallback for local/dev when no org connector record exists.
+- MVP stores `connector_accounts.secrets_json` as plain JSON (`future`: encrypted secret storage).
+
 ## Documentation
 
 - [Working rules](docs/AGENT.md)

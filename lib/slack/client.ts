@@ -1,23 +1,7 @@
 type SlackBlock = Record<string, unknown>;
 
-function getSlackConfig() {
-  return {
-    botToken: process.env.SLACK_BOT_TOKEN ?? "",
-    approvalChannelId: process.env.SLACK_APPROVAL_CHANNEL_ID ?? "",
-    signingSecret: process.env.SLACK_SIGNING_SECRET ?? ""
-  };
-}
-
-export function getSlackEnvStatus() {
-  const cfg = getSlackConfig();
-  return {
-    botToken: Boolean(cfg.botToken),
-    approvalChannelId: Boolean(cfg.approvalChannelId),
-    signingSecret: Boolean(cfg.signingSecret)
-  };
-}
-
 type PostSlackMessageArgs = {
+  botToken: string;
   channel: string;
   text: string;
   blocks?: SlackBlock[];
@@ -27,8 +11,7 @@ export async function postSlackMessage(args: PostSlackMessageArgs): Promise<{
   ts: string;
   channel: string;
 }> {
-  const cfg = getSlackConfig();
-  if (!cfg.botToken) {
+  if (!args.botToken) {
     throw new Error("Missing SLACK_BOT_TOKEN.");
   }
 
@@ -36,7 +19,7 @@ export async function postSlackMessage(args: PostSlackMessageArgs): Promise<{
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${cfg.botToken}`
+      authorization: `Bearer ${args.botToken}`
     },
     body: JSON.stringify({
       channel: args.channel,
@@ -64,8 +47,4 @@ export async function postSlackMessage(args: PostSlackMessageArgs): Promise<{
     ts: payload.ts,
     channel: payload.channel
   };
-}
-
-export function getSlackConfigForRuntime() {
-  return getSlackConfig();
 }

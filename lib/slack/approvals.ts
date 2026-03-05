@@ -1,7 +1,11 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveSlackRuntimeConfig } from "@/lib/connectors/runtime";
 import { createApprovalActionToken } from "@/lib/slack/actionToken";
-import { getSlackConfigForRuntime, postSlackMessage } from "@/lib/slack/client";
+import { postSlackMessage } from "@/lib/slack/client";
 
 type PostApprovalToSlackArgs = {
+  supabase: SupabaseClient;
+  orgId: string;
   approvalId: string;
   taskId: string;
   taskTitle: string;
@@ -13,7 +17,10 @@ export async function postApprovalRequestToSlack(args: PostApprovalToSlackArgs):
   channel: string;
   ts: string;
 } | null> {
-  const cfg = getSlackConfigForRuntime();
+  const cfg = await resolveSlackRuntimeConfig({
+    supabase: args.supabase,
+    orgId: args.orgId
+  });
   if (!cfg.botToken || !cfg.approvalChannelId || !cfg.signingSecret) {
     return null;
   }
@@ -33,6 +40,7 @@ export async function postApprovalRequestToSlack(args: PostApprovalToSlackArgs):
   });
 
   const message = await postSlackMessage({
+    botToken: cfg.botToken,
     channel: cfg.approvalChannelId,
     text: `Approval requested for task ${args.taskTitle}`,
     blocks: [

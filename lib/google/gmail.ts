@@ -1,4 +1,8 @@
 type SendEmailArgs = {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  senderEmail: string;
   to: string;
   subject: string;
   bodyText: string;
@@ -21,23 +25,15 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function getRequiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing ${name}`);
-  }
-  return value;
-}
-
-async function exchangeRefreshTokenForAccessToken() {
-  const clientId = getRequiredEnv("GOOGLE_CLIENT_ID");
-  const clientSecret = getRequiredEnv("GOOGLE_CLIENT_SECRET");
-  const refreshToken = getRequiredEnv("GOOGLE_REFRESH_TOKEN");
-
+async function exchangeRefreshTokenForAccessToken(args: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}) {
   const params = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
+    client_id: args.clientId,
+    client_secret: args.clientSecret,
+    refresh_token: args.refreshToken,
     grant_type: "refresh_token"
   });
 
@@ -70,17 +66,23 @@ export async function sendEmailWithGmail(args: SendEmailArgs): Promise<SendEmail
     };
   }
 
-  const sender = getRequiredEnv("GOOGLE_SENDER_EMAIL");
-  if (!isValidEmail(sender)) {
-    throw new Error("GOOGLE_SENDER_EMAIL is invalid.");
+  if (!args.clientId || !args.clientSecret || !args.refreshToken || !args.senderEmail) {
+    throw new Error("Google connector credentials are missing.");
+  }
+  if (!isValidEmail(args.senderEmail)) {
+    throw new Error("Google sender email is invalid.");
   }
   if (!isValidEmail(args.to)) {
     throw new Error("Draft recipient email is invalid.");
   }
-  const accessToken = await exchangeRefreshTokenForAccessToken();
+  const accessToken = await exchangeRefreshTokenForAccessToken({
+    clientId: args.clientId,
+    clientSecret: args.clientSecret,
+    refreshToken: args.refreshToken
+  });
 
   const rawMessage = [
-    `From: ${sender}`,
+    `From: ${args.senderEmail}`,
     `To: ${args.to}`,
     `Subject: ${args.subject}`,
     "MIME-Version: 1.0",

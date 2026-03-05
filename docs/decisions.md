@@ -179,3 +179,13 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Add `actions.idempotency_key` with unique `(org_id, idempotency_key)` constraint and enforce single `running` action per task, emitting `ACTION_SKIPPED` when execution is deduped or blocked.
 - Why: Prevents duplicate Gmail sends under retries/concurrent clicks while keeping all skipped decisions auditable in the event ledger.
+
+### 2026-03-05 - Org-scoped connector configuration
+
+- Decision: Use `connector_accounts` as primary runtime source for Slack/Google credentials per org, with env vars as fallback for local/dev when no DB connector is configured.
+- Why: Enables tenant-specific connector isolation while preserving zero-friction local setup.
+
+### 2026-03-05 - Connector secrets handling in MVP
+
+- Decision: Store connector secrets in `connector_accounts.secrets_json` as plain JSON for MVP, and mask secret inputs in UI forms.
+- Why: Prioritizes delivery speed for the wedge; encryption-at-rest and secret manager integration are tracked as future hardening work.

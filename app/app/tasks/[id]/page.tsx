@@ -7,6 +7,7 @@ import {
   setTaskReadyForApproval
 } from "@/app/app/tasks/[id]/actions";
 import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
+import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -227,14 +228,15 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
     }
   }
 
-  const hasGmailEnv =
+  const googleCfg = await resolveGoogleRuntimeConfig({ supabase, orgId });
+  const hasGoogleConnector =
     process.env.E2E_MODE === "1" ||
-    (Boolean(process.env.GOOGLE_CLIENT_ID) &&
-      Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
-      Boolean(process.env.GOOGLE_REFRESH_TOKEN) &&
-      Boolean(process.env.GOOGLE_SENDER_EMAIL));
-  if (!hasGmailEnv) {
-    executeBaseReasons.push("Gmail env is not fully configured.");
+    (Boolean(googleCfg.clientId) &&
+      Boolean(googleCfg.clientSecret) &&
+      Boolean(googleCfg.refreshToken) &&
+      Boolean(googleCfg.senderEmail));
+  if (!hasGoogleConnector) {
+    executeBaseReasons.push("Google connector is not configured (DB or env fallback).");
   }
 
   const actionHistory = (actions ?? []) as ActionRow[];

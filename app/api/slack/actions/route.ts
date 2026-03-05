@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveSlackRuntimeConfig } from "@/lib/connectors/runtime";
 import { decideApprovalShared } from "@/lib/approvals/decide";
 import { verifyApprovalActionToken } from "@/lib/slack/actionToken";
 import { verifySlackSignature } from "@/lib/slack/signature";
@@ -17,24 +18,7 @@ type SlackActionPayload = {
 };
 
 export async function POST(request: Request) {
-  const signingSecret = process.env.SLACK_SIGNING_SECRET;
-  if (!signingSecret) {
-    return textResponse("Slack integration is not configured.", 400);
-  }
-
   const rawBody = await request.text();
-  const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
-  const signature = request.headers.get("x-slack-signature") ?? "";
-  const isValid = verifySlackSignature({
-    signingSecret,
-    timestamp,
-    signature,
-    rawBody
-  });
-  if (!isValid) {
-    return textResponse("Invalid signature.", 401);
-  }
-
   const formData = new URLSearchParams(rawBody);
   const payloadRaw = formData.get("payload");
   if (!payloadRaw) {
@@ -53,20 +37,52 @@ export async function POST(request: Request) {
     return textResponse("Missing action value.", 400);
   }
 
-  const tokenPayload = verifyApprovalActionToken({
-    signingSecret,
-    token: actionValue
-  });
-  if (!tokenPayload) {
+  const approvalId = actionValue.split(":")[0];
+  if (!approvalId) {
     return textResponse("Invalid action token.", 400);
   }
 
   const admin = createAdminClient();
+  const { data: approval, error: approvalLookupError } = await admin
+    .from("approvals")
+    .select("id, org_id")
+    .eq("id", approvalId)
+    .maybeSingle();
+  if (approvalLookupError || !approval) {
+    return textResponse("Approval not found.", 400);
+  }
+
+  const orgId = approval.org_id as string;
+  const cfg = await resolveSlackRuntimeConfig({ supabase: admin, orgId });
+  if (!cfg.signingSecret) {
+    return textResponse("Slack integration is not configured.", 400);
+  }
+
+  const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
+  const signature = request.headers.get("x-slack-signature") ?? "";
+  const isValid = verifySlackSignature({
+    signingSecret: cfg.signingSecret,
+    timestamp,
+    signature,
+    rawBody
+  });
+  if (!isValid) {
+    return textResponse("Invalid signature.", 401);
+  }
+
+  const verifiedToken = verifyApprovalActionToken({
+    signingSecret: cfg.signingSecret,
+    token: actionValue
+  });
+  if (!verifiedToken) {
+    return textResponse("Invalid action token.", 400);
+  }
+
   try {
     const result = await decideApprovalShared({
       supabase: admin,
-      approvalId: tokenPayload.approvalId,
-      decision: tokenPayload.decision,
+      approvalId: verifiedToken.approvalId,
+      decision: verifiedToken.decision,
       actorType: "system",
       actorId: null,
       source: "slack",

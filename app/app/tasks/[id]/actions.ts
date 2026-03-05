@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
+import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { sendEmailWithGmail } from "@/lib/google/gmail";
 import { requireOrgContext } from "@/lib/org/context";
@@ -296,6 +297,8 @@ export async function requestApproval(formData: FormData) {
 
   try {
     const slackMessage = await postApprovalRequestToSlack({
+      supabase,
+      orgId,
       approvalId: approval.id as string,
       taskId,
       taskTitle: task.title as string,
@@ -502,6 +505,15 @@ export async function executeDraftAction(formData: FormData) {
     eligibilityReasons.push(`Recipient domain ${toDomain ?? "(invalid)"} not allowed.`);
   }
 
+  const googleCfg = await resolveGoogleRuntimeConfig({ supabase, orgId });
+  const isE2EStubMode = process.env.E2E_MODE === "1";
+  if (
+    !isE2EStubMode &&
+    (!googleCfg.clientId || !googleCfg.clientSecret || !googleCfg.refreshToken || !googleCfg.senderEmail)
+  ) {
+    eligibilityReasons.push("Google connector is not configured.");
+  }
+
   if (eligibilityReasons.length > 0) {
     redirect(errorPath(taskId, eligibilityReasons.join(" ")));
   }
@@ -698,6 +710,10 @@ export async function executeDraftAction(formData: FormData) {
 
   try {
     const sendResult = await sendEmailWithGmail({
+      clientId: googleCfg.clientId,
+      clientSecret: googleCfg.clientSecret,
+      refreshToken: googleCfg.refreshToken,
+      senderEmail: googleCfg.senderEmail,
       to: action.to,
       subject: action.subject,
       bodyText: action.body_text
