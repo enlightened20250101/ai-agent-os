@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { decideApproval } from "@/app/app/approvals/actions";
+import { decideApproval, resendApprovalSlackReminder } from "@/app/app/approvals/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 type ApprovalsPageProps = {
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; ok?: string }>;
 };
 
 type ApprovalRow = {
@@ -22,6 +22,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const staleHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
 
   const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }] = await Promise.all([
     supabase
@@ -83,6 +84,11 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       {sp.error ? (
         <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</p>
       ) : null}
+      {sp.ok ? (
+        <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {sp.ok}
+        </p>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
@@ -132,6 +138,19 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                   </Link>
                 </p>
                 <p className="text-xs text-slate-500">依頼日時 {new Date(approval.created_at).toLocaleString()}</p>
+                {(() => {
+                  const ageHours = Math.floor((Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000));
+                  const isStale = ageHours >= staleHours;
+                  return (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                        isStale ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-300 bg-slate-50 text-slate-600"
+                      }`}
+                    >
+                      経過 {ageHours}h {isStale ? "(SLA超過)" : ""}
+                    </span>
+                  );
+                })()}
               </div>
 
               <form action={decideApproval} className="mt-3 flex flex-col gap-3 md:flex-row md:items-center">
@@ -160,6 +179,15 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                     却下
                   </button>
                 </div>
+              </form>
+              <form action={resendApprovalSlackReminder} className="mt-2">
+                <input type="hidden" name="approval_id" value={approval.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs text-sky-700 hover:bg-sky-100"
+                >
+                  Slackに再通知
+                </button>
               </form>
             </li>
           ))}

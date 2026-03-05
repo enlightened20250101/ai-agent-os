@@ -658,3 +658,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/proposals` に理由コード付き「一括却下」を追加し、選択した proposed 提案をまとめて `rejected` 更新 + `PROPOSAL_REJECTED` 記録するようにした。
 - Why: ノイズ提案を個別処理する運用負荷を下げ、提案キューを短時間で健全化できるようにするため。
+
+- Decision: `/app/approvals` に pending承認の経過時間バッジ（SLA超過判定）と「Slackに再通知」アクションを追加した。
+- Why: 承認滞留を可視化し、承認者への再通知を1クリックで実施できるようにしてリードタイムを短縮するため。
