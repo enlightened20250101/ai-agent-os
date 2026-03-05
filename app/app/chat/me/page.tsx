@@ -4,7 +4,7 @@ import { ChatShell } from "@/app/app/chat/ChatShell";
 export const dynamic = "force-dynamic";
 
 type PersonalChatPageProps = {
-  searchParams?: Promise<{ ok?: string; error?: string }>;
+  searchParams?: Promise<{ ok?: string; error?: string; cmd_status?: string }>;
 };
 
 export default function PersonalChatPage({ searchParams }: PersonalChatPageProps) {

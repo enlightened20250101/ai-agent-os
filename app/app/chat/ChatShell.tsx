@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { confirmChatCommand } from "@/app/app/chat/actions";
+import { confirmChatCommand, retryChatCommand } from "@/app/app/chat/actions";
 import type { ChatScope } from "@/lib/chat/sessions";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
 import { requireOrgContext } from "@/lib/org/context";
@@ -11,7 +11,7 @@ type ChatShellProps = {
   description: string;
   // eslint-disable-next-line no-unused-vars
   submitAction: (...args: [FormData]) => Promise<void>;
-  searchParams?: Promise<{ ok?: string; error?: string }>;
+  searchParams?: Promise<{ ok?: string; error?: string; cmd_status?: string }>;
 };
 
 type ChatMessageRow = {
@@ -60,6 +60,10 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
+  const commandStatusFilter =
+    sp.cmd_status === "failed" || sp.cmd_status === "pending" || sp.cmd_status === "running" || sp.cmd_status === "done"
+      ? sp.cmd_status
+      : "all";
   const session = await getOrCreateChatSession({ supabase, orgId, scope, userId });
 
   const [
@@ -82,13 +86,19 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(20),
-    supabase
-      .from("chat_commands")
-      .select("id, intent_id, execution_status, execution_ref_type, execution_ref_id, result_json, created_at, finished_at")
-      .eq("org_id", orgId)
-      .eq("session_id", session.id)
-      .order("created_at", { ascending: false })
-      .limit(30)
+    (() => {
+      let query = supabase
+        .from("chat_commands")
+        .select("id, intent_id, execution_status, execution_ref_type, execution_ref_id, result_json, created_at, finished_at")
+        .eq("org_id", orgId)
+        .eq("session_id", session.id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (commandStatusFilter !== "all") {
+        query = query.eq("execution_status", commandStatusFilter);
+      }
+      return query;
+    })()
   ]);
 
   if (messagesError) {
@@ -205,7 +215,27 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       </div>
 
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-800">コマンド監査ビュー</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-800">コマンド監査ビュー</h2>
+          <form method="get" className="flex items-center gap-2 text-xs">
+            <input type="hidden" name="ok" value={sp.ok ?? ""} />
+            <label className="text-slate-600">status</label>
+            <select
+              name="cmd_status"
+              defaultValue={commandStatusFilter}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+            >
+              <option value="all">all</option>
+              <option value="failed">failed</option>
+              <option value="pending">pending</option>
+              <option value="running">running</option>
+              <option value="done">done</option>
+            </select>
+            <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs">
+              絞り込み
+            </button>
+          </form>
+        </div>
         {commands.length > 0 ? (
           <ul className="space-y-2">
             {commands.map((command) => {
@@ -240,6 +270,18 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                   ) : null}
                   {command.finished_at ? (
                     <p className="mt-1 text-[11px] text-slate-500">finished: {new Date(command.finished_at).toLocaleString()}</p>
+                  ) : null}
+                  {command.execution_status === "failed" ? (
+                    <form action={retryChatCommand} className="mt-2">
+                      <input type="hidden" name="command_id" value={command.id} />
+                      <input type="hidden" name="scope" value={scope} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+                      >
+                        再実行確認を作成
+                      </button>
+                    </form>
                   ) : null}
                 </li>
               );

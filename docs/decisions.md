@@ -717,3 +717,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/*` に `chat_commands` ベースの「コマンド監査ビュー」を追加し、実行ステータス・対象タスクリンク・result_json を画面で確認できるようにした。
 - Why: 会話だけでは追いづらい実行結果を可視化し、オペレーターが失敗原因やスキップ理由を即時トリアージできるようにするため。
+
+- Decision: 監査ビューに `execution_status` フィルタ（all/failed/pending/running/done）を追加し、失敗コマンドに限定したトリアージを可能にした。
+- Why: チャット運用が増えた時に、失敗案件だけを短時間で処理できるオペレーション導線が必要なため。
+
+- Decision: `failed` な chat command からは「再実行確認を作成」アクションを提供し、元intentを再利用して再実行する（即実行ではなく再確認必須）。
+- Why: リトライ可能性を上げつつ、再実行時の誤操作防止と監査性を維持するため。

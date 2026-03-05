@@ -801,6 +801,59 @@ export async function postPersonalMessage(formData: FormData) {
   return postMessage("personal", formData);
 }
 
+export async function retryChatCommand(formData: FormData) {
+  const commandId = String(formData.get("command_id") ?? "").trim();
+  const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+
+  if (!commandId) {
+    redirect(withError(scope, "command_id がありません。"));
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const { data: command, error: commandError } = await supabase
+    .from("chat_commands")
+    .select("id, session_id, intent_id, execution_status")
+    .eq("id", commandId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (commandError) {
+    redirect(withError(scope, `再実行対象の取得に失敗しました: ${commandError.message}`));
+  }
+  if (!command) {
+    redirect(withError(scope, "再実行対象が見つかりません。"));
+  }
+  if (command.execution_status !== "failed") {
+    redirect(withError(scope, "failed のコマンドのみ再実行できます。"));
+  }
+
+  const { expiresAt } = await saveIntentConfirmation({
+    supabase,
+    orgId,
+    sessionId: command.session_id as string,
+    intentId: command.intent_id as string
+  });
+
+  await addSystemMessage({
+    supabase,
+    orgId,
+    sessionId: command.session_id as string,
+    bodyText: "失敗コマンドの再実行確認を作成しました。Yes で再実行します。",
+    metadata: {
+      retried_from_command_id: command.id,
+      intent_id: command.intent_id,
+      requires_confirmation: true,
+      expires_at: expiresAt,
+      requested_by: userId
+    }
+  });
+
+  revalidatePath(pathForScope(scope));
+  redirect(withOk(scope, "再実行確認を作成しました。"));
+}
+
 export async function confirmChatCommand(formData: FormData) {
   const confirmationId = String(formData.get("confirmation_id") ?? "").trim();
   const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
