@@ -1149,6 +1149,95 @@ async function postMessage(scope: ChatScope, formData: FormData) {
           .eq("org_id", orgId)
           .eq("status", "ready_for_approval")
       ]);
+      const [
+        { data: topPendingApprovals },
+        { data: topProposals },
+        { data: topFailedActions },
+        { data: topIncidents }
+      ] = await Promise.all([
+        supabase
+          .from("approvals")
+          .select("id, task_id, created_at")
+          .eq("org_id", orgId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: true })
+          .limit(3),
+        supabase
+          .from("task_proposals")
+          .select("id, title, priority_score, policy_status")
+          .eq("org_id", orgId)
+          .eq("status", "proposed")
+          .order("priority_score", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(3),
+        supabase
+          .from("actions")
+          .select("id, task_id, provider, action_type, created_at")
+          .eq("org_id", orgId)
+          .eq("status", "failed")
+          .gte("created_at", sevenDaysAgoIso)
+          .order("created_at", { ascending: false })
+          .limit(3),
+        supabase
+          .from("org_incidents")
+          .select("id, severity, reason, created_at")
+          .eq("org_id", orgId)
+          .eq("status", "open")
+          .order("created_at", { ascending: false })
+          .limit(3)
+      ]);
+
+      const taskIdsForTitles = Array.from(
+        new Set([
+          ...((topPendingApprovals ?? []).map((row) => row.task_id as string).filter(Boolean) as string[]),
+          ...((topFailedActions ?? []).map((row) => row.task_id as string).filter(Boolean) as string[])
+        ])
+      );
+      let taskTitleById = new Map<string, string>();
+      if (taskIdsForTitles.length > 0) {
+        const { data: taskRows } = await supabase
+          .from("tasks")
+          .select("id, title")
+          .eq("org_id", orgId)
+          .in("id", taskIdsForTitles);
+        taskTitleById = new Map((taskRows ?? []).map((row) => [row.id as string, row.title as string]));
+      }
+
+      const topApprovalsText =
+        (topPendingApprovals ?? []).length > 0
+          ? (topPendingApprovals ?? [])
+              .map((row, idx) => {
+                const taskId = row.task_id as string;
+                return `${idx + 1}) ${taskTitleById.get(taskId) ?? taskId} -> /app/tasks/${taskId}`;
+              })
+              .join("\n")
+          : "該当なし";
+      const topProposalsText =
+        (topProposals ?? []).length > 0
+          ? (topProposals ?? [])
+              .map((row, idx) => {
+                const title = (row.title as string) ?? (row.id as string);
+                const priority = Number(row.priority_score ?? 0);
+                return `${idx + 1}) ${title} (priority:${priority}) -> /app/proposals`;
+              })
+              .join("\n")
+          : "該当なし";
+      const topExceptionsText =
+        (topFailedActions ?? []).length > 0
+          ? (topFailedActions ?? [])
+              .map((row, idx) => {
+                const taskId = row.task_id as string;
+                const label = taskTitleById.get(taskId) ?? taskId;
+                return `${idx + 1}) ${label} (${String(row.provider)}/${String(row.action_type)}) -> /app/tasks/${taskId}`;
+              })
+              .join("\n")
+          : "該当なし";
+      const topIncidentsText =
+        (topIncidents ?? []).length > 0
+          ? (topIncidents ?? [])
+              .map((row, idx) => `${idx + 1}) [${String(row.severity).toUpperCase()}] ${String(row.reason)} -> /app/governance/incidents`)
+              .join("\n")
+          : "該当なし";
 
       const overviewText =
         `現状サマリ:\n` +
@@ -1161,7 +1250,11 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `次アクション:\n` +
         `1) 例外キュー確認: /app/operations/exceptions\n` +
         `2) 承認キュー確認: /app/approvals\n` +
-        `3) 提案キュー確認: /app/proposals`;
+        `3) 提案キュー確認: /app/proposals\n` +
+        `優先対象TOP3:\n` +
+        `- 承認待ち:\n${topApprovalsText}\n` +
+        `- 提案待ち:\n${topProposalsText}\n` +
+        `- 失敗アクション:\n${topExceptionsText}`;
 
       const approvalText =
         `承認キュー状況:\n` +
@@ -1172,7 +1265,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `次アクション:\n` +
         `1) 承認を処理: /app/approvals\n` +
         `2) Slack再通知: /app/approvals\n` +
-        `3) タスク詳細確認: /app/tasks`;
+        `3) タスク詳細確認: /app/tasks\n` +
+        `優先承認TOP3:\n${topApprovalsText}`;
 
       const proposalText =
         `提案キュー状況:\n` +
@@ -1183,7 +1277,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `次アクション:\n` +
         `1) 提案を採択/却下: /app/proposals\n` +
         `2) プランナー実行: /app/planner\n` +
-        `3) policy block を精査: /app/proposals?policy_status=block`;
+        `3) policy block を精査: /app/proposals?policy_status=block\n` +
+        `優先提案TOP3:\n${topProposalsText}`;
 
       const exceptionText =
         `例外キュー状況:\n` +
@@ -1194,7 +1289,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `次アクション:\n` +
         `1) 例外トリアージ: /app/operations/exceptions\n` +
         `2) チャット失敗監査: /app/chat/audit?status=failed\n` +
-        `3) ガバナンス提案確認: /app/governance/recommendations`;
+        `3) ガバナンス提案確認: /app/governance/recommendations\n` +
+        `優先例外TOP3:\n${topExceptionsText}`;
 
       const incidentText =
         `インシデント状況:\n` +
@@ -1205,7 +1301,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         `次アクション:\n` +
         `1) インシデント対応: /app/governance/incidents\n` +
         `2) 例外キュー確認: /app/operations/exceptions\n` +
-        `3) 自律設定確認: /app/governance`;
+        `3) 自律設定確認: /app/governance\n` +
+        `Open Incident TOP3:\n${topIncidentsText}`;
 
       const bodyText =
         focus === "approval"

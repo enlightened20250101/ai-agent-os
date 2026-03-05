@@ -798,3 +798,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャットに `bulk_retry_failed_commands` 意図を追加し、「失敗コマンドをまとめて再実行確認して」を確認付きで実行可能にした（current/shared/personal/all scope 対応）。
 - Why: 監査画面に移動せず会話だけで復旧オペレーションを起動できるようにし、例外処理のレイテンシをさらに下げるため。
+
+- Decision: `status_query` 返答に focus別の「優先対象TOP3（タイトル + 直リンク）」を追加し、承認/提案/例外/インシデントの即時対処対象を本文に埋め込む形式にした。
+- Why: サマリ確認後に対象を探す手間をなくし、チャットから最短で該当画面へ遷移して処理できるようにするため。
