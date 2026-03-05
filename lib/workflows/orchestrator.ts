@@ -1215,6 +1215,24 @@ export async function retryFailedWorkflowRun({
   const currentRetryCount = Number(failedStep.retry_count ?? 0);
   const maxRetries = getWorkflowStepMaxRetries();
   if (currentRetryCount >= maxRetries) {
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: run.taskId,
+      actorType: "system",
+      actorId,
+      eventType: "WORKFLOW_FAILED",
+      payload: {
+        workflow_run_id: workflowRunId,
+        step_key: failedStep.step_key,
+        step_index: failedStep.step_index,
+        step_type: failedStep.step_type,
+        retry_exhausted: true,
+        retry_count: currentRetryCount,
+        max_retries: maxRetries,
+        error: `workflow_retry_exhausted (${currentRetryCount}/${maxRetries})`
+      }
+    });
     throw new Error(`step再試行上限に達しました (${currentRetryCount}/${maxRetries})。`);
   }
 

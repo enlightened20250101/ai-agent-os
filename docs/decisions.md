@@ -894,3 +894,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `retryFailedWorkflowRun` に `WORKFLOW_STEP_MAX_RETRIES`（既定3）を導入し、stepごとの再試行回数上限を超えた場合は再試行を拒否する。
 - Why: 無限リトライによるジョブ占有と障害長期化を防ぎ、原因調査へ確実にエスカレーションするため。
+
+- Decision: 再試行上限到達時は `WORKFLOW_FAILED` に `retry_exhausted=true`, `retry_count`, `max_retries` を含めて記録する。
+- Why: 「通常失敗」と「再試行枯渇」を監査上で区別し、復旧方針（再実行ではなく原因修正）を明確化するため。
