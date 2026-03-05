@@ -31,7 +31,12 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 function isBlockedByIncident(intentType: string) {
-  return intentType === "decide_approval" || intentType === "bulk_decide_approvals" || intentType === "execute_action";
+  return (
+    intentType === "decide_approval" ||
+    intentType === "bulk_decide_approvals" ||
+    intentType === "quick_top_action" ||
+    intentType === "execute_action"
+  );
 }
 
 function isMutatingIntent(intentType: string) {
@@ -42,6 +47,7 @@ function isMutatingIntent(intentType: string) {
     intentType === "decide_approval" ||
     intentType === "bulk_decide_approvals" ||
     intentType === "bulk_retry_failed_commands" ||
+    intentType === "quick_top_action" ||
     intentType === "execute_action"
   );
 }
@@ -279,6 +285,43 @@ async function getRecentTaskHintFromSession(args: {
     if (metadata.execution_ref_type === "task" && typeof metadata.execution_ref_id === "string") {
       return metadata.execution_ref_id;
     }
+  }
+  return null;
+}
+
+async function getRecentTopCandidatesFromSession(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  sessionId: string;
+}) {
+  const { supabase, orgId, sessionId } = args;
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("metadata_json")
+    .eq("org_id", orgId)
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) {
+    return null;
+  }
+
+  for (const row of data ?? []) {
+    const metadata = asObject(row.metadata_json);
+    const top = asObject(metadata.status_top_candidates);
+    if (Object.keys(top).length === 0) {
+      continue;
+    }
+    const approvals = Array.isArray(top.approval_task_ids) ? top.approval_task_ids.filter((v): v is string => typeof v === "string") : [];
+    const proposals = Array.isArray(top.proposal_ids) ? top.proposal_ids.filter((v): v is string => typeof v === "string") : [];
+    const exceptions = Array.isArray(top.exception_task_ids)
+      ? top.exception_task_ids.filter((v): v is string => typeof v === "string")
+      : [];
+    return {
+      approvalTaskIds: approvals,
+      proposalIds: proposals,
+      exceptionTaskIds: exceptions
+    };
   }
   return null;
 }
@@ -913,6 +956,121 @@ async function runBulkRetryFailedCommandsCommand(args: {
   };
 }
 
+async function runQuickTopActionCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  sessionId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, sessionId, intentJson } = args;
+  const action =
+    intentJson.action === "request_approval" ||
+    intentJson.action === "approve" ||
+    intentJson.action === "reject" ||
+    intentJson.action === "accept_proposal"
+      ? intentJson.action
+      : null;
+  if (!action) {
+    throw new Error("quick action が不正です。");
+  }
+  const target =
+    intentJson.target === "approval" || intentJson.target === "proposal" || intentJson.target === "exception"
+      ? intentJson.target
+      : "auto";
+  const indexRaw = typeof intentJson.index === "number" ? intentJson.index : Number.NaN;
+  const index = Number.isFinite(indexRaw) ? Math.max(1, Math.min(3, Math.floor(indexRaw))) : 1;
+  const offset = index - 1;
+
+  const top = await getRecentTopCandidatesFromSession({ supabase, orgId, sessionId });
+  if (!top) {
+    throw new Error("直近のTOP候補が見つかりません。先に状況確認を実行してください。");
+  }
+
+  if (action === "accept_proposal") {
+    const proposalId = (target === "proposal" || target === "auto" ? top.proposalIds : [])[offset];
+    if (!proposalId) {
+      throw new Error(`提案TOP${index} が見つかりません。`);
+    }
+    const accepted = await acceptProposalShared({
+      supabase,
+      orgId,
+      userId,
+      proposalId,
+      decisionReason: "accepted_chat:quick_top_action",
+      autoRequestApproval: true,
+      source: "chat"
+    });
+    return {
+      executionRefType: "task",
+      executionRefId: accepted.taskId,
+      result: {
+        action,
+        index,
+        proposal_id: accepted.proposalId,
+        task_id: accepted.taskId,
+        approval_id: accepted.approvalId
+      },
+      message: `TOP候補 #${index} の提案を受け入れて承認依頼を作成しました。(/app/tasks/${accepted.taskId})`,
+      touchedTaskId: accepted.taskId
+    };
+  }
+
+  const candidateTaskId =
+    target === "approval"
+      ? top.approvalTaskIds[offset]
+      : target === "exception"
+        ? top.exceptionTaskIds[offset]
+        : top.approvalTaskIds[offset] ?? top.exceptionTaskIds[offset];
+  if (!candidateTaskId) {
+    throw new Error(`TOP候補 #${index} のタスクが見つかりません。`);
+  }
+
+  if (action === "request_approval") {
+    return runRequestApprovalCommand({
+      supabase,
+      orgId,
+      userId,
+      sessionId,
+      intentJson: { taskHint: candidateTaskId }
+    });
+  }
+
+  const targetApproval = await findPendingApprovalForChat({
+    supabase,
+    orgId,
+    taskHint: candidateTaskId
+  });
+  const decision = action === "approve" ? "approved" : "rejected";
+  const decided = await decideApprovalShared({
+    supabase,
+    approvalId: targetApproval.approvalId,
+    decision,
+    reason: "chat_quick_top_action",
+    actorType: "user",
+    actorId: userId,
+    source: "chat",
+    expectedOrgId: orgId
+  });
+
+  return {
+    executionRefType: "approval",
+    executionRefId: decided.approvalId,
+    result: {
+      action,
+      index,
+      approval_id: decided.approvalId,
+      task_id: decided.taskId,
+      decision: decided.approvalStatus
+    },
+    message:
+      action === "approve"
+        ? `TOP候補 #${index} を承認しました。(/app/tasks/${decided.taskId})`
+        : `TOP候補 #${index} を却下しました。(/app/tasks/${decided.taskId})`,
+    touchedTaskId: decided.taskId
+  };
+}
+
 async function runAcceptProposalCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -980,6 +1138,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "bulk_retry_failed_commands") {
     return runBulkRetryFailedCommandsCommand(args);
+  }
+  if (args.intentType === "quick_top_action") {
+    return runQuickTopActionCommand(args);
   }
   if (args.intentType === "execute_action") {
     return runExecuteActionCommand(args);
@@ -1323,7 +1484,13 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         metadata: {
           intent_id: intentRow.id,
           intent_type: intent.intentType,
-          focus
+          focus,
+          status_top_candidates: {
+            approval_task_ids: (topPendingApprovals ?? []).map((row) => row.task_id as string),
+            proposal_ids: (topProposals ?? []).map((row) => row.id as string),
+            exception_task_ids: (topFailedActions ?? []).map((row) => row.task_id as string),
+            incident_ids: (topIncidents ?? []).map((row) => row.id as string)
+          }
         }
       });
     }

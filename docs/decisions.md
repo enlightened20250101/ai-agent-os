@@ -801,3 +801,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status_query` 返答に focus別の「優先対象TOP3（タイトル + 直リンク）」を追加し、承認/提案/例外/インシデントの即時対処対象を本文に埋め込む形式にした。
 - Why: サマリ確認後に対象を探す手間をなくし、チャットから最短で該当画面へ遷移して処理できるようにするため。
+
+- Decision: チャットに `quick_top_action` 意図を追加し、状況回答のTOP候補に対して `#1を承認` / `#2を提案受け入れ` / `#1を承認依頼` のようなクイック実行を確認付きで可能にした。
+- Why: 状況確認と実行の往復を減らし、同一会話内で「見る→選ぶ→実行」を完結させるため。
+
+- Decision: `status_query` 返答時の system message metadata に `status_top_candidates` を保存し、クイック実行はこの直近候補を参照する設計にした。
+- Why: 自然文からID再指定させずに安全に対象を解決し、誤操作を減らすため。

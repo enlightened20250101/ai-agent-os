@@ -42,6 +42,17 @@ export type ParsedChatIntent =
       plan: { summary: string; maxItems: number; scope: "current" | "shared" | "personal" | "all" };
     }
   | {
+      intentType: "quick_top_action";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: {
+        summary: string;
+        action: "request_approval" | "approve" | "reject" | "accept_proposal";
+        index: number;
+        target: "approval" | "proposal" | "exception" | "auto";
+      };
+    }
+  | {
       intentType: "execute_action";
       confidence: number;
       requiresConfirmation: true;
@@ -202,6 +213,50 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         scope
       }
     };
+  }
+
+  const quickIndexMatch = text.match(/(?:#|No\.?|番号)?\s*([1-3])(?:番)?/i);
+  const quickIndex = quickIndexMatch ? Number.parseInt(quickIndexMatch[1] ?? "0", 10) : Number.NaN;
+  if (!Number.isNaN(quickIndex) && quickIndex >= 1 && quickIndex <= 3) {
+    const action =
+      /(承認依頼|approval request)/i.test(text)
+        ? "request_approval"
+        : /(受け入れ|採択|accept proposal)/i.test(text)
+          ? "accept_proposal"
+          : /(却下|reject|否認|差し戻し)/i.test(text)
+            ? "reject"
+            : /(承認|approve)/i.test(text)
+              ? "approve"
+              : null;
+    if (action) {
+      const target =
+        /(提案|proposal)/i.test(text)
+          ? "proposal"
+          : /(例外|exception|失敗)/i.test(text)
+            ? "exception"
+            : /(承認|approval)/i.test(text)
+              ? "approval"
+              : "auto";
+      return {
+        intentType: "quick_top_action",
+        confidence: 0.78,
+        requiresConfirmation: true,
+        plan: {
+          summary: `TOP候補 #${quickIndex} に対して ${
+            action === "request_approval"
+              ? "承認依頼を作成"
+              : action === "accept_proposal"
+                ? "提案を受け入れ"
+                : action === "approve"
+                  ? "承認"
+                  : "却下"
+          } します。`,
+          action,
+          index: quickIndex,
+          target
+        }
+      };
+    }
   }
 
   const approveLike = /(承認して|approve|okで承認|承認お願いします)/i.test(text);
