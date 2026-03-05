@@ -837,3 +837,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/api/chat/audit/export` に `skip_reason` フィルタを適用し、CSVメタヘッダと `content-disposition` ファイル名へフィルタ値（status/scope/intent/skip_reason）を反映した。
 - Why: 監査提出時に「どの条件で抽出したファイルか」をファイル単体で追跡可能にするため。
+
+- Decision: `/app/chat/audit` のCSV/JSONエクスポートUIに `filtered export` バッジと条件サマリ表示を追加し、現在の絞り込みが出力対象に反映されることを明示した。
+- Why: 誤った条件での監査出力を防ぎ、オペレーターが抽出範囲を視覚的に確認できるようにするため。
