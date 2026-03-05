@@ -705,3 +705,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット意図に `execute_action` を追加し、対象タスクのメール実行を Yes 確認後にのみ実行する。
 - Why: 「UI操作なし実行」を前進させつつ、誤実行防止の human confirmation を維持するため。
+
+- Decision: チャットで対象タスク/承認待ちが複数候補になる場合は実行を止め、候補リストを返して `task_id` または完全タイトルの再指定を必須化した。
+- Why: 自然言語による曖昧一致で誤タスクに承認・実行するリスクを最小化するため。

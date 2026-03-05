@@ -103,27 +103,62 @@ async function findTaskForChat(args: {
   const { supabase, orgId, taskHint } = args;
   let query = supabase
     .from("tasks")
-    .select("id, title, status")
+    .select("id, title, status, created_at")
     .eq("org_id", orgId)
-    .in("status", ["draft", "ready_for_approval", "approved"])
-    .order("created_at", { ascending: false })
-    .limit(1);
+    .in("status", ["draft", "ready_for_approval", "approved"]);
 
   if (taskHint) {
-    query = query.ilike("title", `%${taskHint}%`);
+    query = query.or(`title.ilike.%${taskHint}%,id.eq.${taskHint}`);
   }
 
-  const { data, error } = await query.maybeSingle();
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(6);
   if (error) {
     throw new Error(`対象タスクの検索に失敗しました: ${error.message}`);
   }
-  if (!data) {
+  const rows = data ?? [];
+  if (rows.length === 0) {
     throw new Error(taskHint ? `「${taskHint}」に一致するタスクがありません。` : "対象タスクが見つかりません。`task`名を明示してください。");
   }
+
+  if (!taskHint && rows.length > 1) {
+    const previews = rows
+      .slice(0, 3)
+      .map((row) => `- ${row.title as string} (${row.id as string})`)
+      .join("\n");
+    throw new Error(`対象タスクが複数あります。タスク名を「」で指定してください:\n${previews}`);
+  }
+
+  if (taskHint) {
+    const exactById = rows.find((row) => String(row.id) === taskHint);
+    if (exactById) {
+      return {
+        id: exactById.id as string,
+        title: exactById.title as string,
+        status: exactById.status as string
+      };
+    }
+    const exactByTitle = rows.find((row) => String(row.title) === taskHint);
+    if (exactByTitle) {
+      return {
+        id: exactByTitle.id as string,
+        title: exactByTitle.title as string,
+        status: exactByTitle.status as string
+      };
+    }
+    if (rows.length > 1) {
+      const previews = rows
+        .slice(0, 3)
+        .map((row) => `- ${row.title as string} (${row.id as string})`)
+        .join("\n");
+      throw new Error(`候補が複数あります。task_id か完全なタスク名を指定してください:\n${previews}`);
+    }
+  }
+
+  const first = rows[0];
   return {
-    id: data.id as string,
-    title: data.title as string,
-    status: data.status as string
+    id: first.id as string,
+    title: first.title as string,
+    status: first.status as string
   };
 }
 
@@ -158,20 +193,34 @@ async function findPendingApprovalForChat(args: {
     };
   }
 
-  const { data: approval, error } = await supabase
+  const { data: approvals, error } = await supabase
     .from("approvals")
     .select("id, task_id")
     .eq("org_id", orgId)
     .eq("status", "pending")
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(5);
   if (error) {
     throw new Error(`承認検索に失敗しました: ${error.message}`);
   }
-  if (!approval) {
+  if (!approvals || approvals.length === 0) {
     throw new Error("承認待ちがありません。");
   }
+  if (approvals.length > 1) {
+    const taskIds = approvals.map((row) => row.task_id as string);
+    const { data: taskRows } = await supabase
+      .from("tasks")
+      .select("id, title")
+      .eq("org_id", orgId)
+      .in("id", taskIds);
+    const titleById = new Map((taskRows ?? []).map((row) => [row.id as string, row.title as string]));
+    const previews = approvals
+      .slice(0, 3)
+      .map((row) => `- ${titleById.get(row.task_id as string) ?? (row.task_id as string)} (${row.task_id as string})`)
+      .join("\n");
+    throw new Error(`承認待ちが複数あります。対象タスクを指定してください:\n${previews}`);
+  }
+  const approval = approvals[0];
 
   const { data: taskRow } = await supabase
     .from("tasks")

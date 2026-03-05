@@ -155,7 +155,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
             name="body"
             rows={3}
             required
-            placeholder="例: 「請求書確認タスクを追加して」 / 「承認依頼を出して」 / 「〇〇を承認して」"
+            placeholder="例: 「請求書確認タスクを追加して」 / 「task_id」を指定して承認依頼して / 「〇〇」を実行して"
             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
           />
           <div className="flex items-center justify-between gap-3">
