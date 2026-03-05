@@ -526,8 +526,9 @@ async function runRequestApprovalCommand(args: {
   userId: string;
   sessionId: string;
   intentJson: Record<string, unknown>;
+  quickRef?: Record<string, unknown> | null;
 }) {
-  const { supabase, orgId, userId, intentJson, sessionId } = args;
+  const { supabase, orgId, userId, intentJson, sessionId, quickRef = null } = args;
   let taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
   if (!taskHint) {
     taskHint = await getRecentTaskHintFromSession({ supabase, orgId, sessionId });
@@ -611,7 +612,8 @@ async function runRequestApprovalCommand(args: {
     eventType: "APPROVAL_REQUESTED",
     payload: {
       approval_id: approval.id,
-      source: "chat_command"
+      source: "chat_command",
+      quick_ref: quickRef
     }
   });
 
@@ -639,7 +641,24 @@ async function runRequestApprovalCommand(args: {
             to: "ready_for_approval"
           }
         },
-        source: "chat_request_approval"
+        source: "chat_request_approval",
+        quick_ref: quickRef
+      }
+    });
+  }
+
+  if (quickRef) {
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: task.id,
+      actorType: "user",
+      actorId: userId,
+      eventType: "CHAT_QUICK_ACTION_USED",
+      payload: {
+        ...quickRef,
+        linked_action: "request_approval",
+        approval_id: approval.id
       }
     });
   }
@@ -695,7 +714,7 @@ async function runRequestApprovalCommand(args: {
   return {
     executionRefType: "approval",
     executionRefId: approval.id as string,
-    result: { approval_id: approval.id, task_id: task.id },
+    result: { approval_id: approval.id, task_id: task.id, quick_ref: quickRef },
     message: `承認依頼を作成しました: ${task.title} (/app/tasks/${task.id})`,
     touchedTaskId: task.id
   };
@@ -981,6 +1000,12 @@ async function runQuickTopActionCommand(args: {
   const indexRaw = typeof intentJson.index === "number" ? intentJson.index : Number.NaN;
   const index = Number.isFinite(indexRaw) ? Math.max(1, Math.min(3, Math.floor(indexRaw))) : 1;
   const offset = index - 1;
+  const quickBase = {
+    mode: "quick_top_action",
+    index,
+    target,
+    requested_action: action
+  };
 
   const top = await getRecentTopCandidatesFromSession({ supabase, orgId, sessionId });
   if (!top) {
@@ -1001,12 +1026,32 @@ async function runQuickTopActionCommand(args: {
       autoRequestApproval: true,
       source: "chat"
     });
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: accepted.taskId,
+      actorType: "user",
+      actorId: userId,
+      eventType: "CHAT_QUICK_ACTION_USED",
+      payload: {
+        ...quickBase,
+        selected_candidate_type: "proposal",
+        selected_candidate_id: proposalId,
+        task_id: accepted.taskId,
+        approval_id: accepted.approvalId
+      }
+    });
     return {
       executionRefType: "task",
       executionRefId: accepted.taskId,
       result: {
         action,
         index,
+        quick_ref: {
+          ...quickBase,
+          selected_candidate_type: "proposal",
+          selected_candidate_id: proposalId
+        },
         proposal_id: accepted.proposalId,
         task_id: accepted.taskId,
         approval_id: accepted.approvalId
@@ -1032,7 +1077,12 @@ async function runQuickTopActionCommand(args: {
       orgId,
       userId,
       sessionId,
-      intentJson: { taskHint: candidateTaskId }
+      intentJson: { taskHint: candidateTaskId },
+      quickRef: {
+        ...quickBase,
+        selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
+        selected_candidate_id: candidateTaskId
+      }
     });
   }
 
@@ -1052,6 +1102,21 @@ async function runQuickTopActionCommand(args: {
     source: "chat",
     expectedOrgId: orgId
   });
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: decided.taskId,
+    actorType: "user",
+    actorId: userId,
+    eventType: "CHAT_QUICK_ACTION_USED",
+    payload: {
+      ...quickBase,
+      selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
+      selected_candidate_id: candidateTaskId,
+      approval_id: decided.approvalId,
+      decision: decided.approvalStatus
+    }
+  });
 
   return {
     executionRefType: "approval",
@@ -1059,6 +1124,11 @@ async function runQuickTopActionCommand(args: {
     result: {
       action,
       index,
+      quick_ref: {
+        ...quickBase,
+        selected_candidate_type: target === "exception" ? "exception_task" : "approval_task",
+        selected_candidate_id: candidateTaskId
+      },
       approval_id: decided.approvalId,
       task_id: decided.taskId,
       decision: decided.approvalStatus
@@ -1976,7 +2046,8 @@ export async function confirmChatCommand(formData: FormData) {
         intent_id: intent.id,
         command_id: command.id,
         execution_ref_id: executed.executionRefId,
-        execution_ref_type: executed.executionRefType
+        execution_ref_type: executed.executionRefType,
+        quick_ref: asObject(executed.result).quick_ref ?? null
       }
     });
 

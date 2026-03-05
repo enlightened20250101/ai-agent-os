@@ -807,3 +807,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status_query` 返答時の system message metadata に `status_top_candidates` を保存し、クイック実行はこの直近候補を参照する設計にした。
 - Why: 自然文からID再指定させずに安全に対象を解決し、誤操作を減らすため。
+
+- Decision: クイック実行の監査性を高めるため、`quick_ref`（候補順位・対象種別・候補ID）を `chat_commands.result_json` と `chat_messages.metadata` に保存し、対象タスクには `CHAT_QUICK_ACTION_USED` を追記する。
+- Why: 「どの候補を根拠に実行したか」を後から一意に追跡できるようにし、説明責任と再現性を向上させるため。
