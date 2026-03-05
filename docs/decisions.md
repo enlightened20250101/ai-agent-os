@@ -966,3 +966,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `TOP(/app)` のクイック実行ボタン（失敗workflow再試行・期限切れ確認整理・高失敗intent再実行確認）にブラウザ確認ダイアログを必須化した。
 - Why: ホーム画面からの即時オペレーションで誤クリックによる大量実行を防ぎ、安全なデフォルトを維持するため。
+
+- Decision: `ConfirmSubmitButton` を `useFormStatus` 対応に拡張し、送信中は `disabled + 実行中ラベル` へ切り替えるようにした。
+- Why: トップ画面のクイック実行で二重送信を防ぎ、意図しない重複オペレーションを抑止するため。

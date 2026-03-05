@@ -736,6 +736,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
               <input type="hidden" name="max_items" value="5" />
               <ConfirmSubmitButton
                 label="このintentで再実行確認を一括作成（5件）"
+                pendingLabel="確認作成中..."
                 confirmMessage={`intent=${worstFailedIntent.intentType} の失敗コマンドに対して再実行確認を最大5件作成します。実行しますか？`}
                 className="rounded-md border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
               />
@@ -764,6 +765,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
                         <input type="hidden" name="limit" value="3" />
                         <ConfirmSubmitButton
                           label="失敗workflow再試行"
+                          pendingLabel="再試行中..."
                           confirmMessage="失敗workflow runの上位3件を再試行します。実行しますか？"
                           className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 hover:bg-amber-100"
                         />
@@ -775,6 +777,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
                         <input type="hidden" name="return_to" value="/app" />
                         <ConfirmSubmitButton
                           label="期限切れ確認を整理"
+                          pendingLabel="整理中..."
                           confirmMessage="チャット確認の期限切れ pending を整理します。実行しますか？"
                           className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-800 hover:bg-sky-100"
                         />
