@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import {
   bulkUpdateExceptionCases,
   notifyExceptionCasesNow,
@@ -830,9 +831,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
               <input type="checkbox" name="clear_due" value="1" className="h-4 w-4 rounded border-slate-300" />
               dueをクリア
             </label>
-            <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium">
-              選択ケースを一括更新
-            </button>
+            <ConfirmSubmitButton
+              label="選択ケースを一括更新"
+              pendingLabel="更新中..."
+              confirmMessage="選択した例外ケースを一括更新します。実行しますか？"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
+            />
           </div>
         </form>
       </section>
@@ -911,15 +915,21 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           <h2 className="text-base font-semibold text-slate-900">優先対応（Top 5）</h2>
           <div className="flex items-center gap-2">
             <form action={notifyExceptionCasesNow}>
-              <button type="submit" className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100">
-                例外通知をSlack送信
-              </button>
+              <ConfirmSubmitButton
+                label="例外通知をSlack送信"
+                pendingLabel="通知中..."
+                confirmMessage="現在の例外ケースをSlackへ通知します。実行しますか？"
+                className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
+              />
             </form>
             <form action={retryTopFailedWorkflowRuns} className="flex items-center gap-2">
               <input type="hidden" name="limit" value="3" />
-              <button type="submit" className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100">
-                失敗workflow上位3件を一括再試行
-              </button>
+              <ConfirmSubmitButton
+                label="失敗workflow上位3件を一括再試行"
+                pendingLabel="再試行中..."
+                confirmMessage="失敗workflow runの上位3件を再試行します。実行しますか？"
+                className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+              />
             </form>
           </div>
         </div>
@@ -1035,9 +1045,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           <h2 className="text-base font-semibold text-slate-900">失敗ワークフロー（最新30件）</h2>
           <form action={retryTopFailedWorkflowRuns} className="flex items-center gap-2">
             <input type="hidden" name="limit" value="5" />
-            <button type="submit" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100">
-              上位5件を一括再試行
-            </button>
+            <ConfirmSubmitButton
+              label="上位5件を一括再試行"
+              pendingLabel="再試行中..."
+              confirmMessage="失敗workflow runの上位5件を再試行します。実行しますか？"
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+            />
           </form>
         </div>
         {sortedFailedRunsWithPriority.length > 0 ? (
@@ -1082,9 +1095,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                     </Link>
                     <form action={retryWorkflowRunFromExceptions}>
                       <input type="hidden" name="workflow_run_id" value={row.id} />
-                      <button type="submit" className="font-medium text-emerald-700 underline">
-                        この場で再試行
-                      </button>
+                      <ConfirmSubmitButton
+                        label="この場で再試行"
+                        pendingLabel="再試行中..."
+                        confirmMessage="このworkflow runを再試行します。実行しますか？"
+                        className="font-medium text-emerald-700 underline"
+                      />
                     </form>
                   </div>
                   {renderGuidance({

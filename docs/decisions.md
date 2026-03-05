@@ -972,3 +972,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` の実行ボタン（期限切れ整理・一括再実行確認作成・行単位再実行確認作成）を `ConfirmSubmitButton` に統一し、確認ダイアログ + 送信中disabledを適用した。
 - Why: 監査画面は一括操作が多いため、誤実行と二重送信を防いで安全な運用を維持するため。
+
+- Decision: `/app/operations/exceptions` の高リスク操作（Slack通知、一括/単体 workflow再試行、選択ケース一括更新）を `ConfirmSubmitButton` に統一し、確認ダイアログと送信中disabledを適用した。
+- Why: 例外トリアージ画面での誤操作・二重実行を防ぎ、復旧オペレーションの安全性を高めるため。
