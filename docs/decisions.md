@@ -975,3 +975,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/operations/exceptions` の高リスク操作（Slack通知、一括/単体 workflow再試行、選択ケース一括更新）を `ConfirmSubmitButton` に統一し、確認ダイアログと送信中disabledを適用した。
 - Why: 例外トリアージ画面での誤操作・二重実行を防ぎ、復旧オペレーションの安全性を高めるため。
+
+- Decision: `/app/approvals` の判断・再通知操作と `/app/tasks/[id]` の主要実行操作（ドラフト生成、承認待ち化、承認依頼、メール実行、workflow開始）を `ConfirmSubmitButton` に統一した。
+- Why: 承認/実行フロー全体で確認ダイアログと二重送信防止を標準化し、誤操作リスクを下げるため。

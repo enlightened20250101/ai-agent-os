@@ -7,13 +7,24 @@ type ConfirmSubmitButtonProps = {
   confirmMessage: string;
   pendingLabel?: string;
   className?: string;
+  name?: string;
+  value?: string;
 };
 
-export function ConfirmSubmitButton({ label, confirmMessage, pendingLabel, className }: ConfirmSubmitButtonProps) {
+export function ConfirmSubmitButton({
+  label,
+  confirmMessage,
+  pendingLabel,
+  className,
+  name,
+  value
+}: ConfirmSubmitButtonProps) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
+      name={name}
+      value={value}
       className={`${className ?? ""} ${pending ? "cursor-not-allowed opacity-60" : ""}`.trim()}
       disabled={pending}
       onClick={(event) => {

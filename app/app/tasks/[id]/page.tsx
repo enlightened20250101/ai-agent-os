@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import {
   executeDraftAction,
   generateDraft,
@@ -419,31 +420,31 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         <div className="mt-6 flex flex-wrap gap-3">
           <form action={generateDraft}>
             <input type="hidden" name="task_id" value={task.id as string} />
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="ドラフト生成"
+              pendingLabel="生成中..."
+              confirmMessage="このタスクのドラフト生成を実行します。よろしいですか？"
               className="rounded-md bg-blue-700 px-3 py-2 text-sm text-white hover:bg-blue-600"
-            >
-              ドラフト生成
-            </button>
+            />
           </form>
           <form action={setTaskReadyForApproval}>
             <input type="hidden" name="task_id" value={task.id as string} />
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="承認待ちにする"
+              pendingLabel="更新中..."
+              confirmMessage="このタスクを ready_for_approval に更新します。よろしいですか？"
               className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-            >
-              承認待ちにする
-            </button>
+            />
           </form>
           {canRequestApproval ? (
             <form action={requestApproval}>
               <input type="hidden" name="task_id" value={task.id as string} />
-              <button
-                type="submit"
+              <ConfirmSubmitButton
+                label="承認依頼"
+                pendingLabel="依頼中..."
+                confirmMessage="このタスクの承認依頼を作成します。よろしいですか？"
                 className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
-              >
-                承認依頼
-              </button>
+              />
             </form>
           ) : (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -457,14 +458,16 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
           {canExecuteEmailFinal ? (
             <form action={executeDraftAction}>
               <input type="hidden" name="task_id" value={task.id as string} />
-              <button
-                type="submit"
+              <ConfirmSubmitButton
+                label={
+                  governanceEvaluation?.decision === "allow_auto_execute" && (task.status as string) !== "approved"
+                    ? "自動承認してメール送信を実行"
+                    : "メール送信を実行"
+                }
+                pendingLabel="実行中..."
+                confirmMessage="メール送信アクションを実行します。よろしいですか？"
                 className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
-              >
-                {governanceEvaluation?.decision === "allow_auto_execute" && (task.status as string) !== "approved"
-                  ? "自動承認してメール送信を実行"
-                  : "メール送信を実行"}
-              </button>
+              />
             </form>
           ) : (
             <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -492,9 +495,12 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
                 </option>
               ))}
             </select>
-            <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white">
-              ワークフロー実行を開始
-            </button>
+            <ConfirmSubmitButton
+              label="ワークフロー実行を開始"
+              pendingLabel="開始中..."
+              confirmMessage="選択したテンプレートでワークフロー実行を開始します。よろしいですか？"
+              className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white"
+            />
             <Link href="/app/workflows/runs" className="text-sm underline">
               実行一覧
             </Link>

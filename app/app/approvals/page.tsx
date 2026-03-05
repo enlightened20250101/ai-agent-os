@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import {
   decideApproval,
   resendApprovalSlackReminder,
@@ -132,9 +133,12 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           </button>
         </form>
         <form action={sendStaleApprovalRemindersNow}>
-          <button type="submit" className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-700 hover:bg-sky-100">
-            SLA超過をSlack再通知
-          </button>
+          <ConfirmSubmitButton
+            label="SLA超過をSlack再通知"
+            pendingLabel="再通知中..."
+            confirmMessage="SLA超過の承認待ちをSlackへ再通知します。実行しますか？"
+            className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-700 hover:bg-sky-100"
+          />
         </form>
       </div>
 
@@ -210,32 +214,32 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm md:max-w-md"
                 />
                 <div className="flex gap-2">
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
                     name="decision"
                     value="approved"
+                    label="承認"
+                    pendingLabel="処理中..."
+                    confirmMessage="この承認を approved に更新します。実行しますか？"
                     className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
-                  >
-                    承認
-                  </button>
-                  <button
-                    type="submit"
+                  />
+                  <ConfirmSubmitButton
                     name="decision"
                     value="rejected"
+                    label="却下"
+                    pendingLabel="処理中..."
+                    confirmMessage="この承認を rejected に更新します。実行しますか？"
                     className="rounded-md bg-rose-700 px-3 py-2 text-sm text-white hover:bg-rose-600"
-                  >
-                    却下
-                  </button>
+                  />
                 </div>
               </form>
               <form action={resendApprovalSlackReminder} className="mt-2">
                 <input type="hidden" name="approval_id" value={approval.id} />
-                <button
-                  type="submit"
+                <ConfirmSubmitButton
+                  label="Slackに再通知"
+                  pendingLabel="再通知中..."
+                  confirmMessage="この承認依頼をSlackに再通知します。実行しますか？"
                   className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs text-sky-700 hover:bg-sky-100"
-                >
-                  Slackに再通知
-                </button>
+                />
               </form>
             </li>
           ))}
