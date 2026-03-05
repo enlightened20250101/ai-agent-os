@@ -726,3 +726,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Playwright E2E に chat command の承認依頼/実行フロー（確認ステップ付き）を追加し、`ACTION_EXECUTED` までの回帰を検証する。
 - Why: チャット機能はUI操作レス実行の中核であり、既存の手動フロー回帰とは別に継続検証が必要なため。
+
+- Decision: チャット確認実行時に open incident を再評価し、`decide_approval` / `execute_action` はインシデント中に強制ブロックする。
+- Why: 画面操作レス実行の入口でも incident mode の停止ルールを明示適用し、緊急時の誤実行を抑止するため。

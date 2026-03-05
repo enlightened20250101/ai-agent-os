@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { confirmChatCommand, retryChatCommand } from "@/app/app/chat/actions";
+import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import type { ChatScope } from "@/lib/chat/sessions";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
 import { requireOrgContext } from "@/lib/org/context";
@@ -65,6 +66,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       ? sp.cmd_status
       : "all";
   const session = await getOrCreateChatSession({ supabase, orgId, scope, userId });
+  const openIncident = await getLatestOpenIncident({ supabase, orgId });
 
   const [
     { data: messagesData, error: messagesError },
@@ -152,6 +154,12 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       ) : null}
       {sp.ok ? (
         <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{sp.ok}</p>
+      ) : null}
+      {openIncident ? (
+        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          インシデントモード有効: {openIncident.severity.toUpperCase()} / {openIncident.reason}
+          （承認判断・実行コマンドは停止されます）
+        </p>
       ) : null}
 
       {confirmations.length > 0 ? (

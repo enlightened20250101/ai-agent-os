@@ -7,6 +7,7 @@ import { decideApprovalShared } from "@/lib/approvals/decide";
 import { parseChatIntent } from "@/lib/chat/intents";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
@@ -25,6 +26,10 @@ function withOk(scope: ChatScope, message: string) {
 
 function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function isBlockedByIncident(intentType: string) {
+  return intentType === "decide_approval" || intentType === "execute_action";
 }
 
 async function addSystemMessage(args: {
@@ -899,6 +904,35 @@ export async function confirmChatCommand(formData: FormData) {
     .single();
   if (intentError) {
     redirect(withError(scope, `意図情報の取得に失敗しました: ${intentError.message}`));
+  }
+
+  const latestOpenIncident = await getLatestOpenIncident({ supabase, orgId });
+  if (latestOpenIncident && isBlockedByIncident(intent.intent_type as string)) {
+    await supabase
+      .from("chat_confirmations")
+      .update({
+        status: "declined",
+        decided_at: new Date().toISOString(),
+        decided_by: userId
+      })
+      .eq("id", confirmationId)
+      .eq("org_id", orgId);
+
+    await addSystemMessage({
+      supabase,
+      orgId,
+      sessionId: confirmation.session_id as string,
+      bodyText: `インシデントモード中のため、この操作は停止されました。severity=${latestOpenIncident.severity} reason=${latestOpenIncident.reason}`,
+      metadata: {
+        confirmation_id: confirmationId,
+        intent_id: intent.id,
+        blocked_by_incident: true,
+        incident_id: latestOpenIncident.id
+      }
+    });
+
+    revalidatePath(pathForScope(scope));
+    redirect(withError(scope, "インシデントモード中のため、この実行はブロックされました。"));
   }
 
   const nowIso = new Date().toISOString();
