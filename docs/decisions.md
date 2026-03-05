@@ -903,3 +903,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/workflows/runs` に `retry exhausted runs` 指標を追加し、`workflow_steps.status=failed` かつ `retry_count >= WORKFLOW_STEP_MAX_RETRIES` の run 数を可視化した。
 - Why: 再試行不能状態の滞留件数を明示し、単純再実行ではなく設計/データ起因の恒久対応へ優先的に回すため。
+
+- Decision: 共有/個人チャットの意図解析に `run_planner` を追加し、「プランナー実行して」系の依頼を確認付きコマンドとして実行可能にした（`runPlanner` を再利用）。
+- Why: UIを開かずに自律提案ループを起動できる運用導線を増やし、目標の会話起点OSに近づけるため。
+
+- Decision: `run_planner` は他の実行系intent同様に確認必須・監査対象（`chat_commands`）として扱い、実行後は `/app/planner` と `/app/proposals` を再検証する。
+- Why: 安全性（誤起動防止）と監査性（誰がいつ起動したか）を維持したまま自律機能を開放するため。

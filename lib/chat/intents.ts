@@ -59,6 +59,12 @@ export type ParsedChatIntent =
       plan: { summary: string; taskHint: string | null };
     }
   | {
+      intentType: "run_planner";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; maxProposals: number };
+    }
+  | {
       intentType: "unknown";
       confidence: number;
       requiresConfirmation: false;
@@ -299,6 +305,20 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     };
   }
 
+  const plannerLike = /(プランナー|planner)/i.test(text) && /(実行|走らせ|run|回して|起動)/i.test(text);
+  if (plannerLike) {
+    const maxProposals = parsedCount ?? 2;
+    return {
+      intentType: "run_planner",
+      confidence: 0.8,
+      requiresConfirmation: true,
+      plan: {
+        summary: `プランナーを実行して提案を最大${maxProposals}件生成します。`,
+        maxProposals
+      }
+    };
+  }
+
   const createTaskLike =
     (/タスク/.test(text) && /(追加|作成|登録|入れて|起票)/.test(text)) ||
     /^add task/i.test(text) ||
@@ -327,7 +347,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     requiresConfirmation: false,
     plan: {
       summary:
-        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認として具体的に指示してください。"
+        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認、プランナー実行として具体的に指示してください。"
     }
   };
 }

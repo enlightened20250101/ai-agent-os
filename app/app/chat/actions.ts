@@ -10,6 +10,7 @@ import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
+import { runPlanner } from "@/lib/planner/runPlanner";
 import { acceptProposalShared } from "@/lib/proposals/decide";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
@@ -35,7 +36,8 @@ function isBlockedByIncident(intentType: string) {
     intentType === "decide_approval" ||
     intentType === "bulk_decide_approvals" ||
     intentType === "quick_top_action" ||
-    intentType === "execute_action"
+    intentType === "execute_action" ||
+    intentType === "run_planner"
   );
 }
 
@@ -48,7 +50,8 @@ function isMutatingIntent(intentType: string) {
     intentType === "bulk_decide_approvals" ||
     intentType === "bulk_retry_failed_commands" ||
     intentType === "quick_top_action" ||
-    intentType === "execute_action"
+    intentType === "execute_action" ||
+    intentType === "run_planner"
   );
 }
 
@@ -1271,6 +1274,40 @@ async function runAcceptProposalCommand(args: {
   };
 }
 
+async function runPlannerFromChatCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const maxRaw =
+    typeof args.intentJson.maxProposals === "number"
+      ? args.intentJson.maxProposals
+      : Number.parseInt(String(args.intentJson.maxProposals ?? "2"), 10);
+  const maxProposals = Number.isNaN(maxRaw) ? 2 : Math.max(1, Math.min(5, maxRaw));
+
+  const result = await runPlanner({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    actorUserId: args.userId,
+    maxProposals
+  });
+
+  return {
+    executionRefType: "planner_run",
+    executionRefId: result.plannerRunId,
+    result: {
+      planner_run_id: result.plannerRunId,
+      status: result.status,
+      created_proposals: result.createdProposals,
+      considered_signals: result.consideredSignals,
+      requested_max_proposals: maxProposals
+    },
+    message: `プランナーを実行しました。提案作成: ${result.createdProposals}件 / run: /app/planner`,
+    touchedTaskId: null
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -1302,6 +1339,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "execute_action") {
     return runExecuteActionCommand(args);
+  }
+  if (args.intentType === "run_planner") {
+    return runPlannerFromChatCommand(args);
   }
   throw new Error("この実行タイプは未対応です。");
 }
@@ -2143,6 +2183,8 @@ export async function confirmChatCommand(formData: FormData) {
     revalidatePath(pathForScope(scope));
     revalidatePath("/app/tasks");
     revalidatePath("/app/approvals");
+    revalidatePath("/app/planner");
+    revalidatePath("/app/proposals");
     if (executed.touchedTaskId) {
       revalidatePath(`/app/tasks/${executed.touchedTaskId}`);
     }
