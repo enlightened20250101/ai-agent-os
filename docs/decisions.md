@@ -628,3 +628,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 提案一覧に `decision_reason_prefix` フィルタと判断理由サマリ表示を追加した。
 - Why: どの理由で採否されているかを運用画面で即時に把握し、planner改善の優先度付けをしやすくするため。
+
+- Decision: `/app/planner` の実行履歴カードに `summary_json` を構造化表示し、`created_proposals / considered_signals / total_signal_items / signal_breakdown` を見える化した。
+- Why: 単なる成功/失敗だけではなく、入力シグナル量と提案化結果の関係を運用者が即判断できるようにするため。

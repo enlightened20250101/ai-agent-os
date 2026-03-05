@@ -9,6 +9,37 @@ type PlannerPageProps = {
   searchParams?: Promise<{ ok?: string; error?: string }>;
 };
 
+function parseRunSummary(payload: unknown) {
+  if (typeof payload !== "object" || payload === null) {
+    return {
+      createdProposals: 0,
+      consideredSignals: 0,
+      totalSignalItems: 0,
+      breakdown: [] as Array<{ kind: string; count: number }>
+    };
+  }
+  const row = payload as Record<string, unknown>;
+  const breakdownRaw = Array.isArray(row.signal_breakdown) ? row.signal_breakdown : [];
+  const breakdown = breakdownRaw
+    .map((item) => {
+      if (typeof item !== "object" || item === null) return null;
+      const b = item as Record<string, unknown>;
+      const kind = typeof b.kind === "string" ? b.kind : "unknown";
+      const count = typeof b.count === "number" ? b.count : Number(b.count ?? 0);
+      return { kind, count: Number.isFinite(count) ? count : 0 };
+    })
+    .filter((v): v is { kind: string; count: number } => v !== null);
+  return {
+    createdProposals:
+      typeof row.created_proposals === "number" ? row.created_proposals : Number(row.created_proposals ?? 0),
+    consideredSignals:
+      typeof row.considered_signals === "number" ? row.considered_signals : Number(row.considered_signals ?? 0),
+    totalSignalItems:
+      typeof row.total_signal_items === "number" ? row.total_signal_items : Number(row.total_signal_items ?? 0),
+    breakdown
+  };
+}
+
 export default async function PlannerPage({ searchParams }: PlannerPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -133,6 +164,27 @@ export default async function PlannerPage({ searchParams }: PlannerPageProps) {
           <ul className="mt-3 space-y-3">
             {plannerRuns.map((run) => (
               <li key={run.id} className={`rounded-md border p-3 text-sm text-slate-700 ${run.status === "failed" ? "border-rose-300 bg-rose-50" : "border-slate-200"}`}>
+                {(() => {
+                  const summary = parseRunSummary(run.summary_json);
+                  return (
+                    <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs">
+                      <p className="font-medium text-slate-700">入力シグナル内訳</p>
+                      <p className="mt-1 text-slate-600">
+                        created_proposals={summary.createdProposals} / considered_signals={summary.consideredSignals} /
+                        total_signal_items={summary.totalSignalItems}
+                      </p>
+                      {summary.breakdown.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {summary.breakdown.map((item) => (
+                            <span key={`${run.id as string}-${item.kind}`} className="rounded-full border border-slate-300 bg-white px-2 py-1">
+                              {item.kind}: {item.count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
                 <p>
                   status: <span className="font-medium">{run.status as string}</span>
                 </p>
