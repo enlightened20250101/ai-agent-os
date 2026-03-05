@@ -45,6 +45,11 @@ const links = [
     description: "個人向けの質問や依頼を、UI操作なしで会話から実行できます。"
   },
   {
+    title: "チャット監査",
+    href: "/app/chat/audit",
+    description: "チャット起点コマンドの実行結果を横断確認し、失敗トリアージします。"
+  },
+  {
     title: "ジョブ履歴",
     href: "/app/operations/jobs",
     description: "定期実行ジョブ（planner/review）の成功・失敗を監視します。"

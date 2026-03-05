@@ -729,3 +729,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット確認実行時に open incident を再評価し、`decide_approval` / `execute_action` はインシデント中に強制ブロックする。
 - Why: 画面操作レス実行の入口でも incident mode の停止ルールを明示適用し、緊急時の誤実行を抑止するため。
+
+- Decision: `/app/chat/audit` を追加し、chat_commands を shared/personal 横断（RLS許可範囲）で status/scope/intent フィルタ可能な監査ページとして提供した。
+- Why: 会話起点の実行量が増えても、失敗トリアージと実行追跡を単一画面で行えるようにするため。
