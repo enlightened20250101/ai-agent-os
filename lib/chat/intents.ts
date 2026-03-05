@@ -30,6 +30,12 @@ export type ParsedChatIntent =
       plan: { summary: string; decision: "approved" | "rejected"; taskHint: string | null; reason: string | null };
     }
   | {
+      intentType: "bulk_decide_approvals";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; decision: "approved" | "rejected"; maxItems: number; reason: string | null };
+    }
+  | {
       intentType: "execute_action";
       confidence: number;
       requiresConfirmation: true;
@@ -64,6 +70,10 @@ export function parseChatIntent(message: string): ParsedChatIntent {
   const lower = text.toLowerCase();
   const taskIdMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
   const taskIdHint = taskIdMatch ? taskIdMatch[0] : null;
+
+  const requestedCountRaw = text.match(/(\d+)\s*件/)?.[1];
+  const requestedCount = requestedCountRaw ? Number.parseInt(requestedCountRaw, 10) : Number.NaN;
+  const parsedCount = Number.isNaN(requestedCount) ? null : Math.max(1, Math.min(10, requestedCount));
 
   const statusKeywords = ["どうなってる", "状況", "ステータス", "進捗", "status"];
   if (statusKeywords.some((kw) => lower.includes(kw))) {
@@ -140,6 +150,27 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     };
   }
 
+  const bulkApproveLike =
+    /(承認待ち|pending approval|approvals?)/i.test(text) && /(まとめて|一括|全部|まとめて承認|bulk)/i.test(text);
+  const bulkRejectLike =
+    /(承認待ち|pending approval|approvals?)/i.test(text) && /(まとめて却下|一括却下|まとめて否認|bulk reject)/i.test(text);
+  if (bulkApproveLike || bulkRejectLike) {
+    const decision = bulkRejectLike ? "rejected" : "approved";
+    const includesAll = /(全部|all)/i.test(text);
+    const maxItems = includesAll ? 10 : (parsedCount ?? 3);
+    return {
+      intentType: "bulk_decide_approvals",
+      confidence: 0.76,
+      requiresConfirmation: true,
+      plan: {
+        summary: `承認待ちを最大${maxItems}件、${decision === "approved" ? "承認" : "却下"}します。`,
+        decision,
+        maxItems,
+        reason: extractReason(text)
+      }
+    };
+  }
+
   const approveLike = /(承認して|approve|okで承認|承認お願いします)/i.test(text);
   const rejectLike = /(却下して|reject|差し戻し|否認)/i.test(text);
   if (approveLike || rejectLike) {
@@ -208,7 +239,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     requiresConfirmation: false,
     plan: {
       summary:
-        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下、状況確認として具体的に指示してください。"
+        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認として具体的に指示してください。"
     }
   };
 }

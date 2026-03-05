@@ -254,7 +254,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
           />
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-500">
-              提案受け入れ・起票・承認依頼・承認判断・実行は確認ステップを挟みます（実行系は日次上限あり）。
+              提案受け入れ・起票・承認依頼・承認判断（一括含む）・実行は確認ステップを挟みます（実行系は日次上限あり）。
             </p>
             <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
               送信

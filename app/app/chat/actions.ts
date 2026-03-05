@@ -31,7 +31,7 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 function isBlockedByIncident(intentType: string) {
-  return intentType === "decide_approval" || intentType === "execute_action";
+  return intentType === "decide_approval" || intentType === "bulk_decide_approvals" || intentType === "execute_action";
 }
 
 function isMutatingIntent(intentType: string) {
@@ -40,6 +40,7 @@ function isMutatingIntent(intentType: string) {
     intentType === "accept_proposal" ||
     intentType === "request_approval" ||
     intentType === "decide_approval" ||
+    intentType === "bulk_decide_approvals" ||
     intentType === "execute_action"
   );
 }
@@ -738,6 +739,80 @@ async function runExecuteActionCommand(args: {
   };
 }
 
+async function runBulkDecideApprovalsCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const decision = intentJson.decision === "rejected" ? "rejected" : "approved";
+  const maxItemsRaw = typeof intentJson.maxItems === "number" ? intentJson.maxItems : Number.NaN;
+  const maxItems = Number.isFinite(maxItemsRaw) ? Math.max(1, Math.min(10, Math.floor(maxItemsRaw))) : 3;
+  const reason = typeof intentJson.reason === "string" ? intentJson.reason : "chat_bulk";
+
+  const { data: pendingRows, error: pendingError } = await supabase
+    .from("approvals")
+    .select("id, task_id, created_at")
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(maxItems);
+  if (pendingError) {
+    throw new Error(`承認待ち一覧の取得に失敗しました: ${pendingError.message}`);
+  }
+  const targets = pendingRows ?? [];
+  if (targets.length === 0) {
+    throw new Error("承認待ちがありません。");
+  }
+
+  const decidedTaskIds: string[] = [];
+  const failedApprovalIds: string[] = [];
+
+  for (const row of targets) {
+    try {
+      const decided = await decideApprovalShared({
+        supabase,
+        approvalId: row.id as string,
+        decision,
+        reason,
+        actorType: "user",
+        actorId: userId,
+        source: "chat",
+        expectedOrgId: orgId
+      });
+      decidedTaskIds.push(decided.taskId);
+    } catch (error) {
+      failedApprovalIds.push(row.id as string);
+      const message = error instanceof Error ? error.message : "unknown";
+      console.error(`[CHAT_BULK_APPROVAL_DECIDE_FAILED] approval_id=${row.id as string} ${message}`);
+    }
+  }
+
+  if (decidedTaskIds.length === 0) {
+    throw new Error("一括承認処理に失敗しました。");
+  }
+
+  return {
+    executionRefType: "approval",
+    executionRefId: (targets[0]?.id as string) ?? null,
+    result: {
+      decision,
+      requested_count: maxItems,
+      processed_count: targets.length,
+      succeeded_count: decidedTaskIds.length,
+      failed_count: failedApprovalIds.length,
+      failed_approval_ids: failedApprovalIds,
+      task_ids: decidedTaskIds
+    },
+    message:
+      failedApprovalIds.length > 0
+        ? `承認待ちを${decidedTaskIds.length}件${decision === "approved" ? "承認" : "却下"}しました（一部失敗あり）。`
+        : `承認待ちを${decidedTaskIds.length}件${decision === "approved" ? "承認" : "却下"}しました。`,
+    touchedTaskId: decidedTaskIds[0] ?? null
+  };
+}
+
 async function runAcceptProposalCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -799,6 +874,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "decide_approval") {
     return runDecideApprovalCommand(args);
+  }
+  if (args.intentType === "bulk_decide_approvals") {
+    return runBulkDecideApprovalsCommand(args);
   }
   if (args.intentType === "execute_action") {
     return runExecuteActionCommand(args);

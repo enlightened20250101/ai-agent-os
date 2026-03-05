@@ -783,3 +783,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 提案受け入れロジックは `acceptProposalShared` (`lib/proposals/decide.ts`) へ共通化し、UI とチャットで同一のイベント記録/Slack投稿/検証を使う設計にした。
 - Why: 分岐実装による監査差分と不整合を防ぎ、将来の API 実行経路追加にも再利用しやすくするため。
+
+- Decision: チャットに `bulk_decide_approvals` 意図を追加し、承認待ちを最大10件まで一括承認/却下できるようにした（既定3件、確認必須）。
+- Why: 承認キューの定型処理を短時間で片付け、Human-in-the-loopを「判断」に集中させるため。
+
+- Decision: 一括承認は既存の `decideApprovalShared` を1件ずつ再利用し、`HUMAN_APPROVED/HUMAN_REJECTED` と `TASK_UPDATED` の監査イベント整合性を維持する。
+- Why: 新規バッチ専用更新ロジックを作らず、単体承認と同じ統制・証跡を保証するため。
