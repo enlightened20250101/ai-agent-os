@@ -56,10 +56,12 @@ function extractReason(text: string) {
 export function parseChatIntent(message: string): ParsedChatIntent {
   const text = normalizeText(message);
   const lower = text.toLowerCase();
+  const taskIdMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  const taskIdHint = taskIdMatch ? taskIdMatch[0] : null;
 
   const statusKeywords = ["どうなってる", "状況", "ステータス", "進捗", "status"];
   if (statusKeywords.some((kw) => lower.includes(kw))) {
-    const taskHint = extractQuoted(text);
+    const taskHint = extractQuoted(text) ?? taskIdHint;
     return {
       intentType: "status_query",
       confidence: 0.85,
@@ -74,6 +76,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
   }
 
   const quoted = extractQuoted(text);
+  const explicitTaskHint = quoted ?? taskIdHint;
 
   const requestApprovalLike =
     /(承認依頼|承認を依頼|承認リクエスト|request approval)/i.test(text) ||
@@ -86,8 +89,10 @@ export function parseChatIntent(message: string): ParsedChatIntent {
       plan: {
         summary: quoted
           ? `タスク「${quoted}」の承認依頼を作成します。`
+          : taskIdHint
+            ? `タスクID ${taskIdHint} の承認依頼を作成します。`
           : "最新の対象タスクで承認依頼を作成します。",
-        taskHint: quoted
+        taskHint: explicitTaskHint
       }
     };
   }
@@ -103,9 +108,11 @@ export function parseChatIntent(message: string): ParsedChatIntent {
       plan: {
         summary: quoted
           ? `タスク「${quoted}」の承認を${decision === "approved" ? "承認" : "却下"}します。`
+          : taskIdHint
+            ? `タスクID ${taskIdHint} の承認を${decision === "approved" ? "承認" : "却下"}します。`
           : `最新の承認待ちを${decision === "approved" ? "承認" : "却下"}します。`,
         decision,
-        taskHint: quoted,
+        taskHint: explicitTaskHint,
         reason: extractReason(text)
       }
     };
@@ -122,8 +129,10 @@ export function parseChatIntent(message: string): ParsedChatIntent {
       plan: {
         summary: quoted
           ? `タスク「${quoted}」のメール実行を開始します。`
+          : taskIdHint
+            ? `タスクID ${taskIdHint} のメール実行を開始します。`
           : "最新の対象タスクでメール実行を開始します。",
-        taskHint: quoted
+        taskHint: explicitTaskHint
       }
     };
   }

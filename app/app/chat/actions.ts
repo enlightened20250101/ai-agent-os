@@ -162,6 +162,36 @@ async function findTaskForChat(args: {
   };
 }
 
+async function getRecentTaskHintFromSession(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  sessionId: string;
+}) {
+  const { supabase, orgId, sessionId } = args;
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("metadata_json")
+    .eq("org_id", orgId)
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (error) {
+    return null;
+  }
+
+  for (const row of data ?? []) {
+    const metadata = asObject(row.metadata_json);
+    if (typeof metadata.task_id === "string") {
+      return metadata.task_id;
+    }
+    if (metadata.execution_ref_type === "task" && typeof metadata.execution_ref_id === "string") {
+      return metadata.execution_ref_id;
+    }
+  }
+  return null;
+}
+
 async function findPendingApprovalForChat(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -298,10 +328,14 @@ async function runRequestApprovalCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
   userId: string;
+  sessionId: string;
   intentJson: Record<string, unknown>;
 }) {
-  const { supabase, orgId, userId, intentJson } = args;
-  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  const { supabase, orgId, userId, intentJson, sessionId } = args;
+  let taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  if (!taskHint) {
+    taskHint = await getRecentTaskHintFromSession({ supabase, orgId, sessionId });
+  }
   const task = await findTaskForChat({ supabase, orgId, taskHint });
 
   const [{ data: latestModelEvent, error: modelError }, { data: latestPolicyEvent, error: policyError }] = await Promise.all([
@@ -475,11 +509,15 @@ async function runDecideApprovalCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
   userId: string;
+  sessionId: string;
   intentJson: Record<string, unknown>;
 }) {
-  const { supabase, orgId, userId, intentJson } = args;
+  const { supabase, orgId, userId, intentJson, sessionId } = args;
   const decision = intentJson.decision === "rejected" ? "rejected" : "approved";
-  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  let taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  if (!taskHint) {
+    taskHint = await getRecentTaskHintFromSession({ supabase, orgId, sessionId });
+  }
   const reason = typeof intentJson.reason === "string" ? intentJson.reason : "chat_command";
 
   const target = await findPendingApprovalForChat({ supabase, orgId, taskHint });
@@ -514,10 +552,14 @@ async function runExecuteActionCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
   userId: string;
+  sessionId: string;
   intentJson: Record<string, unknown>;
 }) {
-  const { supabase, orgId, userId, intentJson } = args;
-  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  const { supabase, orgId, userId, intentJson, sessionId } = args;
+  let taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  if (!taskHint) {
+    taskHint = await getRecentTaskHintFromSession({ supabase, orgId, sessionId });
+  }
   const task = await findTaskForChat({ supabase, orgId, taskHint });
 
   const result = await executeTaskDraftActionShared({
@@ -549,6 +591,7 @@ async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
   userId: string;
+  sessionId: string;
   intentType: string;
   intentJson: Record<string, unknown>;
 }) {
@@ -861,6 +904,7 @@ export async function confirmChatCommand(formData: FormData) {
       supabase,
       orgId,
       userId,
+      sessionId: confirmation.session_id as string,
       intentType: intent.intent_type as string,
       intentJson
     });
