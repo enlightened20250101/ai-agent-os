@@ -1216,6 +1216,97 @@ export async function expireStaleChatConfirmations(formData: FormData) {
   redirect(`${redirectPath}?ok=${encodeURIComponent(`期限切れ確認を${expiredCount}件更新しました。`)}`);
 }
 
+async function createRetryConfirmationForFailedCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  commandId: string;
+  skipCooldown?: boolean;
+}) {
+  const { supabase, orgId, userId, commandId, skipCooldown = false } = args;
+  const { data: command, error: commandError } = await supabase
+    .from("chat_commands")
+    .select("id, session_id, intent_id, execution_status")
+    .eq("id", commandId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (commandError) {
+    throw new Error(`再実行対象の取得に失敗しました: ${commandError.message}`);
+  }
+  if (!command) {
+    throw new Error("再実行対象が見つかりません。");
+  }
+  if (command.execution_status !== "failed") {
+    throw new Error("failed のコマンドのみ再実行できます。");
+  }
+
+  const sessionId = command.session_id as string;
+  const intentId = command.intent_id as string;
+
+  const { data: existingPending, error: pendingLookupError } = await supabase
+    .from("chat_confirmations")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("session_id", sessionId)
+    .eq("intent_id", intentId)
+    .eq("status", "pending")
+    .limit(1)
+    .maybeSingle();
+  if (pendingLookupError) {
+    throw new Error(`既存確認の確認に失敗しました: ${pendingLookupError.message}`);
+  }
+  if (existingPending?.id) {
+    return { created: false, reason: "already_pending" as const };
+  }
+
+  if (!skipCooldown) {
+    await assertConfirmationGuardrails({
+      supabase,
+      orgId,
+      sessionId
+    });
+  } else {
+    const pendingLimit = Number(process.env.CHAT_CONFIRMATION_PENDING_LIMIT ?? "5");
+    const limit = Number.isFinite(pendingLimit) && pendingLimit > 0 ? pendingLimit : 5;
+    const { count, error: countError } = await supabase
+      .from("chat_confirmations")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("session_id", sessionId)
+      .eq("status", "pending");
+    if (countError) {
+      throw new Error(`確認キュー件数の取得に失敗しました: ${countError.message}`);
+    }
+    if ((count ?? 0) >= limit) {
+      return { created: false, reason: "pending_limit_reached" as const };
+    }
+  }
+
+  const { expiresAt } = await saveIntentConfirmation({
+    supabase,
+    orgId,
+    sessionId,
+    intentId
+  });
+
+  await addSystemMessage({
+    supabase,
+    orgId,
+    sessionId,
+    bodyText: "失敗コマンドの再実行確認を作成しました。Yes で再実行します。",
+    metadata: {
+      retried_from_command_id: command.id,
+      intent_id: command.intent_id,
+      requires_confirmation: true,
+      expires_at: expiresAt,
+      requested_by: userId
+    }
+  });
+
+  return { created: true, reason: "created" as const };
+}
+
 export async function retryChatCommand(formData: FormData) {
   const commandId = String(formData.get("command_id") ?? "").trim();
   const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
@@ -1229,58 +1320,101 @@ export async function retryChatCommand(formData: FormData) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: command, error: commandError } = await supabase
-    .from("chat_commands")
-    .select("id, session_id, intent_id, execution_status")
-    .eq("id", commandId)
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (commandError) {
-    redirect(`${redirectPath}?error=${encodeURIComponent(`再実行対象の取得に失敗しました: ${commandError.message}`)}`);
-  }
-  if (!command) {
-    redirect(`${redirectPath}?error=${encodeURIComponent("再実行対象が見つかりません。")}`);
-  }
-  if (command.execution_status !== "failed") {
-    redirect(`${redirectPath}?error=${encodeURIComponent("failed のコマンドのみ再実行できます。")}`);
-  }
-
   try {
-    await assertConfirmationGuardrails({
+    await createRetryConfirmationForFailedCommand({
       supabase,
       orgId,
-      sessionId: command.session_id as string
+      userId,
+      commandId
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "再実行確認を作成できませんでした。";
     redirect(`${redirectPath}?error=${encodeURIComponent(message)}`);
   }
 
-  const { expiresAt } = await saveIntentConfirmation({
-    supabase,
-    orgId,
-    sessionId: command.session_id as string,
-    intentId: command.intent_id as string
-  });
-
-  await addSystemMessage({
-    supabase,
-    orgId,
-    sessionId: command.session_id as string,
-    bodyText: "失敗コマンドの再実行確認を作成しました。Yes で再実行します。",
-    metadata: {
-      retried_from_command_id: command.id,
-      intent_id: command.intent_id,
-      requires_confirmation: true,
-      expires_at: expiresAt,
-      requested_by: userId
-    }
-  });
-
   revalidatePath(pathForScope(scope));
   revalidatePath("/app/chat/audit");
   redirect(`${redirectPath}?ok=${encodeURIComponent("再実行確認を作成しました。")}`);
+}
+
+export async function bulkRetryFailedCommands(formData: FormData) {
+  const returnTo = String(formData.get("return_to") ?? "/app/chat/audit").trim() || "/app/chat/audit";
+  const maxItemsRaw = Number.parseInt(String(formData.get("max_items") ?? "5"), 10);
+  const maxItems = Number.isNaN(maxItemsRaw) ? 5 : Math.max(1, Math.min(20, maxItemsRaw));
+  const scope = String(formData.get("scope") ?? "").trim();
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  let commandQuery = supabase
+    .from("chat_commands")
+    .select("id, session_id, created_at")
+    .eq("org_id", orgId)
+    .eq("execution_status", "failed")
+    .order("created_at", { ascending: false })
+    .limit(maxItems * 4);
+
+  if (scope === "shared" || scope === "personal") {
+    const { data: sessions, error: sessionsError } = await supabase
+      .from("chat_sessions")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("scope", scope);
+    if (sessionsError) {
+      redirect(`${returnTo}?error=${encodeURIComponent(`対象セッション取得に失敗しました: ${sessionsError.message}`)}`);
+    }
+    const sessionIds = (sessions ?? []).map((row) => row.id as string);
+    if (sessionIds.length === 0) {
+      redirect(`${returnTo}?ok=${encodeURIComponent("対象scopeに再実行候補がありません。")}`);
+    }
+    commandQuery = commandQuery.in("session_id", sessionIds);
+  }
+
+  const { data: commands, error: commandsError } = await commandQuery;
+  if (commandsError) {
+    redirect(`${returnTo}?error=${encodeURIComponent(`失敗コマンドの取得に失敗しました: ${commandsError.message}`)}`);
+  }
+
+  const rows = commands ?? [];
+  if (rows.length === 0) {
+    redirect(`${returnTo}?ok=${encodeURIComponent("失敗コマンドはありません。")}`);
+  }
+
+  let createdCount = 0;
+  let skippedPendingCount = 0;
+  let skippedLimitCount = 0;
+  let failedCount = 0;
+
+  for (const row of rows) {
+    if (createdCount >= maxItems) break;
+    try {
+      const result = await createRetryConfirmationForFailedCommand({
+        supabase,
+        orgId,
+        userId,
+        commandId: row.id as string,
+        skipCooldown: true
+      });
+      if (result.created) {
+        createdCount += 1;
+      } else if (result.reason === "already_pending") {
+        skippedPendingCount += 1;
+      } else if (result.reason === "pending_limit_reached") {
+        skippedLimitCount += 1;
+      }
+    } catch (error) {
+      failedCount += 1;
+      const message = error instanceof Error ? error.message : "unknown";
+      console.error(`[CHAT_BULK_RETRY_FAILED] command_id=${row.id as string} ${message}`);
+    }
+  }
+
+  revalidatePath("/app/chat/shared");
+  revalidatePath("/app/chat/me");
+  revalidatePath("/app/chat/audit");
+
+  const message = `再実行確認を${createdCount}件作成しました（pending重複:${skippedPendingCount} / 上限スキップ:${skippedLimitCount} / 失敗:${failedCount}）。`;
+  redirect(`${returnTo}?ok=${encodeURIComponent(message)}`);
 }
 
 export async function confirmChatCommand(formData: FormData) {

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
+import { bulkRetryFailedCommands, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -265,6 +265,32 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         </label>
         <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
           絞り込み
+        </button>
+      </form>
+      <form action={bulkRetryFailedCommands} className="flex flex-wrap items-center gap-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
+        <p className="font-medium text-rose-900">失敗コマンドの再実行確認を一括作成</p>
+        <input type="hidden" name="return_to" value="/app/chat/audit" />
+        <label className="flex items-center gap-1">
+          scope
+          <select name="scope" defaultValue={scopeFilter === "all" ? "" : scopeFilter} className="rounded-md border border-rose-300 bg-white px-2 py-1">
+            <option value="">all</option>
+            <option value="shared">shared</option>
+            <option value="personal">personal</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-1">
+          件数
+          <input
+            type="number"
+            name="max_items"
+            min={1}
+            max={20}
+            defaultValue={5}
+            className="w-16 rounded-md border border-rose-300 bg-white px-2 py-1"
+          />
+        </label>
+        <button type="submit" className="rounded-md border border-rose-300 bg-white px-2 py-1 text-rose-700 hover:bg-rose-100">
+          一括で確認作成
         </button>
       </form>
 

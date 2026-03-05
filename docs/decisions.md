@@ -789,3 +789,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 一括承認は既存の `decideApprovalShared` を1件ずつ再利用し、`HUMAN_APPROVED/HUMAN_REJECTED` と `TASK_UPDATED` の監査イベント整合性を維持する。
 - Why: 新規バッチ専用更新ロジックを作らず、単体承認と同じ統制・証跡を保証するため。
+
+- Decision: 失敗したチャットコマンドに対し、`createRetryConfirmationForFailedCommand` を追加して単体再実行確認作成ロジックを共通化した。
+- Why: 単体再実行と一括再実行で同じ検証（failed限定・pending重複防止・確認上限）を使い、挙動差分を防ぐため。
+
+- Decision: `/app/chat/audit` に「再実行確認一括作成」アクションを追加し、scope/件数指定で failed コマンドの確認をまとめて生成できるようにした。
+- Why: 例外キュー復旧の初動を高速化し、失敗コマンドの再試行準備を監査画面で完結させるため。
