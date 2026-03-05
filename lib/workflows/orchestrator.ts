@@ -18,6 +18,7 @@ type RunningStepRow = {
   step_key: string;
   step_index: number;
   step_type: string;
+  started_at: string | null;
 };
 
 type StartWorkflowRunArgs = {
@@ -189,7 +190,7 @@ async function getRunningStep(args: {
 }): Promise<RunningStepRow | null> {
   const { data: row, error } = await args.supabase
     .from("workflow_steps")
-    .select("id, step_key, step_index, step_type")
+    .select("id, step_key, step_index, step_type, started_at")
     .eq("org_id", args.orgId)
     .eq("workflow_run_id", args.workflowRunId)
     .eq("status", "running")
@@ -207,8 +208,15 @@ async function getRunningStep(args: {
     id: row.id as string,
     step_key: row.step_key as string,
     step_index: row.step_index as number,
-    step_type: row.step_type as string
+    step_type: row.step_type as string,
+    started_at: (row.started_at as string | null) ?? null
   };
+}
+
+function getWorkflowStepTimeoutSeconds() {
+  const raw = Number.parseInt(process.env.WORKFLOW_STEP_TIMEOUT_SECONDS ?? "900", 10);
+  if (Number.isNaN(raw)) return 900;
+  return Math.max(60, Math.min(24 * 60 * 60, raw));
 }
 
 async function moveQueuedStepToRunning(args: {
@@ -304,7 +312,7 @@ async function failRunningStepAndRun(args: {
   errorMessage: string;
 }) {
   const nowIso = new Date().toISOString();
-  await args.supabase
+  const { error: stepFailError } = await args.supabase
     .from("workflow_steps")
     .update({
       status: "failed",
@@ -316,8 +324,11 @@ async function failRunningStepAndRun(args: {
     })
     .eq("id", args.stepId)
     .eq("org_id", args.orgId);
+  if (stepFailError) {
+    throw new Error(`step失敗更新に失敗しました: ${stepFailError.message}`);
+  }
 
-  await args.supabase
+  const { error: runFailError } = await args.supabase
     .from("workflow_runs")
     .update({
       status: "failed",
@@ -326,6 +337,9 @@ async function failRunningStepAndRun(args: {
     })
     .eq("id", args.workflowRunId)
     .eq("org_id", args.orgId);
+  if (runFailError) {
+    throw new Error(`workflow run失敗更新に失敗しました: ${runFailError.message}`);
+  }
 
   await appendTaskEvent({
     supabase: args.supabase,
@@ -1296,11 +1310,46 @@ export async function tickWorkflowRuns({
   let completed = 0;
   let stillRunning = 0;
   let failed = 0;
+  const stepTimeoutSeconds = getWorkflowStepTimeoutSeconds();
+  const nowMs = Date.now();
 
   for (const row of runs ?? []) {
     const workflowRunId = row.id as string;
     const taskId = row.task_id as string;
     try {
+      const runningStep = await getRunningStep({
+        supabase,
+        orgId,
+        workflowRunId
+      });
+      if (runningStep?.started_at) {
+        const startedAtMs = Date.parse(runningStep.started_at);
+        if (Number.isFinite(startedAtMs)) {
+          const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
+          if (elapsedSeconds > stepTimeoutSeconds) {
+            const timeoutMessage = `workflow step timeout exceeded (${elapsedSeconds}s > ${stepTimeoutSeconds}s)`;
+            await failRunningStepAndRun({
+              supabase,
+              orgId,
+              workflowRunId,
+              stepId: runningStep.id,
+              taskId,
+              actorId,
+              stepKey: runningStep.step_key,
+              stepIndex: runningStep.step_index,
+              errorMessage: timeoutMessage
+            });
+            failed += 1;
+            resultRows.push({
+              workflow_run_id: workflowRunId,
+              status: "failed",
+              error: timeoutMessage
+            });
+            continue;
+          }
+        }
+      }
+
       const advanced = await advanceWorkflowRun({
         supabase,
         orgId,

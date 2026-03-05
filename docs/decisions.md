@@ -885,3 +885,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status=failed` かつ failed件数が閾値以上（5件）では、一括再実行確認ボタンを強調色（赤）+ 優先文言に切り替える。
 - Why: 失敗集中時にオペレーターの次アクションを明確化し、復旧の着手遅れを防ぐため。
+
+- Decision: ワークフロー安定化として `WORKFLOW_STEP_TIMEOUT_SECONDS`（既定900秒）を導入し、`tickWorkflowRuns` で running step の経過時間超過を検知したら自動で step/run を failed 化して `WORKFLOW_FAILED` を記録する。
+- Why: ハングした実行を放置せず自動的に例外化し、再試行・人手介入へ早く繋げるため。
+
+- Decision: `failRunningStepAndRun` のDB更新にエラーチェックを追加し、失敗更新の取りこぼしを防止した。
+- Why: 失敗処理自体の失敗を明示化し、状態不整合を減らすため。
