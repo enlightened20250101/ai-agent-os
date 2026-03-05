@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 type TasksPageProps = {
   searchParams?: Promise<{
     error?: string;
+    source?: string;
   }>;
 };
 
@@ -19,6 +20,29 @@ function barColor(status: string) {
   if (status === "executing") return "bg-indigo-500";
   if (status === "done") return "bg-emerald-500";
   return "bg-slate-500";
+}
+
+type TaskSource = "manual" | "slack" | "proposal" | "system";
+
+function sourceBadgeClass(source: TaskSource) {
+  if (source === "slack") return "border-sky-300 bg-sky-50 text-sky-700";
+  if (source === "proposal") return "border-violet-300 bg-violet-50 text-violet-700";
+  if (source === "system") return "border-slate-300 bg-slate-100 text-slate-700";
+  return "border-emerald-300 bg-emerald-50 text-emerald-700";
+}
+
+function normalizeTaskSource(payload: unknown): TaskSource {
+  if (typeof payload !== "object" || payload === null) return "manual";
+  const p = payload as Record<string, unknown>;
+  const changedFields =
+    typeof p.changed_fields === "object" && p.changed_fields !== null
+      ? (p.changed_fields as Record<string, unknown>)
+      : null;
+  const sourceRaw = typeof changedFields?.source === "string" ? changedFields.source : "";
+  if (sourceRaw.includes("slack")) return "slack";
+  if (sourceRaw.includes("proposal")) return "proposal";
+  if (sourceRaw.includes("system")) return "system";
+  return "manual";
 }
 
 export default async function TasksPage({ searchParams }: TasksPageProps) {
@@ -65,9 +89,53 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
   }
 
   const tasksList = tasks ?? [];
+  const taskIds = tasksList.map((task) => task.id as string);
+  const sourceByTaskId = new Map<string, TaskSource>();
+  if (taskIds.length > 0) {
+    const { data: sourceEvents, error: sourceEventsError } = await supabase
+      .from("task_events")
+      .select("task_id, event_type, payload_json, created_at")
+      .eq("org_id", orgId)
+      .in("task_id", taskIds)
+      .in("event_type", ["SLACK_TASK_INTAKE", "TASK_CREATED"])
+      .order("created_at", { ascending: true });
+    if (sourceEventsError) {
+      throw new Error(`Failed to load task source events: ${sourceEventsError.message}`);
+    }
+    for (const row of sourceEvents ?? []) {
+      const taskId = row.task_id as string;
+      if (row.event_type === "SLACK_TASK_INTAKE") {
+        sourceByTaskId.set(taskId, "slack");
+        continue;
+      }
+      if (!sourceByTaskId.has(taskId)) {
+        sourceByTaskId.set(taskId, normalizeTaskSource(row.payload_json));
+      }
+    }
+  }
+
+  const selectedSource =
+    params.source === "slack" || params.source === "proposal" || params.source === "manual" || params.source === "system"
+      ? params.source
+      : "all";
+  const filteredTasks =
+    selectedSource === "all"
+      ? tasksList
+      : tasksList.filter((task) => (sourceByTaskId.get(task.id as string) ?? "manual") === selectedSource);
+
   const agentNameById = new Map<string, string>((agents ?? []).map((agent) => [agent.id as string, agent.name as string]));
   const statusCounts = new Map<string, number>();
+  const sourceCounts = new Map<TaskSource, number>([
+    ["manual", 0],
+    ["slack", 0],
+    ["proposal", 0],
+    ["system", 0]
+  ]);
   for (const task of tasksList) {
+    const source = sourceByTaskId.get(task.id as string) ?? "manual";
+    sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+  }
+  for (const task of filteredTasks) {
     const key = String(task.status ?? "unknown");
     statusCounts.set(key, (statusCounts.get(key) ?? 0) + 1);
   }
@@ -130,7 +198,7 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
             <p className="text-slate-600">総タスク</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900">{tasksList.length}</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900">{filteredTasks.length}</p>
           </div>
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
             <p className="text-amber-700">承認待ち系</p>
@@ -164,14 +232,41 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
+          <span className="font-medium text-slate-700">流入ソース</span>
+          {(["all", "manual", "slack", "proposal", "system"] as const).map((source) => {
+            const href = source === "all" ? "/app/tasks" : `/app/tasks?source=${source}`;
+            const count =
+              source === "all"
+                ? tasksList.length
+                : sourceCounts.get(source as TaskSource) ?? 0;
+            const selected = selectedSource === source;
+            return (
+              <Link
+                key={source}
+                href={href}
+                className={`rounded-full border px-2 py-1 ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+              >
+                {source} ({count})
+              </Link>
+            );
+          })}
+        </div>
         <h2 className="text-lg font-semibold">タスク一覧</h2>
-        {tasksList.length > 0 ? (
+        {filteredTasks.length > 0 ? (
           <ul className="mt-4 space-y-3">
-            {tasksList.map((task) => (
+            {filteredTasks.map((task) => (
               <li key={task.id} className={`rounded-md border p-4 ${task.status === "failed" ? "border-rose-300 bg-rose-50" : "border-slate-200"}`}>
-                <Link href={`/app/tasks/${task.id}`} className="font-medium text-slate-900 hover:underline">
-                  {task.title as string}
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link href={`/app/tasks/${task.id}`} className="font-medium text-slate-900 hover:underline">
+                    {task.title as string}
+                  </Link>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[11px] ${sourceBadgeClass(sourceByTaskId.get(task.id as string) ?? "manual")}`}
+                  >
+                    {sourceByTaskId.get(task.id as string) ?? "manual"}
+                  </span>
+                </div>
                 <p className="mt-1 text-sm text-slate-600">
                   ステータス: {task.status as string} | エージェント:{" "}
                   {task.agent_id ? agentNameById.get(task.agent_id as string) ?? "未割り当て" : "未割り当て"}

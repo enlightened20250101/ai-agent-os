@@ -92,7 +92,8 @@ export async function createTask(formData: FormData) {
         title: createdTask.title,
         status: createdTask.status,
         agent_id: createdTask.agent_id,
-        workflow_template_id: (createdTask as { workflow_template_id?: string | null }).workflow_template_id ?? null
+        workflow_template_id: (createdTask as { workflow_template_id?: string | null }).workflow_template_id ?? null,
+        source: "web_manual"
       }
     }
   });

@@ -631,3 +631,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/planner` の実行履歴カードに `summary_json` を構造化表示し、`created_proposals / considered_signals / total_signal_items / signal_breakdown` を見える化した。
 - Why: 単なる成功/失敗だけではなく、入力シグナル量と提案化結果の関係を運用者が即判断できるようにするため。
+
+- Decision: `/app/tasks` に流入ソース（manual/slack/proposal/system）判定とフィルタを追加し、Slack intake由来タスクを即時抽出できるようにした。
+- Why: 自動取り込み運用で「どこから来たタスクか」を可視化し、監視・優先対応・改善分析をしやすくするため。
