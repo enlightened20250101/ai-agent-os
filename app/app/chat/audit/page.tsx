@@ -33,6 +33,16 @@ function statusBadgeClass(status: string) {
   return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
+function skipReasonLabel(reason: string) {
+  if (reason === "approval_not_pending") return "skip: approval_not_pending";
+  if (reason === "approval_already_pending") return "skip: approval_already_pending";
+  return `skip: ${reason}`;
+}
+
+function skipReasonClass() {
+  return "border-amber-300 bg-amber-50 text-amber-800";
+}
+
 export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -300,6 +310,11 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
             const session = sessionMap.get(row.session_id);
             const intent = intentMap.get(row.intent_id);
             const result = asObject(row.result_json);
+            const skipped = result?.skipped === true;
+            const skipReason = typeof result?.skip_reason === "string" ? result.skip_reason : null;
+            const quickRef = asObject(result?.quick_ref);
+            const quickIndex = typeof quickRef?.index === "number" ? quickRef.index : null;
+            const quickAction = typeof quickRef?.requested_action === "string" ? quickRef.requested_action : null;
             const taskId =
               typeof result?.task_id === "string"
                 ? result.task_id
@@ -319,6 +334,14 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
                     {intent?.intentType ?? "intent"}
                   </span>
+                  {skipped && skipReason ? (
+                    <span className={`rounded-full border px-2 py-0.5 ${skipReasonClass()}`}>{skipReasonLabel(skipReason)}</span>
+                  ) : null}
+                  {quickIndex && quickAction ? (
+                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
+                      quick #{quickIndex} {quickAction}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="mt-1 text-sm text-slate-800">{intent?.summary ?? "summaryなし"}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">

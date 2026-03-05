@@ -57,6 +57,12 @@ function parseResultJson(value: unknown) {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+function skipReasonLabel(reason: string) {
+  if (reason === "approval_not_pending") return "skip: approval_not_pending";
+  if (reason === "approval_already_pending") return "skip: approval_already_pending";
+  return `skip: ${reason}`;
+}
+
 export async function ChatShell({ scope, title, description, submitAction, searchParams }: ChatShellProps) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -289,6 +295,11 @@ export async function ChatShell({ scope, title, description, submitAction, searc
           <ul className="space-y-2">
             {commands.map((command) => {
               const result = parseResultJson(command.result_json);
+              const skipped = result?.skipped === true;
+              const skipReason = typeof result?.skip_reason === "string" ? result.skip_reason : null;
+              const quickRef = parseResultJson(result?.quick_ref);
+              const quickIndex = typeof quickRef?.index === "number" ? quickRef.index : null;
+              const quickAction = typeof quickRef?.requested_action === "string" ? quickRef.requested_action : null;
               const taskId =
                 command.execution_ref_type === "task" || command.execution_ref_type === "approval" || command.execution_ref_type === "action"
                   ? (result?.task_id as string | undefined) ?? (command.execution_ref_type === "task" ? command.execution_ref_id ?? undefined : undefined)
@@ -303,6 +314,16 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
                       {intentMap.get(command.intent_id) ?? "intent"}
                     </span>
+                    {skipped && skipReason ? (
+                      <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
+                        {skipReasonLabel(skipReason)}
+                      </span>
+                    ) : null}
+                    {quickIndex && quickAction ? (
+                      <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
+                        quick #{quickIndex} {quickAction}
+                      </span>
+                    ) : null}
                     {taskId ? (
                       <Link href={`/app/tasks/${taskId}`} className="text-sky-700 underline">
                         task

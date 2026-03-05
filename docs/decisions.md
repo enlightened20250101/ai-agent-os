@@ -816,3 +816,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: クイック実行で対象がすでに状態変更済み（例: pending承認が存在しない / 既に承認待ち）の場合は失敗にせず `skipped` として扱い、`CHAT_QUICK_ACTION_USED` に `skip_reason` を記録する。
 - Why: 競合や先行処理による自然な不一致をエラー扱いせず、監査上は「安全に未実行だった」ことを明示するため。
+
+- Decision: `/app/chat/audit` とチャット内コマンド監査ビューに `skip_reason` / `quick_ref` バッジ（`quick #N action`）を追加し、クイック実行のスキップ要因を一覧で判読できるようにした。
+- Why: 詳細JSONを開かなくても、失敗と安全スキップを運用者が即時に見分けられるようにするため。
