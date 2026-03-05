@@ -843,3 +843,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` のフィルタフォームに「フィルタをリセット」導線を追加し、ワンクリックで初期一覧へ戻せるようにした。
 - Why: 絞り込みを重ねた後の復帰操作を簡略化し、運用時の探索スピードを上げるため。
+
+- Decision: `/app/chat/audit` に「条件リンクをコピー」ボタンを追加し、現在のフィルタ条件付きURL（絶対URL）をクリップボードへ共有できるようにした。
+- Why: オペレーター間で同一条件の監査ビューを即共有し、調査の再現性を高めるため。

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { bulkRetryFailedCommands, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
+import { CopyFilterLinkButton } from "@/app/app/chat/audit/CopyFilterLinkButton";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -237,6 +238,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     .filter((v): v is string => Boolean(v))
     .join(" / ");
   const hasActiveExportFilters = activeFilterSummary.length > 0;
+  const currentFilterPath = buildAuditFilterHref({
+    status: statusFilter,
+    scope: scopeFilter,
+    intent: intentFilter,
+    skipReason: skipReasonFilter
+  });
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -278,6 +285,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
               filtered export
             </span>
           ) : null}
+          <CopyFilterLinkButton path={currentFilterPath} />
         </div>
       </header>
       {hasActiveExportFilters ? (
