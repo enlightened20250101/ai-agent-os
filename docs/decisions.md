@@ -939,3 +939,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` の一括作成フォームに intent セレクトを追加し、既定値を現在フィルタintent（なければ worstIntent）にする。
 - Why: 監査で見つけた失敗クラスターに即追従できるUIにして、復旧までのクリック数を減らすため。
+
+- Decision: `TOP(/app)` で `chat_commands(7d)` と `chat_intents(7d)` を突合し、intent別失敗率から `高失敗intent` を算出して優先対応キューに表示する。
+- Why: 監査画面を開く前にホームで異常傾向を検知し、対応開始までの時間を短縮するため。
+
+- Decision: 高失敗intentが閾値（失敗率50%以上）を超える場合、トップページに警告バナーを表示し `status=failed&intent=<type>` の監査ビューへ直接誘導する。
+- Why: ボトルネック意図へのトリアージを1クリック化し、会話起点運用の復旧速度を高めるため。

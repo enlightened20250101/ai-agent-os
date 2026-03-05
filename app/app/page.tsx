@@ -155,7 +155,18 @@ export default async function AppHomePage() {
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const staleApprovalHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleApprovalCutoffIso = new Date(Date.now() - staleApprovalHours * 60 * 60 * 1000).toISOString();
-  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes, proposalsRes, chatCommandsRes] = await Promise.all([
+  const [
+    tasksRes,
+    approvalsRes,
+    actionsRes,
+    incidentsRes,
+    recommendationPack,
+    plannerRunsRes,
+    reviewEventsRes,
+    proposalsRes,
+    chatCommandsRes,
+    chatIntentsRes
+  ] = await Promise.all([
     supabase
       .from("tasks")
       .select("id, status, created_at")
@@ -198,11 +209,18 @@ export default async function AppHomePage() {
       .limit(500),
     supabase
       .from("chat_commands")
-      .select("id, execution_status, created_at, result_json")
+      .select("id, intent_id, execution_status, created_at, result_json")
       .eq("org_id", orgId)
       .gte("created_at", sevenDaysAgoIso)
       .order("created_at", { ascending: false })
-      .limit(500)
+      .limit(500),
+    supabase
+      .from("chat_intents")
+      .select("id, intent_type, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
+      .limit(1000)
   ]);
 
   if (tasksRes.error) {
@@ -245,6 +263,13 @@ export default async function AppHomePage() {
   ) {
     throw new Error(`Failed to load chat command metrics: ${chatCommandsRes.error.message}`);
   }
+  if (
+    chatIntentsRes.error &&
+    !chatIntentsRes.error.message.includes('relation "chat_intents" does not exist') &&
+    !chatIntentsRes.error.message.includes("Could not find the table 'public.chat_intents'")
+  ) {
+    throw new Error(`Failed to load chat intent metrics: ${chatIntentsRes.error.message}`);
+  }
 
   const tasks = tasksRes.data ?? [];
   const approvals = approvalsRes.data ?? [];
@@ -254,6 +279,7 @@ export default async function AppHomePage() {
   const reviewEvents = reviewEventsRes.data ?? [];
   const proposals = proposalsRes.data ?? [];
   const chatCommands = chatCommandsRes.data ?? [];
+  const chatIntents = chatIntentsRes.data ?? [];
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
   const taskStatusCounts = new Map<string, number>();
@@ -295,6 +321,35 @@ export default async function AppHomePage() {
   const chatSkipHref = topSkipReason
     ? `/app/chat/audit?skip_reason=${encodeURIComponent(topSkipReason)}`
     : "/app/chat/audit";
+  const intentTypeById = new Map(
+    chatIntents.map((row) => [row.id as string, ((row.intent_type as string | null) ?? "unknown") as string])
+  );
+  const intentStats = Array.from(
+    chatCommands
+      .reduce((acc, row) => {
+        const intentType = intentTypeById.get((row.intent_id as string) ?? "") ?? "unknown";
+        const current = acc.get(intentType) ?? { intentType, total: 0, failed: 0 };
+        current.total += 1;
+        if (row.execution_status === "failed") current.failed += 1;
+        acc.set(intentType, current);
+        return acc;
+      }, new Map<string, { intentType: string; total: number; failed: number }>())
+      .values()
+  ).map((row) => ({
+    ...row,
+    failureRate: row.total > 0 ? Math.round((row.failed / row.total) * 100) : 0
+  }));
+  const worstFailedIntent =
+    intentStats
+      .filter((row) => row.total >= 3 && row.failed > 0)
+      .sort((a, b) => {
+        if (b.failureRate !== a.failureRate) return b.failureRate - a.failureRate;
+        if (b.failed !== a.failed) return b.failed - a.failed;
+        return b.total - a.total;
+      })[0] ?? null;
+  const worstIntentHref = worstFailedIntent
+    ? `/app/chat/audit?status=failed&intent=${encodeURIComponent(worstFailedIntent.intentType)}`
+    : "/app/chat/audit?status=failed";
   const actionSuccessRate =
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
@@ -305,7 +360,10 @@ export default async function AppHomePage() {
     (taskStatusCounts.get("failed") ?? 0) > 0 ? `失敗タスク ${taskStatusCounts.get("failed") ?? 0}件` : null,
     pendingApprovals > 5 ? `承認待ち ${pendingApprovals}件` : null,
     failedActions > 0 ? `直近7日アクション失敗 ${failedActions}件` : null,
-    failedChatCommands > 0 ? `直近7日チャット失敗 ${failedChatCommands}件` : null
+    failedChatCommands > 0 ? `直近7日チャット失敗 ${failedChatCommands}件` : null,
+    worstFailedIntent && worstFailedIntent.failureRate >= 50
+      ? `高失敗intent ${worstFailedIntent.intentType} (${worstFailedIntent.failureRate}%)`
+      : null
   ].filter((v): v is string => Boolean(v));
   const criticalRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "critical");
   const highRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "high");
@@ -432,7 +490,7 @@ export default async function AppHomePage() {
           <h2 className="text-sm font-semibold text-slate-900">優先対応キュー</h2>
           <span className="text-xs text-slate-500">緊急度の高いものを先頭表示</span>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
           <Link
             href="/app/approvals"
             className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
@@ -504,12 +562,58 @@ export default async function AppHomePage() {
               {topSkipReason ? `${topSkipReason} (${topSkipReasonCount})` : "主因なし"}
             </p>
           </Link>
+          <Link
+            href={worstIntentHref}
+            className={`rounded-lg border p-3 ${
+              worstFailedIntent && worstFailedIntent.failureRate >= 60
+                ? "border-rose-300 bg-rose-50"
+                : worstFailedIntent && worstFailedIntent.failureRate >= 30
+                  ? "border-amber-300 bg-amber-50"
+                  : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <p
+              className={`text-xs ${
+                worstFailedIntent && worstFailedIntent.failureRate >= 60
+                  ? "text-rose-700"
+                  : worstFailedIntent && worstFailedIntent.failureRate >= 30
+                    ? "text-amber-700"
+                    : "text-slate-600"
+              }`}
+            >
+              高失敗intent(7d)
+            </p>
+            <p
+              className={`mt-1 text-xl font-semibold ${
+                worstFailedIntent && worstFailedIntent.failureRate >= 60
+                  ? "text-rose-900"
+                  : worstFailedIntent && worstFailedIntent.failureRate >= 30
+                    ? "text-amber-900"
+                    : "text-slate-900"
+              }`}
+            >
+              {worstFailedIntent ? `${worstFailedIntent.failureRate}%` : "-"}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-600">
+              {worstFailedIntent
+                ? `${worstFailedIntent.intentType} (${worstFailedIntent.failed}/${worstFailedIntent.total})`
+                : "主因なし"}
+            </p>
+          </Link>
         </div>
         {skippedChatCommands > 0 ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
             チャット運用ヘルス: {skipReco.text}{" "}
             <Link href={skipReco.href} className="underline">
               対応する
+            </Link>
+          </div>
+        ) : null}
+        {worstFailedIntent && worstFailedIntent.failureRate >= 50 ? (
+          <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+            チャット失敗ホットスポット: {worstFailedIntent.intentType} の失敗率が {worstFailedIntent.failureRate}% です。{" "}
+            <Link href={worstIntentHref} className="underline">
+              failed一覧で優先対処
             </Link>
           </div>
         ) : null}
