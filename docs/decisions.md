@@ -819,3 +819,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` とチャット内コマンド監査ビューに `skip_reason` / `quick_ref` バッジ（`quick #N action`）を追加し、クイック実行のスキップ要因を一覧で判読できるようにした。
 - Why: 詳細JSONを開かなくても、失敗と安全スキップを運用者が即時に見分けられるようにするため。
+
+- Decision: `/app/chat/audit` に `skip_reason` 上位集計（直近7日）カードを追加し、スキップ原因の頻出パターンを可視化する。
+- Why: 詰まりの根本要因（例: stale候補、先行承認）を早く特定し、運用改善サイクルを回しやすくするため。

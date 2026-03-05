@@ -85,6 +85,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   ]);
 
   const commands = (commandsData ?? []) as CommandRow[];
+  const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const sessionIds = Array.from(new Set(commands.map((row) => row.session_id)));
   const intentIds = Array.from(new Set(commands.map((row) => row.intent_id)));
 
@@ -147,6 +148,18 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     running: rows.filter((row) => row.execution_status === "running").length,
     pending: rows.filter((row) => row.execution_status === "pending").length
   };
+  const skipReasonCounts = new Map<string, number>();
+  for (const row of rows) {
+    const createdAtMs = new Date(row.created_at).getTime();
+    if (!Number.isFinite(createdAtMs) || createdAtMs < sevenDaysAgoMs) continue;
+    const result = asObject(row.result_json);
+    if (!result || result.skipped !== true) continue;
+    const reason = typeof result.skip_reason === "string" && result.skip_reason.length > 0 ? result.skip_reason : "unknown";
+    skipReasonCounts.set(reason, (skipReasonCounts.get(reason) ?? 0) + 1);
+  }
+  const topSkipReasons = Array.from(skipReasonCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
 
   const intentOptions = Array.from(
     new Set(
@@ -224,6 +237,20 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           <p className="text-amber-700">pending</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{statusCount.pending}</p>
         </div>
+      </div>
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+        <p className="font-medium text-amber-900">skip_reason 上位（7日）</p>
+        {topSkipReasons.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {topSkipReasons.map(([reason, count]) => (
+              <span key={reason} className="rounded-full border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800">
+                {reason}: {count}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-amber-800">直近7日の skip はありません。</p>
+        )}
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
