@@ -714,3 +714,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `taskHint` 未指定時は同一セッションの直近メッセージ metadata から `task_id` を補完して承認依頼/承認判断/実行の既定対象に使う。
 - Why: 会話の連続操作（作成直後に承認依頼、承認直後に実行）で再指定負荷を下げつつ、セッション内コンテキストに限定して安全に補完するため。
+
+- Decision: `/app/chat/*` に `chat_commands` ベースの「コマンド監査ビュー」を追加し、実行ステータス・対象タスクリンク・result_json を画面で確認できるようにした。
+- Why: 会話だけでは追いづらい実行結果を可視化し、オペレーターが失敗原因やスキップ理由を即時トリアージできるようにするため。
