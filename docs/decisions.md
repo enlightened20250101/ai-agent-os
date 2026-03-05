@@ -771,3 +771,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/shared` と `/app/chat/me` に本日の confirmed 実行数と残量（`x/y`）を表示し、使用率に応じて色分けする。
 - Why: 実行上限に達する前にオペレーターが状況を把握し、運用計画を調整できるようにするため。
+
+- Decision: チャットの `status_query` を拡張し、自然文キーワードから `approval / proposal / exception / incident / overview` の焦点を判定して、対象別サマリを返すようにした。
+- Why: 「〜ってどうなってる？」の質問に対して画面遷移なしで即時トリアージ情報を返し、会話起点オペレーションの実用性を上げるため。

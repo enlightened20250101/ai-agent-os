@@ -757,6 +757,13 @@ async function postMessage(scope: ChatScope, formData: FormData) {
 
   if (intent.intentType === "status_query") {
     const taskHint = typeof intent.plan.taskHint === "string" ? intent.plan.taskHint : null;
+    const focus =
+      intent.plan.focus === "approval" ||
+      intent.plan.focus === "proposal" ||
+      intent.plan.focus === "exception" ||
+      intent.plan.focus === "incident"
+        ? intent.plan.focus
+        : "overview";
     if (taskHint) {
       const task = await findTaskForChat({ supabase, orgId, taskHint });
       const [{ data: pendingApproval }, { data: latestAction }, { data: latestEvent }] = await Promise.all([
@@ -800,34 +807,116 @@ async function postMessage(scope: ChatScope, formData: FormData) {
         metadata: {
           intent_id: intentRow.id,
           intent_type: intent.intentType,
-          task_id: task.id
+          task_id: task.id,
+          focus
         }
       });
     } else {
       const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const [{ count: taskCount }, { count: pendingApprovalCount }, { count: actionFailCount }] = await Promise.all([
+      const threeDaysAgoIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      const [
+        { count: taskCount },
+        { count: pendingApprovalCount },
+        { count: staleApprovalCount },
+        { count: actionFailCount },
+        { count: pendingProposalCount },
+        { count: blockedProposalCount },
+        { count: openIncidentCount },
+        { count: failedWorkflowCount },
+        { count: blockedTaskCount }
+      ] = await Promise.all([
         supabase.from("tasks").select("id", { count: "exact", head: true }).eq("org_id", orgId),
         supabase.from("approvals").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
+        supabase
+          .from("approvals")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "pending")
+          .lt("created_at", threeDaysAgoIso),
         supabase
           .from("actions")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("status", "failed")
-          .gte("created_at", sevenDaysAgoIso)
+          .gte("created_at", sevenDaysAgoIso),
+        supabase.from("task_proposals").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "proposed"),
+        supabase
+          .from("task_proposals")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "proposed")
+          .eq("policy_status", "block"),
+        supabase.from("org_incidents").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "open"),
+        supabase
+          .from("workflow_runs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "failed")
+          .gte("created_at", sevenDaysAgoIso),
+        supabase
+          .from("tasks")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "ready_for_approval")
       ]);
+
+      const overviewText =
+        `現状サマリ:\n` +
+        `- タスク総数: ${taskCount ?? 0}\n` +
+        `- 承認待ち: ${pendingApprovalCount ?? 0} (SLA超過目安: ${staleApprovalCount ?? 0})\n` +
+        `- 提案待ち: ${pendingProposalCount ?? 0} (policy block: ${blockedProposalCount ?? 0})\n` +
+        `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
+        `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
+        `- open incidents: ${openIncidentCount ?? 0}`;
+
+      const approvalText =
+        `承認キュー状況:\n` +
+        `- pending approvals: ${pendingApprovalCount ?? 0}\n` +
+        `- 3日超 pending approvals: ${staleApprovalCount ?? 0}\n` +
+        `- ready_for_approval tasks: ${blockedTaskCount ?? 0}\n` +
+        `- 7日失敗アクション: ${actionFailCount ?? 0}`;
+
+      const proposalText =
+        `提案キュー状況:\n` +
+        `- proposed: ${pendingProposalCount ?? 0}\n` +
+        `- policy block proposals: ${blockedProposalCount ?? 0}\n` +
+        `- open incidents: ${openIncidentCount ?? 0}\n` +
+        `- 承認待ち: ${pendingApprovalCount ?? 0}`;
+
+      const exceptionText =
+        `例外キュー状況:\n` +
+        `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
+        `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
+        `- 3日超 pending approvals: ${staleApprovalCount ?? 0}\n` +
+        `- policy block proposals: ${blockedProposalCount ?? 0}`;
+
+      const incidentText =
+        `インシデント状況:\n` +
+        `- open incidents: ${openIncidentCount ?? 0}\n` +
+        `- 7日失敗アクション: ${actionFailCount ?? 0}\n` +
+        `- 7日失敗ワークフロー: ${failedWorkflowCount ?? 0}\n` +
+        `- 提案待ち(policy block): ${blockedProposalCount ?? 0}`;
+
+      const bodyText =
+        focus === "approval"
+          ? approvalText
+          : focus === "proposal"
+            ? proposalText
+            : focus === "exception"
+              ? exceptionText
+              : focus === "incident"
+                ? incidentText
+                : overviewText;
 
       await addSystemMessage({
         supabase,
         orgId,
         sessionId: session.id,
-        bodyText:
-          `現状サマリ:\n` +
-          `- タスク総数: ${taskCount ?? 0}\n` +
-          `- 承認待ち: ${pendingApprovalCount ?? 0}\n` +
-          `- 7日失敗アクション: ${actionFailCount ?? 0}`,
+        bodyText,
         metadata: {
           intent_id: intentRow.id,
-          intent_type: intent.intentType
+          intent_type: intent.intentType,
+          focus
         }
       });
     }

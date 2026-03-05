@@ -3,7 +3,7 @@ export type ParsedChatIntent =
       intentType: "status_query";
       confidence: number;
       requiresConfirmation: false;
-      plan: { summary: string; taskHint: string | null };
+      plan: { summary: string; taskHint: string | null; focus: "overview" | "approval" | "proposal" | "exception" | "incident" };
     }
   | {
       intentType: "create_task";
@@ -62,6 +62,13 @@ export function parseChatIntent(message: string): ParsedChatIntent {
   const statusKeywords = ["どうなってる", "状況", "ステータス", "進捗", "status"];
   if (statusKeywords.some((kw) => lower.includes(kw))) {
     const taskHint = extractQuoted(text) ?? taskIdHint;
+    const focus = (() => {
+      if (/(承認|approval)/i.test(text)) return "approval" as const;
+      if (/(提案|proposal|プランナー)/i.test(text)) return "proposal" as const;
+      if (/(例外|失敗|エラー|exception)/i.test(text)) return "exception" as const;
+      if (/(インシデント|incident|障害)/i.test(text)) return "incident" as const;
+      return "overview" as const;
+    })();
     return {
       intentType: "status_query",
       confidence: 0.85,
@@ -69,8 +76,17 @@ export function parseChatIntent(message: string): ParsedChatIntent {
       plan: {
         summary: taskHint
           ? `タスク「${taskHint}」の状況を確認します。`
-          : "現在のタスク/承認/実行状況を要約して返答します。",
-        taskHint
+          : focus === "approval"
+            ? "承認キューの状況を要約して返答します。"
+            : focus === "proposal"
+              ? "提案キューの状況を要約して返答します。"
+              : focus === "exception"
+                ? "例外キューの状況を要約して返答します。"
+                : focus === "incident"
+                  ? "インシデント状況を要約して返答します。"
+                  : "現在のタスク/承認/実行状況を要約して返答します。",
+        taskHint,
+        focus
       }
     };
   }
