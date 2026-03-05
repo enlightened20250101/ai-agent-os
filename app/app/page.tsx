@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { bulkRetryFailedCommands } from "@/app/app/chat/actions";
+import { expireStaleChatConfirmations } from "@/app/app/chat/actions";
+import { retryTopFailedWorkflowRuns } from "@/app/app/operations/exceptions/actions";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -383,28 +385,32 @@ export default async function AppHomePage() {
       label: "オープンインシデントを確認",
       href: "/app/governance/incidents",
       score: openIncidents.length > 0 ? 100 + openIncidents.length * 5 : 0,
-      detail: `open ${openIncidents.length}件`
+      detail: `open ${openIncidents.length}件`,
+      quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
       key: "failed_actions_24h",
       label: "失敗アクションをトリアージ",
       href: "/app/operations/exceptions",
       score: failedActions24h > 0 ? 85 + Math.min(15, failedActions24h) : 0,
-      detail: `24h failed ${failedActions24h}件`
+      detail: `24h failed ${failedActions24h}件`,
+      quickAction: "retry_failed_workflows" as const
     },
     {
       key: "stale_approvals",
       label: "滞留承認を処理",
       href: "/app/approvals",
       score: stalePendingApprovals > 0 ? 80 + Math.min(20, stalePendingApprovals) : 0,
-      detail: `${staleApprovalHours}h+ pending ${stalePendingApprovals}件`
+      detail: `${staleApprovalHours}h+ pending ${stalePendingApprovals}件`,
+      quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
       key: "blocked_proposals",
       label: "policy block提案を精査",
       href: "/app/proposals?status=proposed&policy_status=block",
       score: blockedProposals > 0 ? 70 + Math.min(20, blockedProposals) : 0,
-      detail: `block proposals ${blockedProposals}件`
+      detail: `block proposals ${blockedProposals}件`,
+      quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
       key: "failed_chat_intent",
@@ -413,14 +419,16 @@ export default async function AppHomePage() {
       score: worstFailedIntent ? Math.min(95, worstFailedIntent.failureRate) : 0,
       detail: worstFailedIntent
         ? `${worstFailedIntent.intentType} ${worstFailedIntent.failed}/${worstFailedIntent.total}`
-        : "hotspot なし"
+        : "hotspot なし",
+      quickAction: "expire_chat_confirmations" as const
     },
     {
       key: "planner_failures",
       label: "ジョブ連続失敗を確認",
       href: "/app/operations/jobs?failed_only=1",
       score: needsOpsAttention ? 75 + Math.max(plannerConsecutiveFailures, reviewConsecutiveFailures) * 3 : 0,
-      detail: `planner=${plannerConsecutiveFailures}, review=${reviewConsecutiveFailures}`
+      detail: `planner=${plannerConsecutiveFailures}, review=${reviewConsecutiveFailures}`,
+      quickAction: "retry_failed_workflows" as const
     }
   ]
     .filter((item) => item.score > 0)
@@ -692,9 +700,34 @@ export default async function AppHomePage() {
                     <span className="font-medium text-slate-900">{item.label}</span>
                     <span className="text-slate-500">{item.detail}</span>
                   </div>
-                  <Link href={item.href} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 hover:bg-slate-100">
-                    開く
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link href={item.href} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 hover:bg-slate-100">
+                      開く
+                    </Link>
+                    {item.quickAction === "retry_failed_workflows" ? (
+                      <form action={retryTopFailedWorkflowRuns}>
+                        <input type="hidden" name="limit" value="3" />
+                        <button
+                          type="submit"
+                          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 hover:bg-amber-100"
+                        >
+                          失敗workflow再試行
+                        </button>
+                      </form>
+                    ) : null}
+                    {item.quickAction === "expire_chat_confirmations" ? (
+                      <form action={expireStaleChatConfirmations}>
+                        <input type="hidden" name="scope" value="shared" />
+                        <input type="hidden" name="return_to" value="/app" />
+                        <button
+                          type="submit"
+                          className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-800 hover:bg-sky-100"
+                        >
+                          期限切れ確認を整理
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ol>

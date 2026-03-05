@@ -954,3 +954,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `TOP(/app)` の優先対応キューに `Next Actions (auto-sorted)` を追加し、incident/failed action/stale approval/policy block/high-failure intent/job failure を重み付きスコアで並べ替えて上位5件を表示する。
 - Why: オペレーターが毎回どこから着手するか判断するコストを減らし、復旧初動の一貫性を高めるため。
+
+- Decision: `TOP(/app)` の `Next Actions` 各行にクイック実行ボタンを追加し、`失敗workflow再試行(上位3件)` と `期限切れ確認整理` をホームから直接実行可能にした。
+- Why: 異常検知後にページ遷移を挟まず一次復旧を開始できるようにし、オペレーションの初動速度を上げるため。
