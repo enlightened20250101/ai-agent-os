@@ -858,3 +858,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 監査一覧の `quick #N action` バッジをクリック可能にし、`intent=quick_top_action` へ即絞り込みできる導線を追加した。
 - Why: クイック実行由来の履歴だけを迅速に抽出し、クイック操作の品質監査を効率化するため。
+
+- Decision: `skip_reason` 推奨アクションカードのリンク先を監査画面内導線に統一し、現在の `status/scope/intent` を保持したまま `skip_reason=<top>` へ遷移する。
+- Why: フィルタ文脈を保ったまま原因深掘りできるようにし、分析の連続性を高めるため。
