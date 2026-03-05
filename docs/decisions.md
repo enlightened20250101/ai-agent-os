@@ -643,3 +643,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/api/planner/runs/:id` を拡張し、`run_events (PLANNER_RUN_STARTED/FINISHED)` と `proposal_events` を合わせて返すようにした。
 - Why: run単位で「何が生成され、どう判断されたか」をAPIレスポンスだけで追跡できる監査性を高めるため。
+
+- Decision: プランナー実行前に直近採否データ（accept/reject率・上位却下理由）を集計し、`effective_max_proposals` を動的調整するフィードバック制御を追加した。
+- Why: 却下が続く期間に提案量を自動で絞り、ノイズ提案の連発を抑えつつ人間レビュー負荷を下げるため。
+
+- Decision: planner run `summary_json` に feedbackスナップショット（acceptance/rejection rate, top_reject_reasons, requested/effective max）を保存し、`/app/planner` で可視化した。
+- Why: 「なぜその提案件数になったか」を運用者が後から説明できるようにし、改善ループを監査可能にするため。

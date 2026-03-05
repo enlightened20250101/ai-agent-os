@@ -13,8 +13,15 @@ function parseRunSummary(payload: unknown) {
   if (typeof payload !== "object" || payload === null) {
     return {
       createdProposals: 0,
+      requestedMaxProposals: 0,
+      effectiveMaxProposals: 0,
       consideredSignals: 0,
       totalSignalItems: 0,
+      feedback: null as null | {
+        acceptanceRate: number;
+        rejectionRate: number;
+        topRejectReasons: Array<{ reason: string; count: number }>;
+      },
       breakdown: [] as Array<{ kind: string; count: number }>
     };
   }
@@ -32,10 +39,45 @@ function parseRunSummary(payload: unknown) {
   return {
     createdProposals:
       typeof row.created_proposals === "number" ? row.created_proposals : Number(row.created_proposals ?? 0),
+    requestedMaxProposals:
+      typeof row.requested_max_proposals === "number"
+        ? row.requested_max_proposals
+        : Number(row.requested_max_proposals ?? 0),
+    effectiveMaxProposals:
+      typeof row.effective_max_proposals === "number"
+        ? row.effective_max_proposals
+        : Number(row.effective_max_proposals ?? 0),
     consideredSignals:
       typeof row.considered_signals === "number" ? row.considered_signals : Number(row.considered_signals ?? 0),
     totalSignalItems:
       typeof row.total_signal_items === "number" ? row.total_signal_items : Number(row.total_signal_items ?? 0),
+    feedback:
+      typeof row.feedback === "object" && row.feedback !== null
+        ? (() => {
+            const feedback = row.feedback as Record<string, unknown>;
+            const rawReasons = Array.isArray(feedback.top_reject_reasons) ? feedback.top_reject_reasons : [];
+            const topRejectReasons = rawReasons
+              .map((item) => {
+                if (typeof item !== "object" || item === null) return null;
+                const r = item as Record<string, unknown>;
+                const reason = typeof r.reason === "string" ? r.reason : "unknown";
+                const count = typeof r.count === "number" ? r.count : Number(r.count ?? 0);
+                return { reason, count: Number.isFinite(count) ? count : 0 };
+              })
+              .filter((v): v is { reason: string; count: number } => v !== null);
+            return {
+              acceptanceRate:
+                typeof feedback.acceptance_rate === "number"
+                  ? feedback.acceptance_rate
+                  : Number(feedback.acceptance_rate ?? 0),
+              rejectionRate:
+                typeof feedback.rejection_rate === "number"
+                  ? feedback.rejection_rate
+                  : Number(feedback.rejection_rate ?? 0),
+              topRejectReasons
+            };
+          })()
+        : null,
     breakdown
   };
 }
@@ -173,11 +215,30 @@ export default async function PlannerPage({ searchParams }: PlannerPageProps) {
                         created_proposals={summary.createdProposals} / considered_signals={summary.consideredSignals} /
                         total_signal_items={summary.totalSignalItems}
                       </p>
+                      <p className="mt-1 text-slate-600">
+                        max_proposals={summary.effectiveMaxProposals || summary.requestedMaxProposals}/
+                        {summary.requestedMaxProposals || "-"}{" "}
+                        {summary.feedback
+                          ? `| acceptance=${summary.feedback.acceptanceRate}% rejection=${summary.feedback.rejectionRate}%`
+                          : null}
+                      </p>
                       {summary.breakdown.length > 0 ? (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {summary.breakdown.map((item) => (
                             <span key={`${run.id as string}-${item.kind}`} className="rounded-full border border-slate-300 bg-white px-2 py-1">
                               {item.kind}: {item.count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {summary.feedback && summary.feedback.topRejectReasons.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {summary.feedback.topRejectReasons.map((item) => (
+                            <span
+                              key={`${run.id as string}-reject-${item.reason}`}
+                              className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700"
+                            >
+                              reject:{item.reason} ({item.count})
                             </span>
                           ))}
                         </div>

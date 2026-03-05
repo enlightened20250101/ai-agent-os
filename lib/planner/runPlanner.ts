@@ -19,6 +19,18 @@ type PlannerProposal = {
 };
 
 type ProposalPolicyStatus = "pass" | "warn" | "block";
+type ProposalDecisionStatus = "accepted" | "rejected" | "proposed";
+
+type ProposalFeedbackStats = {
+  windowDays: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  decidedCount: number;
+  acceptanceRate: number;
+  rejectionRate: number;
+  topRejectReasons: Array<{ reason: string; count: number }>;
+  effectiveMaxProposals: number;
+};
 
 type RunPlannerArgs = {
   supabase: SupabaseClient;
@@ -58,6 +70,74 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+function parseDecisionReasonPrefix(reason: unknown) {
+  if (typeof reason !== "string" || !reason.trim()) return "unspecified";
+  const idx = reason.indexOf(":");
+  return (idx >= 0 ? reason.slice(0, idx) : reason).trim() || "unspecified";
+}
+
+async function buildProposalFeedback(args: {
+  supabase: SupabaseClient;
+  orgId: string;
+  requestedMaxProposals: number;
+}): Promise<ProposalFeedbackStats> {
+  const { supabase, orgId } = args;
+  const windowDays = Number(process.env.PLANNER_FEEDBACK_WINDOW_DAYS ?? "14");
+  const sinceIso = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: rows, error } = await supabase
+    .from("task_proposals")
+    .select("status, decision_reason, created_at")
+    .eq("org_id", orgId)
+    .in("status", ["accepted", "rejected"])
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(300);
+
+  if (error) {
+    throw new Error(`proposal_feedback query failed: ${error.message}`);
+  }
+
+  const feedbackRows = (rows ?? []) as Array<{
+    status: ProposalDecisionStatus;
+    decision_reason?: string | null;
+  }>;
+  const acceptedCount = feedbackRows.filter((row) => row.status === "accepted").length;
+  const rejectedCount = feedbackRows.filter((row) => row.status === "rejected").length;
+  const decidedCount = acceptedCount + rejectedCount;
+  const acceptanceRate = decidedCount > 0 ? Math.round((acceptedCount / decidedCount) * 100) : 0;
+  const rejectionRate = decidedCount > 0 ? Math.round((rejectedCount / decidedCount) * 100) : 0;
+
+  const reasonCounts = new Map<string, number>();
+  for (const row of feedbackRows) {
+    if (row.status !== "rejected") continue;
+    const prefix = parseDecisionReasonPrefix(row.decision_reason);
+    reasonCounts.set(prefix, (reasonCounts.get(prefix) ?? 0) + 1);
+  }
+  const topRejectReasons = Array.from(reasonCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([reason, count]) => ({ reason, count }));
+
+  let effectiveMaxProposals = args.requestedMaxProposals;
+  if (decidedCount >= 8 && rejectionRate >= 70) {
+    effectiveMaxProposals = Math.max(1, Math.min(args.requestedMaxProposals, 1));
+  } else if (decidedCount >= 8 && rejectionRate >= 50) {
+    effectiveMaxProposals = Math.max(1, Math.min(args.requestedMaxProposals, 2));
+  }
+
+  return {
+    windowDays,
+    acceptedCount,
+    rejectedCount,
+    decidedCount,
+    acceptanceRate,
+    rejectionRate,
+    topRejectReasons,
+    effectiveMaxProposals
+  };
 }
 
 function normalizePlannerProposals(raw: unknown): PlannerProposal[] {
@@ -279,6 +359,7 @@ function estimateProposalImpact(args: { signals: PlannerSignal[]; proposal: Plan
 async function generateProposalsWithOpenAI(args: {
   signals: PlannerSignal[];
   maxProposals: number;
+  feedback: ProposalFeedbackStats;
 }): Promise<PlannerProposal[]> {
   if (process.env.E2E_MODE === "1") {
     return makeStubProposals(args);
@@ -302,7 +383,13 @@ async function generateProposalsWithOpenAI(args: {
     "- provider/action_type fixed to google/send_email.",
     `- Prefer recipient domain ${domain}.`,
     `max_proposals=${args.maxProposals}`,
-    `signals=${JSON.stringify(args.signals)}`
+    `signals=${JSON.stringify(args.signals)}`,
+    `feedback=${JSON.stringify({
+      window_days: args.feedback.windowDays,
+      acceptance_rate: args.feedback.acceptanceRate,
+      rejection_rate: args.feedback.rejectionRate,
+      top_reject_reasons: args.feedback.topRejectReasons
+    })}`
   ].join("\n");
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -396,9 +483,15 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
 
   try {
     const signals = await buildSignals({ supabase, orgId });
+    const feedback = await buildProposalFeedback({
+      supabase,
+      orgId,
+      requestedMaxProposals: maxProposals
+    });
     const proposals = await generateProposalsWithOpenAI({
       signals,
-      maxProposals
+      maxProposals: feedback.effectiveMaxProposals,
+      feedback
     });
 
     let createdCount = 0;
@@ -491,8 +584,19 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
     const finishedAt = new Date().toISOString();
     const summaryJson = {
       created_proposals: createdCount,
+      requested_max_proposals: maxProposals,
+      effective_max_proposals: feedback.effectiveMaxProposals,
       considered_signals: signals.length,
       total_signal_items: signals.reduce((sum, signal) => sum + signal.count, 0),
+      feedback: {
+        window_days: feedback.windowDays,
+        accepted_count: feedback.acceptedCount,
+        rejected_count: feedback.rejectedCount,
+        decided_count: feedback.decidedCount,
+        acceptance_rate: feedback.acceptanceRate,
+        rejection_rate: feedback.rejectionRate,
+        top_reject_reasons: feedback.topRejectReasons
+      },
       signal_breakdown: signals.map((signal) => ({
         kind: signal.kind,
         count: signal.count
