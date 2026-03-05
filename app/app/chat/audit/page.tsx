@@ -289,10 +289,30 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         </div>
       </header>
       <div className="flex flex-wrap gap-2 text-xs">
-        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">status: {statusFilter}</span>
-        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">scope: {scopeFilter}</span>
-        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">intent: {intentFilter}</span>
-        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700">skip_reason: {skipReasonFilter}</span>
+        <Link
+          href={buildAuditFilterHref({ status: "all", scope: scopeFilter, intent: intentFilter, skipReason: skipReasonFilter })}
+          className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100"
+        >
+          status: {statusFilter}
+        </Link>
+        <Link
+          href={buildAuditFilterHref({ status: statusFilter, scope: "all", intent: intentFilter, skipReason: skipReasonFilter })}
+          className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100"
+        >
+          scope: {scopeFilter}
+        </Link>
+        <Link
+          href={buildAuditFilterHref({ status: statusFilter, scope: scopeFilter, intent: "all", skipReason: skipReasonFilter })}
+          className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100"
+        >
+          intent: {intentFilter}
+        </Link>
+        <Link
+          href={buildAuditFilterHref({ status: statusFilter, scope: scopeFilter, intent: intentFilter, skipReason: "all" })}
+          className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100"
+        >
+          skip_reason: {skipReasonFilter}
+        </Link>
       </div>
       {hasActiveExportFilters ? (
         <p className="text-xs text-slate-500">エクスポート条件: {activeFilterSummary}</p>

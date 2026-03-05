@@ -849,3 +849,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` ヘッダ直下に `status/scope/intent/skip_reason` の現在条件バッジを常時表示する。
 - Why: 共有リンク経由でも表示条件を瞬時に把握でき、認識齟齬を減らすため。
+
+- Decision: 現在条件バッジをクリック可能にして、対象条件だけ `all` に戻すトグル動作を追加した。
+- Why: 調査中の段階的なフィルタ解除を1クリックで行えるようにし、探索効率を高めるため。
