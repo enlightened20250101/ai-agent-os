@@ -189,3 +189,13 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Store connector secrets in `connector_accounts.secrets_json` as plain JSON for MVP, and mask secret inputs in UI forms.
 - Why: Prioritizes delivery speed for the wedge; encryption-at-rest and secret manager integration are tracked as future hardening work.
+
+### 2026-03-05 - Google connector OAuth flow
+
+- Decision: Use Google OAuth authorization code flow (`/api/google/auth` -> `/api/google/callback`) to capture org-scoped `refresh_token` and sender email, while keeping `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` in env only.
+- Why: Removes manual refresh token handling from operators, improves security posture, and keeps runtime credentials tenant-scoped in `connector_accounts`.
+
+### 2026-03-05 - OAuth state persistence for ngrok/local reliability
+
+- Decision: Persist Google OAuth state as single-use rows in `google_oauth_states` (nonce + org/user binding + expiry + consumed_at), and verify/consume from DB in callback.
+- Why: Eliminates cross-domain cookie mismatch issues (localhost vs ngrok), improves replay protection, and makes callback failures diagnosable with explicit error codes.

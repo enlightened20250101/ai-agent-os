@@ -71,10 +71,13 @@ export async function resolveGoogleRuntimeConfig(args: {
   });
   if (connector) {
     const secrets = connector.secrets_json;
-    const clientId = typeof secrets.client_id === "string" ? secrets.client_id : "";
-    const clientSecret = typeof secrets.client_secret === "string" ? secrets.client_secret : "";
     const refreshToken = typeof secrets.refresh_token === "string" ? secrets.refresh_token : "";
-    const senderEmail = typeof secrets.sender_email === "string" ? secrets.sender_email : "";
+    const senderEmail =
+      typeof secrets.sender_email === "string" && secrets.sender_email.length > 0
+        ? secrets.sender_email
+        : connector.external_account_id;
+    const clientId = process.env.GOOGLE_CLIENT_ID ?? "";
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
     if (clientId && clientSecret && refreshToken && senderEmail) {
       return { clientId, clientSecret, refreshToken, senderEmail, source: "db" };
     }
@@ -92,11 +95,14 @@ export function getSlackEnvStatus() {
 }
 
 export function getGoogleEnvStatus() {
-  const env = envGoogleConfig();
+  const clientId = process.env.GOOGLE_CLIENT_ID ?? "";
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN ?? "";
+  const senderEmail = process.env.GOOGLE_SENDER_EMAIL ?? "";
   return {
-    clientId: Boolean(env.clientId),
-    clientSecret: Boolean(env.clientSecret),
-    refreshToken: Boolean(env.refreshToken),
-    senderEmail: Boolean(env.senderEmail)
+    clientId: Boolean(clientId),
+    clientSecret: Boolean(clientSecret),
+    refreshToken: Boolean(refreshToken),
+    senderEmail: Boolean(senderEmail)
   };
 }

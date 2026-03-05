@@ -1,4 +1,5 @@
-import { saveGoogleConnector } from "@/app/app/integrations/google/actions";
+import Link from "next/link";
+import { disconnectGoogleConnector } from "@/app/app/integrations/google/actions";
 import { getConnectorAccount } from "@/lib/connectors/getConnectorAccount";
 import { getGoogleEnvStatus } from "@/lib/connectors/runtime";
 import { requireOrgContext } from "@/lib/org/context";
@@ -8,6 +9,9 @@ type GoogleIntegrationPageProps = {
   searchParams?: Promise<{
     ok?: string;
     error?: string;
+    error_description?: string;
+    success?: string;
+    message?: string;
   }>;
 };
 
@@ -18,11 +22,12 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
   const connector = await getConnectorAccount({ supabase, orgId, provider: "google" });
   const dbSecrets = (connector?.secrets_json ?? {}) as Record<string, unknown>;
   const dbStatus = {
-    clientId: typeof dbSecrets.client_id === "string" && dbSecrets.client_id.length > 0,
-    clientSecret: typeof dbSecrets.client_secret === "string" && dbSecrets.client_secret.length > 0,
     refreshToken: typeof dbSecrets.refresh_token === "string" && dbSecrets.refresh_token.length > 0,
     senderEmail: typeof dbSecrets.sender_email === "string" && dbSecrets.sender_email.length > 0
   };
+  const senderEmail =
+    (typeof dbSecrets.sender_email === "string" && dbSecrets.sender_email) || connector?.external_account_id;
+  const connected = Boolean(dbStatus.refreshToken && senderEmail);
   const sp = searchParams ? await searchParams : {};
 
   return (
@@ -30,40 +35,41 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
       <div>
         <h1 className="text-xl font-semibold">Google Integration</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Configure org-scoped Gmail connector credentials for Action Runner email sends.
+          Connect Gmail for this org via OAuth. Client credentials remain server-side env config.
         </p>
       </div>
 
-      {sp.ok ? (
+      {sp.ok || sp.success === "1" ? (
         <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
+          {sp.ok ?? "Google connector connected successfully."}
         </p>
       ) : null}
       {sp.error ? (
         <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {sp.error}
+          {sp.error_description ? `: ${sp.error_description}` : ""}
         </p>
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Connector source</p>
-          <p className="text-slate-700">{connector ? "database (primary)" : "env fallback"}</p>
-        </div>
-        <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Saved sender</p>
-          <p className="text-slate-700">{connector ? connector.external_account_id : "(none)"}</p>
-        </div>
-        <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB credentials</p>
-          <p className={dbStatus.clientId && dbStatus.clientSecret && dbStatus.refreshToken && dbStatus.senderEmail ? "text-emerald-700" : "text-rose-700"}>
-            {dbStatus.clientId && dbStatus.clientSecret && dbStatus.refreshToken && dbStatus.senderEmail
-              ? "configured"
-              : "missing"}
+          <p className="font-medium">Connection status</p>
+          <p className={connected ? "text-emerald-700" : "text-rose-700"}>
+            {connected ? "connected" : "not connected"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Env fallback status</p>
+          <p className="font-medium">Connected sender</p>
+          <p className="text-slate-700">{senderEmail || "(none)"}</p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">Server OAuth env</p>
+          <p className={envStatus.clientId && envStatus.clientSecret ? "text-emerald-700" : "text-rose-700"}>
+            {envStatus.clientId && envStatus.clientSecret ? "configured" : "missing"}
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">Legacy env fallback token</p>
           <p className={envStatus.clientId && envStatus.clientSecret && envStatus.refreshToken && envStatus.senderEmail ? "text-emerald-700" : "text-amber-700"}>
             {envStatus.clientId && envStatus.clientSecret && envStatus.refreshToken && envStatus.senderEmail
               ? "fully configured"
@@ -72,58 +78,32 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
         </div>
       </div>
 
-      <form action={saveGoogleConnector} className="grid gap-3 rounded-md border border-slate-200 p-4">
-        <p className="text-sm font-medium text-slate-900">Save org Google connector</p>
-        <input
-          type="text"
-          name="display_name"
-          placeholder="display name (optional)"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          type="text"
-          name="sender_email"
-          placeholder="sender@gmail.com"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="text"
-          name="client_id"
-          placeholder="Google OAuth client id"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="password"
-          name="client_secret"
-          placeholder="Google OAuth client secret"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="password"
-          name="refresh_token"
-          placeholder="Google refresh token"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-          required
-        />
-        <div>
-          <button
-            type="submit"
-            className="rounded-md bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
-          >
-            Save connector
-          </button>
-        </div>
-      </form>
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href="/api/google/auth"
+          className="rounded-md bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
+        >
+          {connected ? "Reconnect Google" : "Connect Google"}
+        </Link>
+        {connected ? (
+          <form action={disconnectGoogleConnector}>
+            <button
+              type="submit"
+              className="rounded-md border border-rose-300 px-4 py-2 text-sm text-rose-700 hover:bg-rose-50"
+            >
+              Disconnect
+            </button>
+          </form>
+        ) : null}
+      </div>
 
       <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-        <p className="font-medium text-slate-900">Notes</p>
+        <p className="font-medium text-slate-900">OAuth Setup</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>DB-stored connector credentials are used first for this org.</li>
-          <li>Env vars remain fallback for local/dev when DB connector is missing.</li>
-          <li>Credentials are stored in plain JSON for MVP; encryption at rest is future work.</li>
+          <li>Set `APP_BASE_URL` to your reachable app URL (ngrok URL for local HTTPS testing).</li>
+          <li>Set Google OAuth redirect URI to `{(process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "")}/api/google/callback`.</li>
+          <li>OAuth stores `refresh_token` and sender email per org in `connector_accounts`.</li>
+          <li>For MVP, secrets are plain JSON in DB (`future`: encrypted secrets at rest).</li>
         </ul>
       </div>
     </section>

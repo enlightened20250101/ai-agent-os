@@ -89,6 +89,25 @@ Set these in `.env.local`:
 - Env vars remain fallback for local/dev when no org connector record exists.
 - MVP stores `connector_accounts.secrets_json` as plain JSON (`future`: encrypted secret storage).
 
+## Google OAuth Setup
+
+1. In Google Cloud Console, configure OAuth consent and create a Web OAuth client.
+2. Set env vars:
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `APP_BASE_URL` (use your HTTPS ngrok URL for local testing if needed)
+3. Add redirect URI:
+   - `${APP_BASE_URL}/api/google/callback`
+4. In app, open `/app/integrations/google` and click `Connect Google`.
+5. After consent, the org connector stores:
+   - `refresh_token` in `connector_accounts.secrets_json`
+   - sender email as `external_account_id` and `secrets_json.sender_email`
+
+Notes:
+- `GOOGLE_CLIENT_SECRET` is server-only and never stored in DB.
+- Legacy env fallback (`GOOGLE_REFRESH_TOKEN`, `GOOGLE_SENDER_EMAIL`) remains supported for local/dev.
+- OAuth `state` is stored server-side in Supabase (`google_oauth_states`) for replay-safe, cross-domain reliability (works with ngrok/local domain changes).
+
 ## Documentation
 
 - [Working rules](docs/AGENT.md)
