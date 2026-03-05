@@ -969,3 +969,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `ConfirmSubmitButton` を `useFormStatus` 対応に拡張し、送信中は `disabled + 実行中ラベル` へ切り替えるようにした。
 - Why: トップ画面のクイック実行で二重送信を防ぎ、意図しない重複オペレーションを抑止するため。
+
+- Decision: `/app/chat/audit` の実行ボタン（期限切れ整理・一括再実行確認作成・行単位再実行確認作成）を `ConfirmSubmitButton` に統一し、確認ダイアログ + 送信中disabledを適用した。
+- Why: 監査画面は一括操作が多いため、誤実行と二重送信を防いで安全な運用を維持するため。

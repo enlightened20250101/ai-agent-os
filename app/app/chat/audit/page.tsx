@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { bulkRetryFailedCommands, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { CopyFilterLinkButton } from "@/app/app/chat/audit/CopyFilterLinkButton";
 import { requireOrgContext } from "@/lib/org/context";
@@ -328,9 +329,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           <form action={expireStaleChatConfirmations}>
             <input type="hidden" name="scope" value="shared" />
             <input type="hidden" name="return_to" value="/app/chat/audit" />
-            <button type="submit" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800">
-              期限切れ確認を整理
-            </button>
+            <ConfirmSubmitButton
+              label="期限切れ確認を整理"
+              pendingLabel="整理中..."
+              confirmMessage="期限切れ pending 確認を整理します。実行しますか？"
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800"
+            />
           </form>
           <Link href="/app/chat/shared" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700">
             共有チャット
@@ -636,16 +640,16 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
             className="w-16 rounded-md border border-rose-300 bg-white px-2 py-1"
           />
         </label>
-        <button
-          type="submit"
+        <ConfirmSubmitButton
+          label={bulkRetryEmphasis ? "優先: 一括で確認作成" : "一括で確認作成"}
+          pendingLabel="確認作成中..."
+          confirmMessage="現在の条件で失敗コマンドの再実行確認を一括作成します。実行しますか？"
           className={`rounded-md border px-2 py-1 ${
             bulkRetryEmphasis
               ? "border-rose-500 bg-rose-600 font-semibold text-white hover:bg-rose-500"
               : "border-rose-300 bg-white text-rose-700 hover:bg-rose-100"
           }`}
-        >
-          {bulkRetryEmphasis ? "優先: 一括で確認作成" : "一括で確認作成"}
-        </button>
+        />
         {bulkRetryEmphasis ? (
           <span className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 font-medium text-rose-800">
             failed {statusCount.failed}件: 優先実行
@@ -737,12 +741,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                     <input type="hidden" name="command_id" value={row.id} />
                     <input type="hidden" name="scope" value={session?.scope === "personal" ? "personal" : "shared"} />
                     <input type="hidden" name="return_to" value="/app/chat/audit" />
-                    <button
-                      type="submit"
+                    <ConfirmSubmitButton
+                      label="再実行確認を作成"
+                      pendingLabel="作成中..."
+                      confirmMessage="この失敗コマンドの再実行確認を作成します。実行しますか？"
                       className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
-                    >
-                      再実行確認を作成
-                    </button>
+                    />
                   </form>
                 ) : null}
               </li>
