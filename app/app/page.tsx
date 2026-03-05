@@ -2,6 +2,7 @@ import Link from "next/link";
 import { bulkRetryFailedCommands } from "@/app/app/chat/actions";
 import { expireStaleChatConfirmations } from "@/app/app/chat/actions";
 import { retryTopFailedWorkflowRuns } from "@/app/app/operations/exceptions/actions";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -733,12 +734,11 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
               <input type="hidden" name="scope" value="all" />
               <input type="hidden" name="intent_type" value={worstFailedIntent.intentType} />
               <input type="hidden" name="max_items" value="5" />
-              <button
-                type="submit"
+              <ConfirmSubmitButton
+                label="このintentで再実行確認を一括作成（5件）"
+                confirmMessage={`intent=${worstFailedIntent.intentType} の失敗コマンドに対して再実行確認を最大5件作成します。実行しますか？`}
                 className="rounded-md border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
-              >
-                このintentで再実行確認を一括作成（5件）
-              </button>
+              />
             </form>
           </div>
         ) : null}
@@ -762,24 +762,22 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
                     {item.quickAction === "retry_failed_workflows" ? (
                       <form action={retryTopFailedWorkflowRuns}>
                         <input type="hidden" name="limit" value="3" />
-                        <button
-                          type="submit"
+                        <ConfirmSubmitButton
+                          label="失敗workflow再試行"
+                          confirmMessage="失敗workflow runの上位3件を再試行します。実行しますか？"
                           className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 hover:bg-amber-100"
-                        >
-                          失敗workflow再試行
-                        </button>
+                        />
                       </form>
                     ) : null}
                     {item.quickAction === "expire_chat_confirmations" ? (
                       <form action={expireStaleChatConfirmations}>
                         <input type="hidden" name="scope" value="shared" />
                         <input type="hidden" name="return_to" value="/app" />
-                        <button
-                          type="submit"
+                        <ConfirmSubmitButton
+                          label="期限切れ確認を整理"
+                          confirmMessage="チャット確認の期限切れ pending を整理します。実行しますか？"
                           className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-800 hover:bg-sky-100"
-                        >
-                          期限切れ確認を整理
-                        </button>
+                        />
                       </form>
                     ) : null}
                   </div>

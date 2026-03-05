@@ -963,3 +963,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `retryTopFailedWorkflowRuns` の結果文字列（`success=, failed=`）と `期限切れ確認更新件数` をパースし、成功/失敗件数チップを表示する。
 - Why: 成否メッセージを定量で読み取りやすくし、次のアクション判断を速くするため。
+
+- Decision: `TOP(/app)` のクイック実行ボタン（失敗workflow再試行・期限切れ確認整理・高失敗intent再実行確認）にブラウザ確認ダイアログを必須化した。
+- Why: ホーム画面からの即時オペレーションで誤クリックによる大量実行を防ぎ、安全なデフォルトを維持するため。
