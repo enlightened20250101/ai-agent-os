@@ -35,6 +35,8 @@ Set these in `.env.local`:
 - `SLACK_SIGNING_SECRET`
 - `SLACK_APPROVAL_CHANNEL_ID`
 - `SLACK_ALERTS_CHANNEL_ID` (optional; ops alert channel, fallback to approval channel)
+- `SLACK_INTAKE_CHANNEL_ID` (optional; Slack task intake target channel, fallback to approval channel)
+- `SLACK_DEFAULT_ORG_ID` (optional; env-only Slack modeのorg解決用)
 - `ENABLE_OPS_SLACK_ALERTS` (`1` to enable threshold-based ops alerts)
 - `OPS_ALERT_CONSECUTIVE_FAIL_THRESHOLD` (default `2`)
 - `APP_BASE_URL`
@@ -192,15 +194,29 @@ Set these in `.env.local`:
 
 1. Create a Slack app and add OAuth scopes:
    - `chat:write`
+   - `app_mentions:read`
+   - `channels:history`
+   - `groups:history`
+   - `im:history`
    - `commands` (optional if slash commands are added later)
-2. Enable Interactivity and set Request URL to:
+2. Enable Event Subscriptions and set Request URL to:
+   - `${APP_BASE_URL}/api/slack/events`
+3. Subscribe to bot events:
+   - `app_mention`
+   - `message.channels` (optional)
+   - `message.groups` (optional)
+   - `message.im` (optional)
+4. Enable Interactivity and set Request URL to:
    - `${APP_BASE_URL}/api/slack/actions`
-3. Install the app and set env vars:
+5. Install the app and set env vars:
    - `SLACK_BOT_TOKEN`
    - `SLACK_SIGNING_SECRET`
    - `SLACK_APPROVAL_CHANNEL_ID`
-4. Open `/app/integrations/slack` and use "Send test message" to verify.
-5. If you use ops alerts, set optional `alert_channel_id` in Slack connector and run `Opsアラート テスト送信`.
+6. Open `/app/integrations/slack` and save connector config:
+   - `approval_channel_id` (required)
+   - `intake_channel_id` (optional; if empty uses approval channel)
+   - `alert_channel_id` (optional)
+7. If you use ops alerts, run `Opsアラート テスト送信` for connectivity check.
 
 ## Connector Configuration (Org-Scoped)
 

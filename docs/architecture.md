@@ -21,7 +21,7 @@ Primary workflow:
 
 - Responsibility: Immutable audit events for every state change and external action.
 - Backing store: Supabase Postgres table(s) with RLS.
-- Event examples: `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`, `APPROVAL_REQUESTED`, `APPROVAL_BYPASSED`, `HUMAN_APPROVED`, `ACTION_SKIPPED`, `ACTION_EXECUTED`, `ACTION_FAILED`, `INCIDENT_DECLARED`, `GOVERNANCE_RECOMMENDATION_APPLIED`, `GOVERNANCE_RECOMMENDATIONS_REVIEWED`, `GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED`.
+- Event examples: `SLACK_TASK_INTAKE`, `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`, `APPROVAL_REQUESTED`, `APPROVAL_BYPASSED`, `HUMAN_APPROVED`, `ACTION_SKIPPED`, `ACTION_EXECUTED`, `ACTION_FAILED`, `INCIDENT_DECLARED`, `GOVERNANCE_RECOMMENDATION_APPLIED`, `GOVERNANCE_RECOMMENDATIONS_REVIEWED`, `GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED`.
 - Requirement: All modules write to ledger through a shared server-side writer.
 
 ### 2) Policy Engine
@@ -80,6 +80,7 @@ Primary workflow:
 - `approvals`: human approval state for tasks.
 - `connector_accounts`: org connector identities and encrypted secret blobs.
 - MVP note: `secrets_json` is stored as plain JSON in MVP; encryption hardening is future work.
+- `slack_event_receipts`: Slack Events API受信の重複排除テーブル (`event_id` unique)。
 - `actions`: outbound provider action attempts and results.
 - `workflow_templates`: reusable multi-step workflow definitions.
 - `workflow_runs`: workflow execution instances per task.
@@ -113,6 +114,7 @@ Primary workflow:
 - `AGENT_CREATED`
 - `AGENT_UPDATED`
 - `TASK_CREATED`
+- `SLACK_TASK_INTAKE`
 - `TASK_UPDATED`
 - `APPROVAL_REQUESTED`
 - `APPROVAL_BYPASSED`

@@ -6,6 +6,7 @@ export type SlackRuntimeConfig = {
   signingSecret: string;
   approvalChannelId: string;
   alertChannelId: string;
+  intakeChannelId: string;
   source: "db" | "env" | "none";
 };
 
@@ -22,10 +23,25 @@ function envSlackConfig(): SlackRuntimeConfig {
   const signingSecret = process.env.SLACK_SIGNING_SECRET ?? "";
   const approvalChannelId = process.env.SLACK_APPROVAL_CHANNEL_ID ?? "";
   const alertChannelId = process.env.SLACK_ALERTS_CHANNEL_ID ?? "";
+  const intakeChannelId = process.env.SLACK_INTAKE_CHANNEL_ID ?? "";
   if (botToken && signingSecret && approvalChannelId) {
-    return { botToken, signingSecret, approvalChannelId, alertChannelId, source: "env" };
+    return {
+      botToken,
+      signingSecret,
+      approvalChannelId,
+      alertChannelId,
+      intakeChannelId,
+      source: "env"
+    };
   }
-  return { botToken: "", signingSecret: "", approvalChannelId: "", alertChannelId: "", source: "none" };
+  return {
+    botToken: "",
+    signingSecret: "",
+    approvalChannelId: "",
+    alertChannelId: "",
+    intakeChannelId: "",
+    source: "none"
+  };
 }
 
 function envGoogleConfig(): GoogleRuntimeConfig {
@@ -55,9 +71,17 @@ export async function resolveSlackRuntimeConfig(args: {
     const approvalChannelId =
       typeof secrets.approval_channel_id === "string" ? secrets.approval_channel_id : "";
     const alertChannelId = typeof secrets.alert_channel_id === "string" ? secrets.alert_channel_id : "";
+    const intakeChannelId = typeof secrets.intake_channel_id === "string" ? secrets.intake_channel_id : "";
 
     if (botToken && signingSecret && approvalChannelId) {
-      return { botToken, signingSecret, approvalChannelId, alertChannelId, source: "db" };
+      return {
+        botToken,
+        signingSecret,
+        approvalChannelId,
+        alertChannelId,
+        intakeChannelId,
+        source: "db"
+      };
     }
   }
   return envSlackConfig();
@@ -94,7 +118,8 @@ export function getSlackEnvStatus() {
     botToken: Boolean(env.botToken),
     signingSecret: Boolean(env.signingSecret),
     approvalChannelId: Boolean(env.approvalChannelId),
-    alertChannelId: Boolean(env.alertChannelId)
+    alertChannelId: Boolean(env.alertChannelId),
+    intakeChannelId: Boolean(env.intakeChannelId)
   };
 }
 

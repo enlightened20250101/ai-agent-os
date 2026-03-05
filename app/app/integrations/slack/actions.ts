@@ -19,6 +19,7 @@ export async function saveSlackConnector(formData: FormData) {
   const signingSecret = String(formData.get("signing_secret") ?? "").trim();
   const approvalChannelId = String(formData.get("approval_channel_id") ?? "").trim();
   const alertChannelId = String(formData.get("alert_channel_id") ?? "").trim();
+  const intakeChannelId = String(formData.get("intake_channel_id") ?? "").trim();
   const workspaceId = String(formData.get("workspace_id") ?? "").trim();
   const displayName = String(formData.get("display_name") ?? "").trim();
 
@@ -37,7 +38,8 @@ export async function saveSlackConnector(formData: FormData) {
         bot_token: botToken,
         signing_secret: signingSecret,
         approval_channel_id: approvalChannelId,
-        alert_channel_id: alertChannelId || null
+        alert_channel_id: alertChannelId || null,
+        intake_channel_id: intakeChannelId || null
       }
     });
   } catch (error) {

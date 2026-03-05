@@ -26,7 +26,8 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
     signingSecret: typeof dbSecrets.signing_secret === "string" && dbSecrets.signing_secret.length > 0,
     approvalChannelId:
       typeof dbSecrets.approval_channel_id === "string" && dbSecrets.approval_channel_id.length > 0,
-    alertChannelId: typeof dbSecrets.alert_channel_id === "string" && dbSecrets.alert_channel_id.length > 0
+    alertChannelId: typeof dbSecrets.alert_channel_id === "string" && dbSecrets.alert_channel_id.length > 0,
+    intakeChannelId: typeof dbSecrets.intake_channel_id === "string" && dbSecrets.intake_channel_id.length > 0
   };
   const sp = searchParams ? await searchParams : {};
 
@@ -86,6 +87,12 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">DB intake_channel_id</p>
+          <p className={dbStatus.intakeChannelId ? "text-emerald-700" : "text-amber-700"}>
+            {dbStatus.intakeChannelId ? "設定済み" : "未設定（approval_channel_idにフォールバック）"}
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
           <p className="font-medium">Envフォールバック状態</p>
           <p
             className={
@@ -103,6 +110,12 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           <p className="font-medium">Env alert channel</p>
           <p className={envStatus.alertChannelId ? "text-emerald-700" : "text-amber-700"}>
             {envStatus.alertChannelId ? "設定済み" : "未設定（approval channelへフォールバック）"}
+          </p>
+        </div>
+        <div className="rounded-md border border-slate-200 p-3 text-sm">
+          <p className="font-medium">Env intake channel</p>
+          <p className={envStatus.intakeChannelId ? "text-emerald-700" : "text-amber-700"}>
+            {envStatus.intakeChannelId ? "設定済み" : "未設定（approval channelへフォールバック）"}
           </p>
         </div>
       </div>
@@ -148,6 +161,12 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           placeholder="運用アラート通知先channel_id（任意）"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
+        <input
+          type="text"
+          name="intake_channel_id"
+          placeholder="タスク取り込み対象channel_id（任意）"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+        />
         <div>
           <button
             type="submit"
@@ -162,8 +181,11 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
         <p className="font-medium text-slate-900">設定手順</p>
         <ol className="mt-2 list-decimal space-y-1 pl-5">
           <li>Slackアプリを作成し、Interactivityを有効化します。</li>
+          <li>Event Subscriptionsを有効化し、Request URL を `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/events` に設定します。</li>
           <li>Request URL を `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/actions` に設定します。</li>
+          <li>Bot scopes は最低 `chat:write`, `app_mentions:read`, `channels:history`, `groups:history`, `im:history` を付与します。</li>
           <li>ワークスペースへアプリをインストールし、この画面で bot token/signing secret/channel を保存します。</li>
+          <li>`intake_channel_id` 未設定時は `approval_channel_id` を取り込み対象として扱います。</li>
           <li>DBコネクタ未設定時は env 変数をフォールバックとして使用します。</li>
         </ol>
       </div>

@@ -613,3 +613,12 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 高リスク金融操作の完全自律化（銀行書込など）は即時目標にせず、L3/L4の risk/trust/budget + SoD 統制成熟後に段階導入する。
 - Why: 現行MVPの安全原則（approval-first, policy-first）と矛盾する先行自動化を避けるため。
+
+- Decision: Slack Events API (`/api/slack/events`) を追加し、`app_mention` / `message` から `tasks` を自動起票する intake 導線を実装した。
+- Why: 手動入力中心のL0運用から、イベント起点でAIが仕事を受け取る能動型運用へ段階的に移行するため。
+
+- Decision: Slackイベント重複配信対策として `slack_event_receipts` テーブルを追加し、`event_id` unique による冪等受信を導入した。
+- Why: Slack再送やネットワーク揺らぎ時の重複タスク起票を防ぎ、監査可能な受信履歴を保持するため。
+
+- Decision: Slack intake の org 解決は `connector_accounts(provider='slack', external_account_id=team_id)` を優先し、env-only 運用時は `SLACK_DEFAULT_ORG_ID` をフォールバックにした。
+- Why: マルチテナント分離を維持しつつ、ローカル/移行期の単一テナント運用も止めないため。
