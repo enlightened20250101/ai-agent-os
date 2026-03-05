@@ -7,3 +7,6 @@ coverage
 tsconfig.tsbuildinfo
 playwright-report
 test-results
+
+.DS_Store
+**/.DS_Store
