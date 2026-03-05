@@ -109,7 +109,9 @@ export default async function AppHomePage() {
   const supabase = await createClient();
 
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes] = await Promise.all([
+  const staleApprovalHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
+  const staleApprovalCutoffIso = new Date(Date.now() - staleApprovalHours * 60 * 60 * 1000).toISOString();
+  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes, proposalsRes] = await Promise.all([
     supabase
       .from("tasks")
       .select("id, status, created_at")
@@ -143,7 +145,13 @@ export default async function AppHomePage() {
       .eq("org_id", orgId)
       .in("event_type", ["GOVERNANCE_RECOMMENDATIONS_REVIEWED", "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED"])
       .order("created_at", { ascending: false })
-      .limit(10)
+      .limit(10),
+    supabase
+      .from("task_proposals")
+      .select("id, status, policy_status, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(500)
   ]);
 
   if (tasksRes.error) {
@@ -172,6 +180,13 @@ export default async function AppHomePage() {
   if (reviewEventsRes.error) {
     throw new Error(`Failed to load governance review metrics: ${reviewEventsRes.error.message}`);
   }
+  if (
+    proposalsRes.error &&
+    !proposalsRes.error.message.includes('relation "task_proposals" does not exist') &&
+    !proposalsRes.error.message.includes("Could not find the table 'public.task_proposals'")
+  ) {
+    throw new Error(`Failed to load proposal metrics: ${proposalsRes.error.message}`);
+  }
 
   const tasks = tasksRes.data ?? [];
   const approvals = approvalsRes.data ?? [];
@@ -179,6 +194,7 @@ export default async function AppHomePage() {
   const openIncidents = incidentsRes.data ?? [];
   const plannerRuns = plannerRunsRes.data ?? [];
   const reviewEvents = reviewEventsRes.data ?? [];
+  const proposals = proposalsRes.data ?? [];
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
   const taskStatusCounts = new Map<string, number>();
@@ -189,9 +205,20 @@ export default async function AppHomePage() {
 
   const maxTaskCount = Math.max(1, ...Array.from(taskStatusCounts.values()));
   const pendingApprovals = approvals.filter((row) => row.status === "pending").length;
+  const stalePendingApprovals = approvals.filter(
+    (row) => row.status === "pending" && typeof row.created_at === "string" && row.created_at < staleApprovalCutoffIso
+  ).length;
   const rejectedApprovals = approvals.filter((row) => row.status === "rejected").length;
   const executedActions = actions.filter((row) => row.status === "success").length;
   const failedActions = actions.filter((row) => row.status === "failed").length;
+  const failedActions24h = actions.filter(
+    (row) =>
+      row.status === "failed" &&
+      typeof row.created_at === "string" &&
+      row.created_at >= new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  ).length;
+  const blockedProposals = proposals.filter((row) => row.policy_status === "block" && row.status === "proposed").length;
+  const pendingProposals = proposals.filter((row) => row.status === "proposed").length;
   const actionSuccessRate =
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
@@ -322,6 +349,43 @@ export default async function AppHomePage() {
           </p>
         </Link>
       </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">優先対応キュー</h2>
+          <span className="text-xs text-slate-500">緊急度の高いものを先頭表示</span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Link
+            href="/app/approvals"
+            className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p className={`text-xs ${stalePendingApprovals > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留承認 ({staleApprovalHours}h+)</p>
+            <p className={`mt-1 text-xl font-semibold ${stalePendingApprovals > 0 ? "text-rose-900" : "text-slate-900"}`}>{stalePendingApprovals}</p>
+          </Link>
+          <Link
+            href="/app/operations/exceptions"
+            className={`rounded-lg border p-3 ${failedActions24h > 0 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p className={`text-xs ${failedActions24h > 0 ? "text-amber-700" : "text-slate-600"}`}>24h 失敗アクション</p>
+            <p className={`mt-1 text-xl font-semibold ${failedActions24h > 0 ? "text-amber-900" : "text-slate-900"}`}>{failedActions24h}</p>
+          </Link>
+          <Link
+            href="/app/proposals?status=proposed&policy_status=block"
+            className={`rounded-lg border p-3 ${blockedProposals > 0 ? "border-fuchsia-300 bg-fuchsia-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p className={`text-xs ${blockedProposals > 0 ? "text-fuchsia-700" : "text-slate-600"}`}>block 提案</p>
+            <p className={`mt-1 text-xl font-semibold ${blockedProposals > 0 ? "text-fuchsia-900" : "text-slate-900"}`}>{blockedProposals}</p>
+          </Link>
+          <Link
+            href="/app/proposals?status=proposed"
+            className={`rounded-lg border p-3 ${pendingProposals > 0 ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p className={`text-xs ${pendingProposals > 0 ? "text-sky-700" : "text-slate-600"}`}>未判断提案</p>
+            <p className={`mt-1 text-xl font-semibold ${pendingProposals > 0 ? "text-sky-900" : "text-slate-900"}`}>{pendingProposals}</p>
+          </Link>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">

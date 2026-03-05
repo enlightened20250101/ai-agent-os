@@ -634,3 +634,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/tasks` に流入ソース（manual/slack/proposal/system）判定とフィルタを追加し、Slack intake由来タスクを即時抽出できるようにした。
 - Why: 自動取り込み運用で「どこから来たタスクか」を可視化し、監視・優先対応・改善分析をしやすくするため。
+
+- Decision: `/app` に「優先対応キュー」カードを追加し、滞留承認・24h失敗アクション・block提案・未判断提案を緊急色で可視化した。
+- Why: 運用者が最初に手を付けるべき詰まりを1画面で把握し、例外処理中心の運用を加速するため。
