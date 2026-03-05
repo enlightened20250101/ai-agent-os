@@ -831,3 +831,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` に `skip_reason` フィルタを追加し、トップのチャットヘルスカードから `skip_reason=<cause>` 付きで直接遷移する導線を実装した。
 - Why: 原因別トリアージ画面へ1クリックで到達できるようにし、分析開始までの時間を短縮するため。
+
+- Decision: `/app/chat/audit` の `skip_reason` 集計チップと行バッジをクリック可能にし、その場で同原因フィルタへ切り替えられるUIにした。
+- Why: フィルタ操作を最小化し、一覧確認中のドリルダウン速度を上げるため。

@@ -43,6 +43,21 @@ function skipReasonClass() {
   return "border-amber-300 bg-amber-50 text-amber-800";
 }
 
+function buildAuditFilterHref(params: {
+  status: string;
+  scope: string;
+  intent: string;
+  skipReason?: string | null;
+}) {
+  const search = new URLSearchParams();
+  if (params.status && params.status !== "all") search.set("status", params.status);
+  if (params.scope && params.scope !== "all") search.set("scope", params.scope);
+  if (params.intent && params.intent !== "all") search.set("intent", params.intent);
+  if (params.skipReason && params.skipReason !== "all") search.set("skip_reason", params.skipReason);
+  const query = search.toString();
+  return query.length > 0 ? `/app/chat/audit?${query}` : "/app/chat/audit";
+}
+
 function recommendationForSkipReason(reason: string) {
   if (reason === "approval_not_pending") {
     return {
@@ -282,9 +297,18 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         {topSkipReasons.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {topSkipReasons.map(([reason, count]) => (
-              <span key={reason} className="rounded-full border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800">
+              <Link
+                key={reason}
+                href={buildAuditFilterHref({
+                  status: statusFilter,
+                  scope: scopeFilter,
+                  intent: intentFilter,
+                  skipReason: reason
+                })}
+                className="rounded-full border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+              >
                 {reason}: {count}
-              </span>
+              </Link>
             ))}
           </div>
         ) : (
@@ -429,7 +453,17 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                     {intent?.intentType ?? "intent"}
                   </span>
                   {skipped && skipReason ? (
-                    <span className={`rounded-full border px-2 py-0.5 ${skipReasonClass()}`}>{skipReasonLabel(skipReason)}</span>
+                    <Link
+                      href={buildAuditFilterHref({
+                        status: statusFilter,
+                        scope: scopeFilter,
+                        intent: intentFilter,
+                        skipReason
+                      })}
+                      className={`rounded-full border px-2 py-0.5 hover:bg-amber-100 ${skipReasonClass()}`}
+                    >
+                      {skipReasonLabel(skipReason)}
+                    </Link>
                   ) : null}
                   {quickIndex && quickAction ? (
                     <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
