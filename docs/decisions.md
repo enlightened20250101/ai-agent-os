@@ -1002,3 +1002,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `createWorkflowTemplate` は成功時に `?ok=` 付きで `/app/workflows` へリダイレクトする。
 - Why: 作成直後の成功フィードバックを明示し、操作完了を即時に伝えるため。
+
+- Decision: `governance` 系の主要更新画面（`autonomy`, `budgets`, `incidents`, `recommendations`）に `ConfirmSubmitButton` と `StatusNotice` を適用し、結果表示と安全操作を統一した。
+- Why: 設定変更・インシデント操作・改善アクション適用は影響範囲が大きいため、確認と二重送信防止を標準化するため。
+
+- Decision: `/app/integrations/slack` の保存・テスト送信操作を `ConfirmSubmitButton` 化し、`StatusNotice` に統一した。
+- Why: 外部通知への実送信操作は誤操作コストが高いため、確認付き実行を既定化するため。

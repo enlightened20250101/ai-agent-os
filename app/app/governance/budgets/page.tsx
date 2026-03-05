@@ -1,3 +1,5 @@
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 import { saveDailySendEmailLimit } from "@/app/app/governance/budgets/actions";
@@ -58,16 +60,7 @@ export default async function BudgetsPage({ searchParams }: BudgetsPageProps) {
         </p>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <div>
         <h2 className="text-base font-semibold">設定済み上限</h2>
@@ -85,9 +78,12 @@ export default async function BudgetsPage({ searchParams }: BudgetsPageProps) {
               className="w-52 rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
-          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white">
-            上限を保存
-          </button>
+          <ConfirmSubmitButton
+            label="上限を保存"
+            pendingLabel="保存中..."
+            confirmMessage="Google send_email の日次上限を更新します。実行しますか？"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white"
+          />
         </form>
         {limits.length === 0 ? (
           <p className="mt-2 text-sm text-slate-600">上限は未設定です（デフォルト値で評価されます）。</p>

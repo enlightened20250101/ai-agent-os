@@ -1,3 +1,5 @@
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { saveAutonomySettings } from "@/app/app/governance/autonomy/actions";
 import { getGovernanceSettings } from "@/lib/governance/evaluate";
 import { requireOrgContext } from "@/lib/org/context";
@@ -24,16 +26,7 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
         </p>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <form action={saveAutonomySettings} className="space-y-4">
         <div>
@@ -109,9 +102,12 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
           </div>
         </div>
 
-        <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800">
-          設定を保存
-        </button>
+        <ConfirmSubmitButton
+          label="設定を保存"
+          pendingLabel="保存中..."
+          confirmMessage="自律実行設定を更新します。実行しますか？"
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+        />
       </form>
 
       <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">

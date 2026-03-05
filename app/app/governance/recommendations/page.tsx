@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { applyRecommendationAction, runRecommendationsReviewNow } from "@/app/app/governance/recommendations/actions";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
@@ -172,25 +174,16 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
           組織コンテキスト: {orgId}
         </p>
         <form action={runRecommendationsReviewNow} className="mt-3">
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            label="今すぐ再評価"
+            pendingLabel="再評価中..."
+            confirmMessage="改善提案レビューを即時実行します。よろしいですか？"
             className="inline-flex rounded-md border border-white/30 bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20"
-          >
-            今すぐ再評価
-          </button>
+          />
         </form>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
       {sp.retry_action_kind && sp.retry_recommendation_id ? (
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <h2 className="text-sm font-semibold text-amber-900">失敗したアクションの再試行</h2>
@@ -207,12 +200,12 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                 自動実行を停止することを理解しました
               </label>
             ) : null}
-            <button
-              type="submit"
+            <ConfirmSubmitButton
+              label="失敗したアクションを再試行"
+              pendingLabel="再試行中..."
+              confirmMessage="失敗した改善アクションを再試行します。実行しますか？"
               className="inline-flex rounded-md border border-amber-400 bg-white px-3 py-2 text-sm text-amber-800 hover:bg-amber-100"
-            >
-              失敗したアクションを再試行
-            </button>
+            />
           </form>
         </section>
       ) : null}
@@ -331,12 +324,12 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                       自動実行を停止することを理解しました
                     </label>
                   ) : null}
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    label={item.automation.label}
+                    pendingLabel="適用中..."
+                    confirmMessage={`改善アクション（${item.automation.kind}）を適用します。実行しますか？`}
                     className="inline-flex rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
-                  >
-                    {item.automation.label}
-                  </button>
+                  />
                 </form>
               ) : null}
             </li>

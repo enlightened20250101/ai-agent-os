@@ -3,6 +3,8 @@ import {
   sendSlackOpsAlertTestMessage,
   sendSlackTestMessage
 } from "@/app/app/integrations/slack/actions";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { getConnectorAccount } from "@/lib/connectors/getConnectorAccount";
 import { getSlackEnvStatus } from "@/lib/connectors/runtime";
 import { requireOrgContext } from "@/lib/org/context";
@@ -40,16 +42,7 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
         </p>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border border-slate-200 p-3 text-sm">
@@ -168,12 +161,12 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <div>
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            label="コネクタを保存"
+            pendingLabel="保存中..."
+            confirmMessage="この内容でSlackコネクタ設定を保存します。実行しますか？"
             className="rounded-md bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
-          >
-            コネクタを保存
-          </button>
+          />
         </div>
       </form>
 
@@ -192,22 +185,22 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
 
       <form action={sendSlackTestMessage}>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            label="承認チャネル テスト送信"
+            pendingLabel="送信中..."
+            confirmMessage="承認チャネルへテストメッセージを送信します。実行しますか？"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
-          >
-            承認チャネル テスト送信
-          </button>
+          />
         </div>
       </form>
 
       <form action={sendSlackOpsAlertTestMessage}>
-        <button
-          type="submit"
+        <ConfirmSubmitButton
+          label="Opsアラート テスト送信"
+          pendingLabel="送信中..."
+          confirmMessage="Opsアラートチャネルへテスト送信します。実行しますか？"
           className="rounded-md bg-indigo-700 px-4 py-2 text-sm text-white hover:bg-indigo-600"
-        >
-          Opsアラート テスト送信
-        </button>
+        />
       </form>
     </section>
   );

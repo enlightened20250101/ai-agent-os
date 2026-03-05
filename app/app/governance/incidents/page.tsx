@@ -1,3 +1,5 @@
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { declareIncident, resolveIncident } from "@/app/app/governance/incidents/actions";
 import { listOpenIncidents } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
@@ -25,16 +27,7 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
         </p>
       </div>
 
-      {sp.ok ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {sp.ok}
-        </p>
-      ) : null}
-      {sp.error ? (
-        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {sp.error}
-        </p>
-      ) : null}
+      <StatusNotice ok={sp.ok} error={sp.error} />
 
       <div className="rounded-md border border-slate-200 p-4">
         <h2 className="text-base font-semibold">インシデントを宣言</h2>
@@ -67,9 +60,12 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
-          <button type="submit" className="rounded-md bg-rose-700 px-4 py-2 text-sm text-white hover:bg-rose-600">
-            インシデント宣言
-          </button>
+          <ConfirmSubmitButton
+            label="インシデント宣言"
+            pendingLabel="宣言中..."
+            confirmMessage="インシデントを宣言し、自動実行を制限します。実行しますか？"
+            className="rounded-md bg-rose-700 px-4 py-2 text-sm text-white hover:bg-rose-600"
+          />
         </form>
       </div>
 
@@ -87,12 +83,12 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
                 <p className="mt-1 text-rose-700">opened_at: {new Date(incident.opened_at).toLocaleString()}</p>
                 <form action={resolveIncident} className="mt-3">
                   <input type="hidden" name="incident_id" value={incident.id} />
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    label="解決済みにする"
+                    pendingLabel="更新中..."
+                    confirmMessage="このインシデントを解決済みに更新します。実行しますか？"
                     className="rounded-md border border-rose-300 bg-white px-3 py-2 text-sm text-rose-700 hover:bg-rose-100"
-                  >
-                    解決済みにする
-                  </button>
+                  />
                 </form>
               </li>
             ))}
@@ -102,4 +98,3 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
     </section>
   );
 }
-
