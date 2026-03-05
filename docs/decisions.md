@@ -622,3 +622,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Slack intake の org 解決は `connector_accounts(provider='slack', external_account_id=team_id)` を優先し、env-only 運用時は `SLACK_DEFAULT_ORG_ID` をフォールバックにした。
 - Why: マルチテナント分離を維持しつつ、ローカル/移行期の単一テナント運用も止めないため。
+
+- Decision: `/app/proposals` に判断理由コード（decision_reason taxonomy）を導入し、受け入れ/却下時に `decision_reason` を `code[:note]` 形式で保存するようにした。
+- Why: 提案品質の振り返りを自由入力テキストに依存させず、再現性のある運用メトリクスを残すため。
+
+- Decision: 提案一覧に `decision_reason_prefix` フィルタと判断理由サマリ表示を追加した。
+- Why: どの理由で採否されているかを運用画面で即時に把握し、planner改善の優先度付けをしやすくするため。

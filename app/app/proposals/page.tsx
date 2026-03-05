@@ -10,6 +10,7 @@ type ProposalsPageProps = {
     status?: string;
     policy_status?: string;
     min_priority?: string;
+    decision_reason_prefix?: string;
     ok?: string;
     error?: string;
   }>;
@@ -33,6 +34,12 @@ function isMissingColumnError(message: string, columnName: string) {
   );
 }
 
+function decisionReasonPrefix(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) return "unspecified";
+  const idx = value.indexOf(":");
+  return (idx >= 0 ? value.slice(0, idx) : value).trim() || "unspecified";
+}
+
 export default async function ProposalsPage({ searchParams }: ProposalsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -41,7 +48,7 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
   let query = supabase
     .from("task_proposals")
     .select(
-      "id, source, title, rationale, proposed_actions_json, risks_json, policy_status, policy_reasons, priority_score, estimated_impact_json, status, created_at, decided_at"
+      "id, source, title, rationale, proposed_actions_json, risks_json, policy_status, policy_reasons, priority_score, estimated_impact_json, status, decision_reason, created_at, decided_at"
     )
     .eq("org_id", orgId)
     .order("priority_score", { ascending: false })
@@ -86,13 +93,45 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
     proposals = (fallback.data ?? []).map((row) => ({
       ...row,
       priority_score: 0,
-      estimated_impact_json: {}
+      estimated_impact_json: {},
+      decision_reason: null
     }));
     error = fallback.error;
+  }
+  if (sp.decision_reason_prefix && sp.decision_reason_prefix !== "all") {
+    proposals = (proposals ?? []).filter(
+      (proposal) => decisionReasonPrefix(proposal.decision_reason) === sp.decision_reason_prefix
+    );
   }
   if (error) {
     throw new Error(`Failed to load proposals: ${error.message}`);
   }
+
+  const proposalRows = proposals ?? [];
+  const statusCounts = new Map<string, number>();
+  const reasonCounts = new Map<string, number>();
+  const policyCounts = new Map<string, number>();
+  for (const row of proposalRows) {
+    const status = String(row.status ?? "unknown");
+    const policy = String(row.policy_status ?? "unknown");
+    statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1);
+    policyCounts.set(policy, (policyCounts.get(policy) ?? 0) + 1);
+    if (status === "rejected" || status === "accepted") {
+      const key = decisionReasonPrefix(row.decision_reason);
+      reasonCounts.set(key, (reasonCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const reasonOptions = [
+    "accepted_low_risk",
+    "accepted_manual",
+    "accepted_after_review",
+    "rejected_low_value",
+    "rejected_policy",
+    "rejected_duplicate",
+    "rejected_scope",
+    "rejected_other",
+    "unspecified"
+  ];
 
   return (
     <section className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -156,14 +195,65 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             <option value="80">80以上</option>
           </select>
         </label>
+        <label className="flex items-center gap-2">
+          判断理由
+          <select
+            name="decision_reason_prefix"
+            defaultValue={sp.decision_reason_prefix ?? "all"}
+            className="rounded-md border border-slate-300 px-2 py-1"
+          >
+            <option value="all">すべて</option>
+            {reasonOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
         <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-white">
           適用
         </button>
       </form>
 
-      {proposals && proposals.length > 0 ? (
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+          <p className="text-slate-600">提案中</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{statusCounts.get("proposed") ?? 0}</p>
+        </div>
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm">
+          <p className="text-emerald-700">受け入れ済み</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900">{statusCounts.get("accepted") ?? 0}</p>
+        </div>
+        <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm">
+          <p className="text-rose-700">却下済み</p>
+          <p className="mt-1 text-2xl font-semibold text-rose-900">{statusCounts.get("rejected") ?? 0}</p>
+        </div>
+      </div>
+      <div className="rounded-md border border-slate-200 bg-white p-3 text-sm">
+        <p className="font-medium text-slate-900">判断理由サマリ</p>
+        {Array.from(reasonCounts.entries()).length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {Array.from(reasonCounts.entries())
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 8)
+              .map(([reason, count]) => (
+                <span key={reason} className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs">
+                  {reason}: {count}
+                </span>
+              ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">まだ判断理由データがありません。</p>
+        )}
+        <p className="mt-2 text-xs text-slate-500">
+          policy pass/warn/block: {policyCounts.get("pass") ?? 0}/{policyCounts.get("warn") ?? 0}/
+          {policyCounts.get("block") ?? 0}
+        </p>
+      </div>
+
+      {proposalRows.length > 0 ? (
         <ul className="space-y-3">
-          {proposals.map((proposal) => {
+          {proposalRows.map((proposal) => {
             const actions = parseActions(proposal.proposed_actions_json);
             const risks = parseStringList(proposal.risks_json);
             const reasons = parseStringList(proposal.policy_reasons);
@@ -219,11 +309,23 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                 <p className="mt-2 text-xs text-slate-500">
                   作成日時: {new Date(proposal.created_at as string).toLocaleString()}
                 </p>
+                {proposal.decision_reason ? (
+                  <p className="mt-1 text-xs text-slate-500">判断理由: {String(proposal.decision_reason)}</p>
+                ) : null}
 
                 {proposal.status === "proposed" ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <form action={acceptProposal}>
                       <input type="hidden" name="proposal_id" value={proposal.id as string} />
+                      <select
+                        name="decision_reason_code"
+                        className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        defaultValue="accepted_manual"
+                      >
+                        <option value="accepted_manual">accepted_manual</option>
+                        <option value="accepted_after_review">accepted_after_review</option>
+                        <option value="accepted_low_risk">accepted_low_risk</option>
+                      </select>
                       <button
                         type="submit"
                         disabled={!canAccept}
@@ -234,10 +336,21 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                     </form>
                     <form action={rejectProposal} className="flex items-center gap-2">
                       <input type="hidden" name="proposal_id" value={proposal.id as string} />
+                      <select
+                        name="decision_reason_code"
+                        className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        defaultValue="rejected_other"
+                      >
+                        <option value="rejected_other">rejected_other</option>
+                        <option value="rejected_policy">rejected_policy</option>
+                        <option value="rejected_low_value">rejected_low_value</option>
+                        <option value="rejected_duplicate">rejected_duplicate</option>
+                        <option value="rejected_scope">rejected_scope</option>
+                      </select>
                       <input
                         type="text"
-                        name="reason"
-                        placeholder="却下理由"
+                        name="reason_note"
+                        placeholder="補足メモ（任意）"
                         className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                       />
                       <button

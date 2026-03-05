@@ -14,6 +14,18 @@ function toOk(message: string) {
   return `/app/proposals?ok=${encodeURIComponent(message)}`;
 }
 
+function normalizeReasonCode(raw: string) {
+  const value = raw.trim();
+  if (!value) return "";
+  return value.replace(/[^a-z0-9_:-]/gi, "_").slice(0, 64);
+}
+
+function composeDecisionReason(codeRaw: string, noteRaw: string) {
+  const code = normalizeReasonCode(codeRaw) || "unspecified";
+  const note = noteRaw.trim().replace(/\s+/g, " ").slice(0, 180);
+  return note ? `${code}:${note}` : code;
+}
+
 function parseProposalDraft(payload: unknown): {
   proposedActions: ProposalAction[];
   risks: string[];
@@ -70,6 +82,8 @@ function isMissingColumnError(message: string, columnName: string) {
 
 export async function acceptProposal(formData: FormData) {
   const proposalId = String(formData.get("proposal_id") ?? "").trim();
+  const decisionReasonCode = String(formData.get("decision_reason_code") ?? "").trim();
+  const decisionReason = composeDecisionReason(decisionReasonCode || "accepted_manual", "");
   if (!proposalId) {
     redirect(toError("proposal_id がありません。"));
   }
@@ -209,7 +223,7 @@ export async function acceptProposal(formData: FormData) {
       status: "accepted",
       decided_at: nowIso,
       decided_by: userId,
-      decision_reason: "accepted_via_ui"
+      decision_reason: decisionReason
     })
     .eq("id", proposalId)
     .eq("org_id", orgId);
@@ -236,7 +250,8 @@ export async function acceptProposal(formData: FormData) {
     payload_json: {
       task_id: createdTask.id,
       decided_by: userId,
-      decision_reason: "accepted_via_ui"
+      decision_reason: decisionReason,
+      decision_reason_code: decisionReason.split(":")[0]
     }
   });
   if (proposalEventError) {
@@ -251,7 +266,9 @@ export async function acceptProposal(formData: FormData) {
 
 export async function rejectProposal(formData: FormData) {
   const proposalId = String(formData.get("proposal_id") ?? "").trim();
-  const reason = String(formData.get("reason") ?? "").trim();
+  const reasonCodeRaw = String(formData.get("decision_reason_code") ?? "").trim();
+  const reasonNote = String(formData.get("reason_note") ?? "").trim();
+  const reason = composeDecisionReason(reasonCodeRaw || "rejected_other", reasonNote);
   if (!proposalId) {
     redirect(toError("proposal_id がありません。"));
   }
@@ -295,7 +312,9 @@ export async function rejectProposal(formData: FormData) {
     payload_json: {
       reason: reason || null,
       decided_by: userId,
-      decision_reason: reason || "rejected_via_ui"
+      decision_reason: reason || "rejected_via_ui",
+      decision_reason_code: reason.split(":")[0],
+      decision_reason_note: reason.includes(":") ? reason.slice(reason.indexOf(":") + 1) : null
     }
   });
   if (eventError) {
