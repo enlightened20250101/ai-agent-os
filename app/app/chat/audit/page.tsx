@@ -485,9 +485,17 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         <span className="font-semibold text-slate-900">{totalLast7dCount}</span>
         <span className="mx-2 text-slate-300">|</span>
         比率:{" "}
-        <span className={`rounded-full border px-2 py-0.5 font-semibold ${ratioClass} ${ratioBadgeClass}`}>
+        <Link
+          href={buildAuditFilterHref({
+            status: "failed",
+            scope: scopeFilter,
+            intent: intentFilter,
+            skipReason: skipReasonFilter
+          })}
+          className={`rounded-full border px-2 py-0.5 font-semibold hover:brightness-95 ${ratioClass} ${ratioBadgeClass}`}
+        >
           {filteredLast7dRatio}%
-        </span>
+        </Link>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span>この条件で開く:</span>

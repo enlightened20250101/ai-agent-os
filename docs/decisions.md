@@ -873,3 +873,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `直近7日 filtered比率` は閾値（50%/80%）で色分けし、高比率時は警戒色で表示する。
 - Why: 異常傾向の視認性を高め、優先調査対象を即判定できるようにするため。
+
+- Decision: 件数サマリの比率バッジをクリックすると `status=failed` に絞り込む導線を追加し、現在の他フィルタ文脈は維持する。
+- Why: 異常比率を見つけた直後に失敗コマンド一覧へ遷移できるようにし、初動を短縮するため。
