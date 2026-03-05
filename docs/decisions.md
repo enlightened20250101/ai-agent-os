@@ -825,3 +825,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `skip_reason` の最多原因に対して `/app/chat/audit` 上で「推奨アクション」カードを自動表示し、対応ページへの導線を付与する。
 - Why: 原因把握から次手の実行までの判断コストを減らし、運用改善の実行速度を上げるため。
+
+- Decision: `/app` トップの優先対応キューに「チャット skip(7d)」カードを追加し、主因 `skip_reason` と推奨1手（リンク付き）を同時表示する。
+- Why: 監査画面に入る前のダッシュボード段階でチャット運用の詰まりを検知し、初動を速めるため。

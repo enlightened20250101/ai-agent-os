@@ -119,6 +119,23 @@ function consecutiveFailuresByEvent(rows: Array<{ event_type: string | null }>, 
   return count;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function skipRecommendation(reason: string | null) {
+  if (reason === "approval_not_pending") {
+    return { text: "承認待ちの先行解消が多発。承認キューを先に確認。", href: "/app/approvals", severity: "medium" as const };
+  }
+  if (reason === "approval_already_pending") {
+    return { text: "重複依頼が多発。既存pending優先に運用統一。", href: "/app/approvals", severity: "low" as const };
+  }
+  if (reason === "stale_top_candidates") {
+    return { text: "TOP候補が陳腐化。先に状況確認を再実行。", href: "/app/chat/shared", severity: "high" as const };
+  }
+  return { text: "skip要因を監査画面で確認。", href: "/app/chat/audit", severity: "low" as const };
+}
+
 export default async function AppHomePage() {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -169,7 +186,7 @@ export default async function AppHomePage() {
       .limit(500),
     supabase
       .from("chat_commands")
-      .select("id, execution_status, created_at")
+      .select("id, execution_status, created_at, result_json")
       .eq("org_id", orgId)
       .gte("created_at", sevenDaysAgoIso)
       .order("created_at", { ascending: false })
@@ -251,6 +268,18 @@ export default async function AppHomePage() {
   const pendingProposals = proposals.filter((row) => row.status === "proposed").length;
   const failedChatCommands = chatCommands.filter((row) => row.execution_status === "failed").length;
   const runningChatCommands = chatCommands.filter((row) => row.execution_status === "running").length;
+  const skippedChatCommands = chatCommands.filter((row) => asObject(row.result_json)?.skipped === true).length;
+  const skipReasonCounts = new Map<string, number>();
+  for (const row of chatCommands) {
+    const result = asObject(row.result_json);
+    if (!result || result.skipped !== true) continue;
+    const reason = typeof result.skip_reason === "string" && result.skip_reason.length > 0 ? result.skip_reason : "unknown";
+    skipReasonCounts.set(reason, (skipReasonCounts.get(reason) ?? 0) + 1);
+  }
+  const topSkipReasonEntry = Array.from(skipReasonCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? null;
+  const topSkipReason = topSkipReasonEntry?.[0] ?? null;
+  const topSkipReasonCount = topSkipReasonEntry?.[1] ?? 0;
+  const skipReco = skipRecommendation(topSkipReason);
   const actionSuccessRate =
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
@@ -388,7 +417,7 @@ export default async function AppHomePage() {
           <h2 className="text-sm font-semibold text-slate-900">優先対応キュー</h2>
           <span className="text-xs text-slate-500">緊急度の高いものを先頭表示</span>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <Link
             href="/app/approvals"
             className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
@@ -444,7 +473,31 @@ export default async function AppHomePage() {
               {failedChatCommands}
             </p>
           </Link>
+          <Link
+            href="/app/chat/audit"
+            className={`rounded-lg border p-3 ${
+              skippedChatCommands > 0
+                ? skipReco.severity === "high"
+                  ? "border-rose-300 bg-rose-50"
+                  : "border-amber-300 bg-amber-50"
+                : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <p className={`text-xs ${skippedChatCommands > 0 ? "text-amber-700" : "text-slate-600"}`}>チャット skip(7d)</p>
+            <p className={`mt-1 text-xl font-semibold ${skippedChatCommands > 0 ? "text-amber-900" : "text-slate-900"}`}>{skippedChatCommands}</p>
+            <p className="mt-1 text-[11px] text-slate-600">
+              {topSkipReason ? `${topSkipReason} (${topSkipReasonCount})` : "主因なし"}
+            </p>
+          </Link>
         </div>
+        {skippedChatCommands > 0 ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            チャット運用ヘルス: {skipReco.text}{" "}
+            <Link href={skipReco.href} className="underline">
+              対応する
+            </Link>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
