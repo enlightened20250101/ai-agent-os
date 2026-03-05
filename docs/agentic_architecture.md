@@ -18,6 +18,7 @@ This architecture extends the current MVP foundation:
   - connector webhooks (Slack, future: CRM, ticketing, ERP)
   - scheduled scans
   - internal events (policy block, failed action, stale approval)
+  - chat commands (shared workspace chat / personal chat)
   - backoffice events:
     - invoice/document arrival
     - payment/incoming funds status changes
@@ -28,6 +29,34 @@ This architecture extends the current MVP foundation:
 - `signal_sources` (catalog of enabled sources per org).
 - `signal_events` (raw normalized signal log).
 - `signal_routes` (routing rules: signal -> workflow template).
+
+## 1.5) Conversational Command Layer (Added)
+
+### Purpose
+- Make chat the primary command surface for operators.
+- Convert natural language into safe executable plans.
+
+### Components
+- Chat Gateway:
+  - receives messages from web chat UI (shared/personal).
+  - enforces org/member context and channel visibility.
+- Intent Parser:
+  - maps text to structured intents (`create_task`, `status_query`, `request_approval`, `execute_action`, etc.).
+- Plan Synthesizer:
+  - produces executable step plan and required confirmations.
+- Confirmation Manager:
+  - asks "execute this plan?" and records Yes/No with TTL.
+- Command Executor:
+  - dispatches confirmed plans to existing task/proposal/workflow/action services.
+
+### Suggested schema additions
+- `chat_sessions(id, org_id, scope, owner_user_id, title, created_at, updated_at)`
+  - `scope in ('shared','personal')`
+- `chat_messages(id, org_id, session_id, sender_type, sender_user_id, body_text, metadata_json, created_at)`
+- `chat_intents(id, org_id, message_id, intent_type, confidence, intent_json, created_at)`
+- `chat_confirmations(id, org_id, session_id, intent_id, status, expires_at, decided_by, decided_at, created_at)`
+  - `status in ('pending','confirmed','declined','expired')`
+- `chat_commands(id, org_id, session_id, intent_id, execution_status, execution_ref_type, execution_ref_id, created_at, finished_at)`
 
 ## 2) Planner
 
@@ -182,6 +211,12 @@ This architecture extends the current MVP foundation:
 ## Event Model Extensions
 
 Extend `task_events` with these types:
+- `CHAT_MESSAGE_RECEIVED`
+- `CHAT_INTENT_PARSED`
+- `CHAT_PLAN_PROPOSED`
+- `CHAT_CONFIRMATION_REQUESTED`
+- `CHAT_CONFIRMED`
+- `CHAT_DECLINED`
 - `SIGNAL_RECEIVED`
 - `WORKFLOW_STARTED`
 - `WORKFLOW_STEP_STARTED`

@@ -9,6 +9,26 @@ The default operating model is:
 
 ## End-State User Experience
 
+### Conversation-first operating model (added)
+- The primary interface is AI chat, not form-first UI.
+- Users can ask in natural language:
+  - "〇〇というタスクを追加して"
+  - "〜ってどうなってる？"
+  - "この承認待ちを進めて"
+- AI translates requests into executable plans, then asks for execution confirmation:
+  - "次の操作を実行してよいですか？"
+  - User confirms Yes/No.
+- On Yes, AI executes through the same policy/approval/action-runner gates without requiring manual button clicks.
+
+### Shared and personal chat lanes (added)
+- Shared workspace chat:
+  - org/department-wide operational conversation and commands.
+  - visible to members, used for team-level tasks/status/incident handling.
+- Personal chat:
+  - private Q&A, drafts, and personal context lookups.
+  - can still trigger org-side actions, but requires explicit confirmation and audit trail.
+- Both chat lanes produce ledgered events and can be replayed in Evidence Pack context.
+
 ### Human role
 - Define policy and autonomy boundaries per org, workflow, connector, and risk tier.
 - Review high-risk approvals and exception queues.
@@ -45,6 +65,7 @@ It does not mean unbounded control. It means bounded autonomy with measurable sa
 - Every external effect is idempotent and replay-safe.
 - Every workflow state transition is ledgered.
 - Every incident can trigger org-level safe mode.
+- Every chat-triggered command has explicit intent parsing, plan preview, and user confirmation when side effects are possible.
 
 ### Approval model in end state
 - Low risk: pre-approved by policy + budget envelope.
@@ -66,6 +87,10 @@ It does not mean unbounded control. It means bounded autonomy with measurable sa
 - Open exception task with remediation options.
 - Preserve full replay context (inputs, model output, policy result, action response).
 - Auto-fallback to lower autonomy level when threshold breaches are detected.
+- For chat failures, AI must return:
+  - what it understood
+  - which step failed
+  - safest next action (retry/manual/escalate)
 
 ## Multi-Tenant Operating Model
 - Org is the hard isolation boundary.

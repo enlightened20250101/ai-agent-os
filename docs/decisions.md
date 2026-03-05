@@ -670,3 +670,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 承認リマインドは `approval_id` 単位でクールダウン重複排除し、同一approvalへの短時間連投を防ぐ方式にした。
 - Why: 通知ノイズを抑えつつ、未対応承認への再通知だけを確実に送るため。
+
+- Decision: 理想像に「会話起点の実行モデル（shared/personal chat）」を正式追加し、自然言語コマンド -> 実行計画提示 -> Yes確認後実行を標準操作として採用する。
+- Why: フォーム/ボタン操作を最小化し、人間がチャットで業務依頼・状況照会・実行承認を行える運用に移行するため。
+
+- Decision: チャットは `shared`（組織共通）と `personal`（個人）を分離し、どちらも最終的に同一の policy/approval/action runner ガードを通す。
+- Why: 情報公開範囲の違いを扱いつつ、実行統制と監査証跡は単一の安全基準で維持するため。

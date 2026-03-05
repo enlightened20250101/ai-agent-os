@@ -8,6 +8,7 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Improve planner quality and proposal triage UX.
 - Proposal filters by reason/risk/policy status.
 - Proposal accept/reject reason taxonomy.
+- Conversational read layer (chat-based status Q&A, no side effects).
 - Backoffice trigger presets:
   - overdue approvals
   - failed executions
@@ -26,10 +27,12 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Extend `/app/proposals` with sorting/filtering/bulk actions.
 - Extend `/app/planner` with run diagnostics and input snapshot preview.
 - Add route handler `/api/planner/runs/:id` (run detail).
+- Add `/app/chat/shared` and `/app/chat/me` read-only MVP screens.
 
 ### E2E extensions
 - Verify proposal filtering and accept/reject reason persistence.
 - Verify proposal->task conversion still logs `TASK_CREATED`, `MODEL_INFERRED`, `POLICY_CHECKED`.
+- Verify chat status query returns current task/approval summary.
 
 ### Definition of done
 - Proposal acceptance rate and reject reasons visible in UI.
@@ -42,6 +45,7 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Workflow templates page (define multi-step flows).
 - Workflow run view with step-by-step status and retry actions.
 - Tasks can attach a workflow template.
+- Chat command parser + plan preview (confirmation required).
 - Add case-stage templates for backoffice:
   - intake -> reconcile -> approve -> execute -> close
 
@@ -49,15 +53,18 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Add `workflow_templates`, `workflow_runs`, `workflow_steps`.
 - Add `tasks.workflow_template_id uuid null`.
 - Add indexes for run/step status queries.
+- Add `chat_sessions`, `chat_messages`, `chat_intents`, `chat_confirmations`, `chat_commands`.
 
 ### Endpoints/pages
 - `/app/workflows` (template list/create/edit)
 - `/app/workflows/runs` and `/app/workflows/runs/[id]`
 - `/api/workflows/run` to start runs from tasks/proposals.
+- `/api/chat/message` (ingest), `/api/chat/confirm` (Yes/No), `/api/chat/execute` (dispatch confirmed command).
 
 ### E2E extensions
 - Create template -> start run -> complete step sequence with approval.
 - Failure path test: step failure creates exception state and retry works.
+- Chat: "タスクを追加して" -> plan preview -> Yes -> task created with chat lineage events.
 
 ### Definition of done
 - Deterministic workflow state machine with explicit transitions.
@@ -70,6 +77,7 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Autonomy settings page per org (`L0-L3` toggles by action type).
 - “Auto-executed” badges and rationale in task timeline.
 - Approval queue excludes policy-approved low-risk actions.
+- Chat-triggered low-risk command auto-execution under policy/trust gates.
 - Add SoD policy presets for finance ops:
   - initiator/approver separation
   - high-amount forced approval
@@ -91,6 +99,7 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Autopilot only for explicitly allowed low-risk actions.
 - Hard policy blocks still always block.
 - Budget and idempotency protections validated under retries/concurrency.
+- Chat-origin executions preserve message->intent->execution evidence chain.
 
 ## Phase 4: Multi-Step Autonomy + Exception Handling
 
