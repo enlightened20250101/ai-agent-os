@@ -861,3 +861,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `skip_reason` 推奨アクションカードのリンク先を監査画面内導線に統一し、現在の `status/scope/intent` を保持したまま `skip_reason=<top>` へ遷移する。
 - Why: フィルタ文脈を保ったまま原因深掘りできるようにし、分析の連続性を高めるため。
+
+- Decision: `/app/chat/audit` のフィルタフォーム直下に `表示件数 (filtered/total)` を表示する。
+- Why: 絞り込み条件の効き具合を即時に把握し、追加フィルタの要否を判断しやすくするため。

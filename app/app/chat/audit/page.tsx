@@ -456,6 +456,10 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           フィルタをリセット
         </Link>
       </form>
+      <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+        表示件数: <span className="font-semibold text-slate-900">{rows.length}</span> / 全件{" "}
+        <span className="font-semibold text-slate-900">{commands.length}</span>
+      </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span>この条件で開く:</span>
         <Link href={currentFilterPath} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sky-700 hover:bg-sky-50">
