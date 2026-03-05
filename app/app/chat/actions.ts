@@ -69,6 +69,45 @@ async function saveIntentConfirmation(args: {
   return { expiresAt };
 }
 
+async function assertConfirmationGuardrails(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  sessionId: string;
+}) {
+  const pendingLimit = Number(process.env.CHAT_CONFIRMATION_PENDING_LIMIT ?? "5");
+  const cooldownSeconds = Number(process.env.CHAT_CONFIRMATION_COOLDOWN_SECONDS ?? "8");
+  const limit = Number.isFinite(pendingLimit) && pendingLimit > 0 ? pendingLimit : 5;
+  const cooldown = Number.isFinite(cooldownSeconds) && cooldownSeconds >= 0 ? cooldownSeconds : 8;
+
+  const { data: pendingRows, error: pendingError } = await args.supabase
+    .from("chat_confirmations")
+    .select("id, created_at")
+    .eq("org_id", args.orgId)
+    .eq("session_id", args.sessionId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(limit + 1);
+  if (pendingError) {
+    throw new Error(`確認キューの取得に失敗しました: ${pendingError.message}`);
+  }
+
+  const rows = pendingRows ?? [];
+  if (rows.length >= limit) {
+    throw new Error(`確認待ちが上限(${limit})に達しています。先にYes/Noで処理してください。`);
+  }
+
+  const latestCreatedAt = rows[0]?.created_at;
+  if (latestCreatedAt && cooldown > 0) {
+    const latestTs = new Date(latestCreatedAt as string).getTime();
+    if (Number.isFinite(latestTs)) {
+      const deltaSec = Math.floor((Date.now() - latestTs) / 1000);
+      if (deltaSec < cooldown) {
+        throw new Error(`確認作成が短時間に連続しています。${cooldown - deltaSec}秒待って再実行してください。`);
+      }
+    }
+  }
+}
+
 async function findActiveAgentId(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -756,6 +795,11 @@ async function postMessage(scope: ChatScope, formData: FormData) {
 
   if (intent.requiresConfirmation) {
     try {
+      await assertConfirmationGuardrails({
+        supabase,
+        orgId,
+        sessionId: session.id
+      });
       const { expiresAt } = await saveIntentConfirmation({
         supabase,
         orgId,
@@ -832,6 +876,17 @@ export async function retryChatCommand(formData: FormData) {
   }
   if (command.execution_status !== "failed") {
     redirect(withError(scope, "failed のコマンドのみ再実行できます。"));
+  }
+
+  try {
+    await assertConfirmationGuardrails({
+      supabase,
+      orgId,
+      sessionId: command.session_id as string
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "再実行確認を作成できませんでした。";
+    redirect(withError(scope, message));
   }
 
   const { expiresAt } = await saveIntentConfirmation({

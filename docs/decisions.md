@@ -732,3 +732,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/chat/audit` を追加し、chat_commands を shared/personal 横断（RLS許可範囲）で status/scope/intent フィルタ可能な監査ページとして提供した。
 - Why: 会話起点の実行量が増えても、失敗トリアージと実行追跡を単一画面で行えるようにするため。
+
+- Decision: チャット確認作成にガードレールを追加し、同一セッションの pending 確認上限（既定5件）と短時間連続作成クールダウン（既定8秒）を適用した。
+- Why: ボット暴走や誤連打で確認キューが埋まる運用事故を防ぎ、オペレーターが処理可能なペースに制御するため。
