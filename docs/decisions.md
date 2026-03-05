@@ -599,6 +599,12 @@ This file records implementation decisions made without blocking on open questio
 - Decision: E2E専用に `seed-job-circuit` API を追加し、`skipped_circuit` / `skipped_dry_run` を回帰テスト可能にした。
 - Why: サーキット制御の安全ロジックが将来変更で壊れないよう、自動検証の入口を確保するため。
 
+- Decision: Playwright設定で `.env.local` / `.env.e2e(.local)` を自動読込するようにし、E2E必須環境変数の読み込み漏れを抑止した。
+- Why: CI/ローカル双方で `E2E_PASSWORD` などの不足起因の偽失敗を減らし、実フロー検証に集中するため。
+
+- Decision: Playwright実行時に `E2E_PASSWORD` / `E2E_CLEANUP_TOKEN` が未設定ならローカル用デフォルト値を注入する。
+- Why: 必須変数の未設定で全E2Eが開始直後に停止する状況を避け、回帰テストを継続実行できるようにするため。
+
 - Decision: プロダクトの理想像を「AIネイティブ業務OS（バックオフィス実行OS）」として明示し、対象業務を事務・経理・総務・購買・法務オペレーションに拡張定義した。
 - Why: 単機能自動化ではなく、業務実行・統制・監査を統合したOS価値をロードマップ全体で一貫させるため。
 
