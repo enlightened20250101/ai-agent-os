@@ -867,3 +867,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 件数サマリに `直近7日 (filtered/total)` を追加し、全期間件数と期間内件数を同時比較できるようにした。
 - Why: 一時的なスパイクと長期蓄積を切り分け、優先対応判断をしやすくするため。
+
+- Decision: 件数サマリに `直近7日 filtered比率(%)` を追加した。
+- Why: 絞り込み条件が直近運用に対してどれだけ支配的かを即座に判断できるようにするため。

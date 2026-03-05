@@ -259,6 +259,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     const createdAtMs = new Date(row.created_at).getTime();
     return Number.isFinite(createdAtMs) && createdAtMs >= sevenDaysAgoMs;
   }).length;
+  const filteredLast7dRatio = totalLast7dCount > 0 ? Math.round((filteredLast7dCount / totalLast7dCount) * 100) : 0;
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -470,6 +471,8 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         <span className="mx-2 text-slate-300">|</span>
         直近7日: <span className="font-semibold text-slate-900">{filteredLast7dCount}</span> /{" "}
         <span className="font-semibold text-slate-900">{totalLast7dCount}</span>
+        <span className="mx-2 text-slate-300">|</span>
+        比率: <span className="font-semibold text-slate-900">{filteredLast7dRatio}%</span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span>この条件で開く:</span>
