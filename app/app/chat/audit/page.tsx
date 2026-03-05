@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { retryChatCommand } from "@/app/app/chat/actions";
+import { expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 type AuditPageProps = {
-  searchParams?: Promise<{ status?: string; scope?: string; intent?: string }>;
+  searchParams?: Promise<{ status?: string; scope?: string; intent?: string; ok?: string; error?: string }>;
 };
 
 type CommandRow = {
@@ -58,6 +58,21 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   if (commandsError) {
     throw new Error(`Failed to load chat command logs: ${commandsError.message}`);
   }
+
+  const nowIso = new Date().toISOString();
+  const [{ count: pendingConfirmations }, { count: overdueConfirmations }] = await Promise.all([
+    supabase
+      .from("chat_confirmations")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("status", "pending"),
+    supabase
+      .from("chat_confirmations")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("status", "pending")
+      .lt("expires_at", nowIso)
+  ]);
 
   const commands = (commandsData ?? []) as CommandRow[];
   const sessionIds = Array.from(new Set(commands.map((row) => row.session_id)));
@@ -141,6 +156,13 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">
+          <form action={expireStaleChatConfirmations}>
+            <input type="hidden" name="scope" value="shared" />
+            <input type="hidden" name="return_to" value="/app/chat/audit" />
+            <button type="submit" className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800">
+              期限切れ確認を整理
+            </button>
+          </form>
           <Link href="/app/chat/shared" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700">
             共有チャット
           </Link>
@@ -149,6 +171,13 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           </Link>
         </div>
       </header>
+
+      {sp.error ? (
+        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{sp.error}</p>
+      ) : null}
+      {sp.ok ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{sp.ok}</p>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-4">
         <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm">
@@ -166,6 +195,23 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
           <p className="text-amber-700">pending</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{statusCount.pending}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+          <p className="text-slate-600">確認待ち (all sessions)</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{pendingConfirmations ?? 0}</p>
+        </div>
+        <div
+          className={`rounded-md border p-3 text-sm ${
+            (overdueConfirmations ?? 0) > 0 ? "border-rose-300 bg-rose-50" : "border-emerald-200 bg-emerald-50"
+          }`}
+        >
+          <p className={(overdueConfirmations ?? 0) > 0 ? "text-rose-700" : "text-emerald-700"}>期限切れ pending</p>
+          <p className={`mt-1 text-2xl font-semibold ${(overdueConfirmations ?? 0) > 0 ? "text-rose-900" : "text-emerald-900"}`}>
+            {overdueConfirmations ?? 0}
+          </p>
         </div>
       </div>
 
@@ -251,6 +297,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                   <form action={retryChatCommand} className="mt-2">
                     <input type="hidden" name="command_id" value={row.id} />
                     <input type="hidden" name="scope" value={session?.scope === "personal" ? "personal" : "shared"} />
+                    <input type="hidden" name="return_to" value="/app/chat/audit" />
                     <button
                       type="submit"
                       className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"

@@ -741,3 +741,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` の優先対応キューに「チャット失敗(7d)」メトリクスを追加し、`/app/chat/audit?status=failed` へ遷移できるようにした。
 - Why: 会話起点運用の増加に合わせて、チャット実行失敗をトップ画面から即時検知・対処できるようにするため。
+
+- Decision: `retryChatCommand` に `return_to` を追加し、監査ページ起点の再実行時は `/app/chat/audit` へ結果を戻すようにした。
+- Why: トリアージ中の画面遷移を最小化し、失敗対応オペレーションを中断させないため。
+
+- Decision: `/app/chat/audit` で pending/overdue confirmations を可視化し、`期限切れ確認を整理` を実行可能にした。
+- Why: 実行確認キューの滞留を監査画面から直接解消できるようにし、確認フローの健全性を維持するため。

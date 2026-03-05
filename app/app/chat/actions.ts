@@ -850,12 +850,66 @@ export async function postPersonalMessage(formData: FormData) {
   return postMessage("personal", formData);
 }
 
+export async function expireStaleChatConfirmations(formData: FormData) {
+  const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+  const returnTo = String(formData.get("return_to") ?? "").trim();
+  const redirectPath = returnTo || pathForScope(scope);
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const nowIso = new Date().toISOString();
+
+  const { data: expiredRows, error: updateError } = await supabase
+    .from("chat_confirmations")
+    .update({
+      status: "expired",
+      decided_at: nowIso,
+      decided_by: userId
+    })
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .lt("expires_at", nowIso)
+    .select("id, session_id, intent_id, expires_at");
+
+  if (updateError) {
+    redirect(`${redirectPath}?error=${encodeURIComponent(`期限切れ更新に失敗しました: ${updateError.message}`)}`);
+  }
+
+  const rows = expiredRows ?? [];
+  if (rows.length > 0) {
+    const messages = rows.map((row) => ({
+      org_id: orgId,
+      session_id: row.session_id as string,
+      sender_type: "system",
+      sender_user_id: null,
+      body_text: "確認期限切れのため、この実行確認は無効化されました。",
+      metadata_json: {
+        confirmation_id: row.id,
+        intent_id: row.intent_id,
+        auto_expired: true,
+        expired_at: nowIso
+      }
+    }));
+    const { error: insertError } = await supabase.from("chat_messages").insert(messages);
+    if (insertError) {
+      redirect(`${redirectPath}?error=${encodeURIComponent(`期限切れ通知の保存に失敗しました: ${insertError.message}`)}`);
+    }
+  }
+
+  revalidatePath("/app/chat/shared");
+  revalidatePath("/app/chat/me");
+  revalidatePath("/app/chat/audit");
+  redirect(`${redirectPath}?ok=${encodeURIComponent(`期限切れ確認を${rows.length}件更新しました。`)}`);
+}
+
 export async function retryChatCommand(formData: FormData) {
   const commandId = String(formData.get("command_id") ?? "").trim();
   const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+  const returnTo = String(formData.get("return_to") ?? "").trim();
+  const redirectPath = returnTo || pathForScope(scope);
 
   if (!commandId) {
-    redirect(withError(scope, "command_id がありません。"));
+    redirect(`${redirectPath}?error=${encodeURIComponent("command_id がありません。")}`);
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -869,13 +923,13 @@ export async function retryChatCommand(formData: FormData) {
     .maybeSingle();
 
   if (commandError) {
-    redirect(withError(scope, `再実行対象の取得に失敗しました: ${commandError.message}`));
+    redirect(`${redirectPath}?error=${encodeURIComponent(`再実行対象の取得に失敗しました: ${commandError.message}`)}`);
   }
   if (!command) {
-    redirect(withError(scope, "再実行対象が見つかりません。"));
+    redirect(`${redirectPath}?error=${encodeURIComponent("再実行対象が見つかりません。")}`);
   }
   if (command.execution_status !== "failed") {
-    redirect(withError(scope, "failed のコマンドのみ再実行できます。"));
+    redirect(`${redirectPath}?error=${encodeURIComponent("failed のコマンドのみ再実行できます。")}`);
   }
 
   try {
@@ -886,7 +940,7 @@ export async function retryChatCommand(formData: FormData) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "再実行確認を作成できませんでした。";
-    redirect(withError(scope, message));
+    redirect(`${redirectPath}?error=${encodeURIComponent(message)}`);
   }
 
   const { expiresAt } = await saveIntentConfirmation({
@@ -911,7 +965,8 @@ export async function retryChatCommand(formData: FormData) {
   });
 
   revalidatePath(pathForScope(scope));
-  redirect(withOk(scope, "再実行確認を作成しました。"));
+  revalidatePath("/app/chat/audit");
+  redirect(`${redirectPath}?ok=${encodeURIComponent("再実行確認を作成しました。")}`);
 }
 
 export async function confirmChatCommand(formData: FormData) {
