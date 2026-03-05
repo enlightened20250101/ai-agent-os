@@ -341,6 +341,11 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         >
           skip_reason: {skipReasonFilter}
         </Link>
+        {statusFilter === "failed" ? (
+          <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-1 font-semibold text-rose-700">
+            高優先トリアージ中
+          </span>
+        ) : null}
       </div>
       {hasActiveExportFilters ? (
         <p className="text-xs text-slate-500">エクスポート条件: {activeFilterSummary}</p>

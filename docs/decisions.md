@@ -876,3 +876,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 件数サマリの比率バッジをクリックすると `status=failed` に絞り込む導線を追加し、現在の他フィルタ文脈は維持する。
 - Why: 異常比率を見つけた直後に失敗コマンド一覧へ遷移できるようにし、初動を短縮するため。
+
+- Decision: `status=failed` フィルタ時は監査ヘッダに「高優先トリアージ中」バッジを表示する。
+- Why: 現在の運用モード（通常監査か失敗対応か）を明示し、判断の優先度を揃えるため。
