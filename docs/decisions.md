@@ -996,3 +996,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `agents/actions` と `tasks/actions` は成功時に `?ok=` を付けて同画面に戻すようにした。
 - Why: 作成/更新直後に明示的な成功フィードバックを返し、操作完了の認知を高めるため。
+
+- Decision: `/app/workflows` のテンプレート作成を `ConfirmSubmitButton` 化し、確認ダイアログと送信中disabledを適用した。
+- Why: 主要作成操作の安全性を他画面と統一し、誤作成と二重送信を防ぐため。
+
+- Decision: `createWorkflowTemplate` は成功時に `?ok=` 付きで `/app/workflows` へリダイレクトする。
+- Why: 作成直後の成功フィードバックを明示し、操作完了を即時に伝えるため。

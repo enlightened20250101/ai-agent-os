@@ -84,6 +84,7 @@ export async function createWorkflowTemplate(formData: FormData) {
 
   revalidatePath("/app/workflows");
   revalidatePath("/app/tasks");
+  redirect(`/app/workflows?ok=${encodeURIComponent("テンプレートを作成しました。")}`);
 }
 
 export async function startWorkflowRunFromTask(formData: FormData) {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { StatusNotice } from "@/app/app/StatusNotice";
 import { createWorkflowTemplate } from "@/app/app/workflows/actions";
 import { requireOrgContext } from "@/lib/org/context";
@@ -71,9 +72,12 @@ export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps
           <p className="text-xs text-slate-500">
             type は `task_event` または `execute_google_send_email`。3列目は `true/false`（省略可）。
           </p>
-          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white">
-            テンプレートを作成
-          </button>
+          <ConfirmSubmitButton
+            label="テンプレートを作成"
+            pendingLabel="作成中..."
+            confirmMessage="この内容でワークフローテンプレートを作成します。実行しますか？"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white"
+          />
         </form>
       </div>
 
