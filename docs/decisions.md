@@ -879,3 +879,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status=failed` フィルタ時は監査ヘッダに「高優先トリアージ中」バッジを表示する。
 - Why: 現在の運用モード（通常監査か失敗対応か）を明示し、判断の優先度を揃えるため。
+
+- Decision: `status=failed` 時は「失敗コマンド再実行確認の一括作成」件数の初期値を 10（通常は5）にする。
+- Why: 高優先トリアージモードでの復旧初動を短縮するため。

@@ -526,7 +526,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
             name="max_items"
             min={1}
             max={20}
-            defaultValue={5}
+            defaultValue={statusFilter === "failed" ? 10 : 5}
             className="w-16 rounded-md border border-rose-300 bg-white px-2 py-1"
           />
         </label>
