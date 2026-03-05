@@ -217,7 +217,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         </section>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
           <p className="text-xs text-rose-700">open incidents</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{summary.openIncidents}</p>
@@ -229,6 +229,10 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
           <p className="text-xs text-sky-700">failed actions (7d)</p>
           <p className="mt-1 text-2xl font-semibold text-sky-900">{summary.failedActions7d}</p>
+        </div>
+        <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 shadow-sm">
+          <p className="text-xs text-fuchsia-700">failed chat commands (7d)</p>
+          <p className="mt-1 text-2xl font-semibold text-fuchsia-900">{summary.failedChatCommands7d}</p>
         </div>
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
           <p className="text-xs text-indigo-700">success rate (7d)</p>

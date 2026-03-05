@@ -25,6 +25,9 @@ export type GovernanceRecommendationSummary = {
   staleApprovals24h: number;
   staleApprovals72h: number;
   failedActions7d: number;
+  failedChatCommands7d: number;
+  pendingChatConfirmations: number;
+  overdueChatConfirmations: number;
   successActions7d: number;
   actionSuccessRate7d: number | null;
   policyBlockEvents7d: number;
@@ -58,7 +61,18 @@ export async function buildGovernanceRecommendations(args: {
   const before24h = new Date(now - dayMs).toISOString();
   const before72h = new Date(now - 3 * dayMs).toISOString();
 
-  const [incidentsRes, approvals24Res, approvals72Res, actionsRes, policyBlocksRes, lowTrustRes, budgetUsageRes] =
+  const [
+    incidentsRes,
+    approvals24Res,
+    approvals72Res,
+    actionsRes,
+    policyBlocksRes,
+    lowTrustRes,
+    budgetUsageRes,
+    failedChatCommandsRes,
+    pendingChatConfirmationsRes,
+    overdueChatConfirmationsRes
+  ] =
     await Promise.all([
       supabase
         .from("org_incidents")
@@ -105,7 +119,24 @@ export async function buildGovernanceRecommendations(args: {
         .eq("provider", "google")
         .eq("action_type", "send_email")
         .eq("usage_date", new Date().toISOString().slice(0, 10))
-        .maybeSingle()
+        .maybeSingle(),
+      supabase
+        .from("chat_commands")
+        .select("id", { head: true, count: "exact" })
+        .eq("org_id", orgId)
+        .eq("execution_status", "failed")
+        .gte("created_at", since7d),
+      supabase
+        .from("chat_confirmations")
+        .select("id", { head: true, count: "exact" })
+        .eq("org_id", orgId)
+        .eq("status", "pending"),
+      supabase
+        .from("chat_confirmations")
+        .select("id", { head: true, count: "exact" })
+        .eq("org_id", orgId)
+        .eq("status", "pending")
+        .lt("expires_at", new Date().toISOString())
     ]);
 
   const missingTable = (message: string, table: string) =>
@@ -136,6 +167,21 @@ export async function buildGovernanceRecommendations(args: {
   if (budgetUsageRes.error && !missingTable(budgetUsageRes.error.message, "budget_usage")) {
     throw new Error(`budget metrics query failed: ${budgetUsageRes.error.message}`);
   }
+  if (failedChatCommandsRes.error && !missingTable(failedChatCommandsRes.error.message, "chat_commands")) {
+    throw new Error(`chat command metrics query failed: ${failedChatCommandsRes.error.message}`);
+  }
+  if (
+    pendingChatConfirmationsRes.error &&
+    !missingTable(pendingChatConfirmationsRes.error.message, "chat_confirmations")
+  ) {
+    throw new Error(`chat confirmation metrics query failed: ${pendingChatConfirmationsRes.error.message}`);
+  }
+  if (
+    overdueChatConfirmationsRes.error &&
+    !missingTable(overdueChatConfirmationsRes.error.message, "chat_confirmations")
+  ) {
+    throw new Error(`chat overdue confirmation metrics query failed: ${overdueChatConfirmationsRes.error.message}`);
+  }
 
   const actions = actionsRes.data ?? [];
   const successActions7d = actions.filter((row) => row.status === "success").length;
@@ -151,6 +197,9 @@ export async function buildGovernanceRecommendations(args: {
     staleApprovals24h: approvals24Res.count ?? 0,
     staleApprovals72h: approvals72Res.count ?? 0,
     failedActions7d,
+    failedChatCommands7d: failedChatCommandsRes.count ?? 0,
+    pendingChatConfirmations: pendingChatConfirmationsRes.count ?? 0,
+    overdueChatConfirmations: overdueChatConfirmationsRes.count ?? 0,
     successActions7d,
     actionSuccessRate7d,
     policyBlockEvents7d: policyBlocksRes.count ?? 0,
@@ -230,6 +279,49 @@ export async function buildGovernanceRecommendations(args: {
       metricValue: formatPercent(summary.actionSuccessRate7d),
       actionLabel: "Evidenceを確認",
       href: "/app/tasks",
+      automation: null
+    });
+  }
+
+  if (summary.overdueChatConfirmations > 0) {
+    recommendations.push({
+      id: "chat-confirmation-overdue",
+      priority: "high",
+      title: "チャット確認キューの期限切れを解消",
+      description:
+        "期限切れの確認待ちが残っています。確認キューを整理し、失敗コマンドの再実行または取り下げを進めてください。",
+      metricLabel: "overdue chat confirmations",
+      metricValue: String(summary.overdueChatConfirmations),
+      actionLabel: "チャット監査ログへ",
+      href: "/app/chat/audit?status=pending",
+      automation: null
+    });
+  } else if (summary.pendingChatConfirmations >= 10) {
+    recommendations.push({
+      id: "chat-confirmation-backlog",
+      priority: "medium",
+      title: "チャット確認待ちの滞留を圧縮",
+      description:
+        "確認待ちが増えています。高優先の確認から処理し、不要な依頼は取り下げてキューを軽量化してください。",
+      metricLabel: "pending chat confirmations",
+      metricValue: String(summary.pendingChatConfirmations),
+      actionLabel: "チャット監査ログへ",
+      href: "/app/chat/audit?status=pending",
+      automation: null
+    });
+  }
+
+  if (summary.failedChatCommands7d >= 5) {
+    recommendations.push({
+      id: "chat-command-failures",
+      priority: "medium",
+      title: "チャット実行失敗を改善",
+      description:
+        "チャット起点の実行失敗が増加しています。対象解決の曖昧性や権限/上限制約の失敗要因を確認してください。",
+      metricLabel: "failed chat commands (7d)",
+      metricValue: String(summary.failedChatCommands7d),
+      actionLabel: "チャット監査ログへ",
+      href: "/app/chat/audit?status=failed",
       automation: null
     });
   }

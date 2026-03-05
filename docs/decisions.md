@@ -763,6 +763,9 @@ This file records implementation decisions made without blocking on open questio
 - Decision: chat監査エクスポート用にCLI (`export-chat-audit-json.mjs`) を追加し、ページング全件取得・resume・shard出力をサポートした。
 - Why: 運用監査ログの定期バックアップと大規模データ取得を、手作業なしで再現可能にするため。
 
+- Decision: governance recommendations にチャット運用シグナル（`failed chat commands(7d)`, `pending/overdue chat confirmations`）を追加し、閾値超過時に `/app/chat/audit` への改善提案を生成する。
+- Why: チャット起点オペレーションを例外管理ループへ統合し、失敗・滞留の早期是正を自動促進するため。
+
 - Decision: チャット実行確認（confirmed）にユーザー単位の日次上限 `CHAT_DAILY_EXECUTION_LIMIT`（既定30）を追加し、上限超過時は自動で confirmation を declined にする。
 - Why: 会話起点の実行が短時間に集中した際の誤操作・暴走リスクを抑え、安全に運用できるスループットへ制御するため。
 
