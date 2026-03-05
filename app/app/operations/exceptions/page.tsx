@@ -95,6 +95,13 @@ function formatDaysFromHours(hours: number) {
   return `${days}d ${rem}h`;
 }
 
+function overdueHoursFromDueAt(dueAt: string | null) {
+  if (!dueAt) return 0;
+  const dueMs = new Date(dueAt).getTime();
+  if (!Number.isFinite(dueMs) || dueMs >= Date.now()) return 0;
+  return Math.floor((Date.now() - dueMs) / (60 * 60 * 1000));
+}
+
 function toDateTimeLocalValue(iso: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -491,35 +498,57 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
   const exportCsvHref = `/api/operations/exceptions/export?${exportParams.toString()}`;
   const exportJsonHref = `/api/operations/exceptions/export?${exportParams.toString()}&format=json`;
 
-  function guidanceForKind(kind: ExceptionKind) {
+  function guidanceForKind(args: {
+    kind: ExceptionKind;
+    owner: string | null;
+    dueAt: string | null;
+    taskLabel: string;
+  }) {
+    const { kind, owner, dueAt, taskLabel } = args;
+    const overdueHours = overdueHoursFromDueAt(dueAt);
+    const ownerText = owner ?? "未割当";
+    const urgencyText = overdueHours > 0 ? `${overdueHours}h超過` : "期限内";
+
     if (kind === "failed_action") {
       return {
-        nextAction: "実行ログの原因を確認し、再試行可否を判断してから再実行します。",
+        nextAction: `${taskLabel} の実行ログ原因を確認し、再試行可否を判断してから再実行します（担当: ${ownerText} / ${urgencyText}）。`,
         question: "直近の設定変更や外部API制限に変更はありましたか？"
       };
     }
     if (kind === "failed_workflow") {
       return {
-        nextAction: "失敗ステップの入力値と前段出力を確認し、再試行または差戻しを選びます。",
+        nextAction: `${taskLabel} の失敗ステップ入出力を確認し、再試行または差戻しを選びます（担当: ${ownerText} / ${urgencyText}）。`,
         question: "どのステップ結果が不整合で、再実行の前提条件は満たされていますか？"
       };
     }
     if (kind === "stale_approval") {
       return {
-        nextAction: "承認者へ期限付きリマインドを送り、必要なら代替承認者へエスカレーションします。",
+        nextAction: `${taskLabel} の承認者へ期限付きリマインドを送り、必要なら代替承認者へエスカレーションします（担当: ${ownerText} / ${urgencyText}）。`,
         question: "この承認を止めている判断材料は何で、追加情報は何が必要ですか？"
       };
     }
     return {
-      nextAction: "ポリシーブロック理由を確認し、入力値修正または例外承認ルートへ回します。",
+      nextAction: `${taskLabel} のポリシーブロック理由を確認し、入力値修正または例外承認ルートへ回します（担当: ${ownerText} / ${urgencyText}）。`,
       question: "どのポリシー条件に抵触しており、修正可能な入力項目はどれですか？"
     };
   }
 
-  function renderGuidance(kind: ExceptionKind) {
-    const guide = guidanceForKind(kind);
+  function renderGuidance(args: {
+    kind: ExceptionKind;
+    owner: string | null;
+    dueAt: string | null;
+    taskLabel: string;
+  }) {
+    const guide = guidanceForKind(args);
+    const overdueHours = overdueHoursFromDueAt(args.dueAt);
+    const level =
+      overdueHours >= 24 ? "critical" : overdueHours >= 8 ? "high" : overdueHours >= 2 ? "medium" : "low";
     return (
       <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 p-2 text-xs text-indigo-900">
+        <p>
+          <span className="font-semibold">SLAレベル:</span>{" "}
+          <span className="uppercase">{level}</span>
+        </p>
         <p>
           <span className="font-semibold">次アクション:</span> {guide.nextAction}
         </p>
@@ -972,7 +1001,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                     ) : null}
                   </p>
                   {error ? <p className="mt-1 text-xs text-rose-700">error: {error}</p> : null}
-                  {renderGuidance("failed_action")}
+                  {renderGuidance({
+                    kind: "failed_action",
+                    owner: exceptionCase?.owner_user_id ?? null,
+                    dueAt: exceptionCase?.due_at ?? null,
+                    taskLabel: task?.title ?? row.task_id
+                  })}
                   <div className="mt-2 flex gap-3 text-xs">
                     <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-sky-700 underline">
                       タスクを開く
@@ -1053,7 +1087,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       </button>
                     </form>
                   </div>
-                  {renderGuidance("failed_workflow")}
+                  {renderGuidance({
+                    kind: "failed_workflow",
+                    owner: exceptionCase?.owner_user_id ?? null,
+                    dueAt: exceptionCase?.due_at ?? null,
+                    taskLabel: task?.title ?? row.task_id
+                  })}
                   {renderCaseControls({
                     kind: "failed_workflow",
                     refId: row.id,
@@ -1114,7 +1153,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       タスクを開く
                     </Link>
                   </div>
-                  {renderGuidance("stale_approval")}
+                  {renderGuidance({
+                    kind: "stale_approval",
+                    owner: exceptionCase?.owner_user_id ?? null,
+                    dueAt: exceptionCase?.due_at ?? null,
+                    taskLabel: task?.title ?? row.task_id
+                  })}
                   {renderCaseControls({
                     kind: "stale_approval",
                     refId: row.id,
@@ -1170,7 +1214,12 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       Evidence
                     </Link>
                   </div>
-                  {renderGuidance("policy_block")}
+                  {renderGuidance({
+                    kind: "policy_block",
+                    owner: exceptionCase?.owner_user_id ?? null,
+                    dueAt: exceptionCase?.due_at ?? null,
+                    taskLabel: task.title
+                  })}
                   {renderCaseControls({
                     kind: "policy_block",
                     refId: task.id,
@@ -1192,10 +1241,24 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           <ul className="mt-3 space-y-2">
             {exceptionCaseEvents.map((event) => {
               const relatedCase = exceptionCases.find((row) => row.id === event.exception_case_id) ?? null;
+              const isEscalated = event.event_type === "CASE_ESCALATED";
+              const isAutoAssigned = event.event_type === "CASE_AUTO_ASSIGNED";
               return (
                 <li key={event.id} className="rounded-md border border-slate-200 p-3 text-sm">
                   <p className="font-mono text-xs text-slate-500">{event.id}</p>
-                  <p className="mt-1 text-slate-900">{event.event_type}</p>
+                  <p className="mt-1 text-slate-900">
+                    {event.event_type}
+                    {isEscalated ? (
+                      <span className="ml-2 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-xs text-rose-700">
+                        escalation
+                      </span>
+                    ) : null}
+                    {isAutoAssigned ? (
+                      <span className="ml-2 rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
+                        auto-assigned
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="text-xs text-slate-600">
                     at: {new Date(event.created_at).toLocaleString()} / actor: {event.actor_user_id ?? "system"}
                   </p>

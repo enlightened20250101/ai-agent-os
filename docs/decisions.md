@@ -590,6 +590,12 @@ This file records implementation decisions made without blocking on open questio
 - Decision: 例外キュー各カテゴリに「次アクション」と「回収質問テンプレ」を表示するガイダンスを追加した。
 - Why: 例外対応を担当者依存の属人作業にせず、最短で回収・前進させる標準オペレーションを作るため。
 
+- Decision: 例外ガイダンスは固定文ではなく、担当者・期限超過時間・対象タスク名を埋め込む動的テンプレートにした。
+- Why: 現場が「今この案件で何をするか」を即判断できるようにし、対応の初動時間を短縮するため。
+
+- Decision: Exception Case Events 一覧で `CASE_ESCALATED` と `CASE_AUTO_ASSIGNED` をバッジ強調表示する。
+- Why: 高優先のエスカレーション発生と自動割当の実施有無を、監査一覧で瞬時に判別できるようにするため。
+
 - Decision: E2E専用に `seed-job-circuit` API を追加し、`skipped_circuit` / `skipped_dry_run` を回帰テスト可能にした。
 - Why: サーキット制御の安全ロジックが将来変更で壊れないよう、自動検証の入口を確保するため。
 
