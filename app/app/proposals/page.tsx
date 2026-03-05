@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { acceptProposal, rejectProposal } from "@/app/app/proposals/actions";
+import { acceptProposal, bulkRejectProposals, rejectProposal } from "@/app/app/proposals/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -251,6 +251,33 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
         </p>
       </div>
 
+      <form id="bulk-reject-form" action={bulkRejectProposals} className="rounded-md border border-rose-200 bg-rose-50 p-3">
+        <p className="text-sm font-medium text-rose-900">提案の一括却下</p>
+        <p className="mt-1 text-xs text-rose-700">下の一覧でチェックした「提案中」アイテムのみをまとめて却下します。</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select
+            name="decision_reason_code"
+            defaultValue="rejected_other"
+            className="rounded-md border border-rose-300 px-2 py-1 text-xs"
+          >
+            <option value="rejected_other">rejected_other</option>
+            <option value="rejected_policy">rejected_policy</option>
+            <option value="rejected_low_value">rejected_low_value</option>
+            <option value="rejected_duplicate">rejected_duplicate</option>
+            <option value="rejected_scope">rejected_scope</option>
+          </select>
+          <input
+            type="text"
+            name="reason_note"
+            placeholder="補足メモ（任意）"
+            className="rounded-md border border-rose-300 px-3 py-1.5 text-xs"
+          />
+          <button type="submit" className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-100">
+            選択提案を一括却下
+          </button>
+        </div>
+      </form>
+
       {proposalRows.length > 0 ? (
         <ul className="space-y-3">
           {proposalRows.map((proposal) => {
@@ -264,6 +291,18 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             const canAccept = proposal.status === "proposed" && proposal.policy_status !== "block";
             return (
               <li key={proposal.id} className="rounded-md border border-slate-200 p-4 text-sm text-slate-700">
+                {proposal.status === "proposed" ? (
+                  <label className="mb-2 inline-flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      name="proposal_ids"
+                      value={proposal.id as string}
+                      form="bulk-reject-form"
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    一括却下対象に含める
+                  </label>
+                ) : null}
                 <p className="font-medium text-slate-900">{proposal.title as string}</p>
                 <p className="mt-1 text-xs text-slate-500">
                   ソース: {proposal.source as string} | ステータス: {proposal.status as string} | ポリシー状態:{" "}

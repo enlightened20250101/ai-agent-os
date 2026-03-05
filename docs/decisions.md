@@ -655,3 +655,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 提案受け入れ操作に「受け入れ+承認依頼」を追加し、受け入れ直後に `approvals` 作成 + `APPROVAL_REQUESTED`（必要なら Slack 投稿）まで自動実行する導線を追加した。
 - Why: 提案採用後に別画面で承認依頼を作る手間を減らし、提案から実行準備までのリードタイムを短縮するため。
+
+- Decision: `/app/proposals` に理由コード付き「一括却下」を追加し、選択した proposed 提案をまとめて `rejected` 更新 + `PROPOSAL_REJECTED` 記録するようにした。
+- Why: ノイズ提案を個別処理する運用負荷を下げ、提案キューを短時間で健全化できるようにするため。
