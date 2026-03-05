@@ -245,6 +245,7 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     .filter((v): v is string => Boolean(v))
     .join(" / ");
   const hasActiveExportFilters = activeFilterSummary.length > 0;
+  const bulkRetryEmphasis = statusFilter === "failed" && statusCount.failed >= 5;
   const currentFilterPath = buildAuditFilterHref({
     status: statusFilter,
     scope: scopeFilter,
@@ -530,9 +531,21 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
             className="w-16 rounded-md border border-rose-300 bg-white px-2 py-1"
           />
         </label>
-        <button type="submit" className="rounded-md border border-rose-300 bg-white px-2 py-1 text-rose-700 hover:bg-rose-100">
-          一括で確認作成
+        <button
+          type="submit"
+          className={`rounded-md border px-2 py-1 ${
+            bulkRetryEmphasis
+              ? "border-rose-500 bg-rose-600 font-semibold text-white hover:bg-rose-500"
+              : "border-rose-300 bg-white text-rose-700 hover:bg-rose-100"
+          }`}
+        >
+          {bulkRetryEmphasis ? "優先: 一括で確認作成" : "一括で確認作成"}
         </button>
+        {bulkRetryEmphasis ? (
+          <span className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 font-medium text-rose-800">
+            failed {statusCount.failed}件: 優先実行
+          </span>
+        ) : null}
       </form>
 
       {rows.length > 0 ? (

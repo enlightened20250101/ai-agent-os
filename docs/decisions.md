@@ -882,3 +882,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `status=failed` 時は「失敗コマンド再実行確認の一括作成」件数の初期値を 10（通常は5）にする。
 - Why: 高優先トリアージモードでの復旧初動を短縮するため。
+
+- Decision: `status=failed` かつ failed件数が閾値以上（5件）では、一括再実行確認ボタンを強調色（赤）+ 優先文言に切り替える。
+- Why: 失敗集中時にオペレーターの次アクションを明確化し、復旧の着手遅れを防ぐため。
