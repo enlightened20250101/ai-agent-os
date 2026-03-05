@@ -126,7 +126,7 @@ export default async function AppHomePage() {
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const staleApprovalHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleApprovalCutoffIso = new Date(Date.now() - staleApprovalHours * 60 * 60 * 1000).toISOString();
-  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes, proposalsRes] = await Promise.all([
+  const [tasksRes, approvalsRes, actionsRes, incidentsRes, recommendationPack, plannerRunsRes, reviewEventsRes, proposalsRes, chatCommandsRes] = await Promise.all([
     supabase
       .from("tasks")
       .select("id, status, created_at")
@@ -166,6 +166,13 @@ export default async function AppHomePage() {
       .select("id, status, policy_status, created_at")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("chat_commands")
+      .select("id, execution_status, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
       .limit(500)
   ]);
 
@@ -202,6 +209,13 @@ export default async function AppHomePage() {
   ) {
     throw new Error(`Failed to load proposal metrics: ${proposalsRes.error.message}`);
   }
+  if (
+    chatCommandsRes.error &&
+    !chatCommandsRes.error.message.includes('relation "chat_commands" does not exist') &&
+    !chatCommandsRes.error.message.includes("Could not find the table 'public.chat_commands'")
+  ) {
+    throw new Error(`Failed to load chat command metrics: ${chatCommandsRes.error.message}`);
+  }
 
   const tasks = tasksRes.data ?? [];
   const approvals = approvalsRes.data ?? [];
@@ -210,6 +224,7 @@ export default async function AppHomePage() {
   const plannerRuns = plannerRunsRes.data ?? [];
   const reviewEvents = reviewEventsRes.data ?? [];
   const proposals = proposalsRes.data ?? [];
+  const chatCommands = chatCommandsRes.data ?? [];
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
   const taskStatusCounts = new Map<string, number>();
@@ -234,6 +249,8 @@ export default async function AppHomePage() {
   ).length;
   const blockedProposals = proposals.filter((row) => row.policy_status === "block" && row.status === "proposed").length;
   const pendingProposals = proposals.filter((row) => row.status === "proposed").length;
+  const failedChatCommands = chatCommands.filter((row) => row.execution_status === "failed").length;
+  const runningChatCommands = chatCommands.filter((row) => row.execution_status === "running").length;
   const actionSuccessRate =
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
@@ -243,7 +260,8 @@ export default async function AppHomePage() {
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
     (taskStatusCounts.get("failed") ?? 0) > 0 ? `失敗タスク ${taskStatusCounts.get("failed") ?? 0}件` : null,
     pendingApprovals > 5 ? `承認待ち ${pendingApprovals}件` : null,
-    failedActions > 0 ? `直近7日アクション失敗 ${failedActions}件` : null
+    failedActions > 0 ? `直近7日アクション失敗 ${failedActions}件` : null,
+    failedChatCommands > 0 ? `直近7日チャット失敗 ${failedChatCommands}件` : null
   ].filter((v): v is string => Boolean(v));
   const criticalRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "critical");
   const highRecommendations = recommendationPack.recommendations.filter((item) => item.priority === "high");
@@ -370,7 +388,7 @@ export default async function AppHomePage() {
           <h2 className="text-sm font-semibold text-slate-900">優先対応キュー</h2>
           <span className="text-xs text-slate-500">緊急度の高いものを先頭表示</span>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <Link
             href="/app/approvals"
             className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
@@ -398,6 +416,33 @@ export default async function AppHomePage() {
           >
             <p className={`text-xs ${pendingProposals > 0 ? "text-sky-700" : "text-slate-600"}`}>未判断提案</p>
             <p className={`mt-1 text-xl font-semibold ${pendingProposals > 0 ? "text-sky-900" : "text-slate-900"}`}>{pendingProposals}</p>
+          </Link>
+          <Link
+            href="/app/chat/audit?status=failed"
+            className={`rounded-lg border p-3 ${failedChatCommands > 0 ? "border-rose-300 bg-rose-50" : runningChatCommands > 0 ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p
+              className={`text-xs ${
+                failedChatCommands > 0
+                  ? "text-rose-700"
+                  : runningChatCommands > 0
+                    ? "text-sky-700"
+                    : "text-slate-600"
+              }`}
+            >
+              チャット失敗(7d)
+            </p>
+            <p
+              className={`mt-1 text-xl font-semibold ${
+                failedChatCommands > 0
+                  ? "text-rose-900"
+                  : runningChatCommands > 0
+                    ? "text-sky-900"
+                    : "text-slate-900"
+              }`}
+            >
+              {failedChatCommands}
+            </p>
           </Link>
         </div>
       </section>

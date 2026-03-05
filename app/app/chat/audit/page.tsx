@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { retryChatCommand } from "@/app/app/chat/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -245,6 +246,18 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
                       {JSON.stringify(result, null, 2)}
                     </pre>
                   </details>
+                ) : null}
+                {row.execution_status === "failed" ? (
+                  <form action={retryChatCommand} className="mt-2">
+                    <input type="hidden" name="command_id" value={row.id} />
+                    <input type="hidden" name="scope" value={session?.scope === "personal" ? "personal" : "shared"} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+                    >
+                      再実行確認を作成
+                    </button>
+                  </form>
                 ) : null}
               </li>
             );

@@ -735,3 +735,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット確認作成にガードレールを追加し、同一セッションの pending 確認上限（既定5件）と短時間連続作成クールダウン（既定8秒）を適用した。
 - Why: ボット暴走や誤連打で確認キューが埋まる運用事故を防ぎ、オペレーターが処理可能なペースに制御するため。
+
+- Decision: `/app/chat/audit` から failed command の「再実行確認を作成」を直接実行できるようにし、監査画面でトリアージから復旧まで完結可能にした。
+- Why: 失敗対応時に shared/personal チャット画面へ戻る手間を減らし、運用復旧のリードタイムを短縮するため。
+
+- Decision: `/app` の優先対応キューに「チャット失敗(7d)」メトリクスを追加し、`/app/chat/audit?status=failed` へ遷移できるようにした。
+- Why: 会話起点運用の増加に合わせて、チャット実行失敗をトップ画面から即時検知・対処できるようにするため。
