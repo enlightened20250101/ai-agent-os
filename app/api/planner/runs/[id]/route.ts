@@ -77,8 +77,44 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
+  const proposalIds = (proposals ?? []).map((row) => row.id as string).filter(Boolean);
+  const [proposalEventsRes, runEventsRes] = await Promise.all([
+    proposalIds.length > 0
+      ? supabase
+          .from("proposal_events")
+          .select("id, proposal_id, event_type, payload_json, created_at")
+          .eq("org_id", orgContext.orgId)
+          .in("proposal_id", proposalIds)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("proposal_events")
+      .select("id, proposal_id, event_type, payload_json, created_at")
+      .eq("org_id", orgContext.orgId)
+      .in("event_type", ["PLANNER_RUN_STARTED", "PLANNER_RUN_FINISHED"])
+      .contains("payload_json", { planner_run_id: id })
+      .order("created_at", { ascending: true })
+  ]);
+
+  if (proposalEventsRes.error) {
+    return NextResponse.json(
+      { error: "failed_to_load_proposal_events", message: proposalEventsRes.error.message },
+      { status: 500 }
+    );
+  }
+  if (runEventsRes.error) {
+    return NextResponse.json(
+      { error: "failed_to_load_run_events", message: runEventsRes.error.message },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     run,
-    proposals: proposals ?? []
+    proposals: proposals ?? [],
+    events: {
+      run_events: runEventsRes.data ?? [],
+      proposal_events: proposalEventsRes.data ?? []
+    }
   });
 }

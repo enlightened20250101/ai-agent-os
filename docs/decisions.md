@@ -640,3 +640,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `E2E_MODE` で `x-e2e-cleanup-token` が正しい場合のみ、`/api/slack/events` に `e2e_org_id` 指定の署名バイパス経路を追加した。
 - Why: 本番の署名検証を維持しつつ、PlaywrightでSlack外部依存なしに intake 起票フローを回帰検証するため。
+
+- Decision: `/api/planner/runs/:id` を拡張し、`run_events (PLANNER_RUN_STARTED/FINISHED)` と `proposal_events` を合わせて返すようにした。
+- Why: run単位で「何が生成され、どう判断されたか」をAPIレスポンスだけで追跡できる監査性を高めるため。
