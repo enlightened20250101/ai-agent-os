@@ -251,6 +251,14 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
     intent: intentFilter,
     skipReason: skipReasonFilter
   });
+  const filteredLast7dCount = rows.filter((row) => {
+    const createdAtMs = new Date(row.created_at).getTime();
+    return Number.isFinite(createdAtMs) && createdAtMs >= sevenDaysAgoMs;
+  }).length;
+  const totalLast7dCount = commands.filter((row) => {
+    const createdAtMs = new Date(row.created_at).getTime();
+    return Number.isFinite(createdAtMs) && createdAtMs >= sevenDaysAgoMs;
+  }).length;
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -459,6 +467,9 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
       <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
         表示件数: <span className="font-semibold text-slate-900">{rows.length}</span> / 全件{" "}
         <span className="font-semibold text-slate-900">{commands.length}</span>
+        <span className="mx-2 text-slate-300">|</span>
+        直近7日: <span className="font-semibold text-slate-900">{filteredLast7dCount}</span> /{" "}
+        <span className="font-semibold text-slate-900">{totalLast7dCount}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span>この条件で開く:</span>
