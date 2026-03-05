@@ -897,3 +897,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 再試行上限到達時は `WORKFLOW_FAILED` に `retry_exhausted=true`, `retry_count`, `max_retries` を含めて記録する。
 - Why: 「通常失敗」と「再試行枯渇」を監査上で区別し、復旧方針（再実行ではなく原因修正）を明確化するため。
+
+- Decision: `/app/workflows/runs` に `status` クエリフィルタ（`running|failed|completed|all`）と件数カードを追加し、実行状態別に即時絞り込みできるようにした。
+- Why: ワークフロー運用時に「いま対応すべき失敗」「進行中実行」を1画面で判別し、トリアージ速度を上げるため。
+
+- Decision: `/app/workflows/runs` に `retry exhausted runs` 指標を追加し、`workflow_steps.status=failed` かつ `retry_count >= WORKFLOW_STEP_MAX_RETRIES` の run 数を可視化した。
+- Why: 再試行不能状態の滞留件数を明示し、単純再実行ではなく設計/データ起因の恒久対応へ優先的に回すため。
