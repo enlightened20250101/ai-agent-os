@@ -14,6 +14,7 @@ import { runPlanner } from "@/lib/planner/runPlanner";
 import { acceptProposalShared } from "@/lib/proposals/decide";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
+import { startWorkflowRun } from "@/lib/workflows/orchestrator";
 
 function pathForScope(scope: ChatScope) {
   return scope === "shared" ? "/app/chat/shared" : "/app/chat/me";
@@ -37,7 +38,8 @@ function isBlockedByIncident(intentType: string) {
     intentType === "bulk_decide_approvals" ||
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
-    intentType === "run_planner"
+    intentType === "run_planner" ||
+    intentType === "run_workflow"
   );
 }
 
@@ -51,7 +53,8 @@ function isMutatingIntent(intentType: string) {
     intentType === "bulk_retry_failed_commands" ||
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
-    intentType === "run_planner"
+    intentType === "run_planner" ||
+    intentType === "run_workflow"
   );
 }
 
@@ -1308,6 +1311,62 @@ async function runPlannerFromChatCommand(args: {
   };
 }
 
+async function runWorkflowFromChatCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  sessionId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  let taskHint = typeof args.intentJson.taskHint === "string" ? args.intentJson.taskHint : null;
+  if (!taskHint) {
+    taskHint = await getRecentTaskHintFromSession({
+      supabase: args.supabase,
+      orgId: args.orgId,
+      sessionId: args.sessionId
+    });
+  }
+  const task = await findTaskForChat({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    taskHint
+  });
+
+  const { data: taskRow, error: taskError } = await args.supabase
+    .from("tasks")
+    .select("workflow_template_id")
+    .eq("id", task.id)
+    .eq("org_id", args.orgId)
+    .maybeSingle();
+  if (taskError) {
+    throw new Error(`タスク情報取得に失敗しました: ${taskError.message}`);
+  }
+  const templateId = (taskRow?.workflow_template_id as string | null) ?? null;
+  if (!templateId) {
+    throw new Error("このタスクには workflow template が設定されていません。/app/tasks で設定してください。");
+  }
+
+  const started = await startWorkflowRun({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    taskId: task.id,
+    templateId,
+    actorId: args.userId
+  });
+
+  return {
+    executionRefType: "workflow_run",
+    executionRefId: started.workflowRunId,
+    result: {
+      workflow_run_id: started.workflowRunId,
+      task_id: task.id,
+      task_title: task.title
+    },
+    message: `ワークフロー実行を開始しました: ${task.title} (/app/workflows/runs/${started.workflowRunId})`,
+    touchedTaskId: task.id
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -1342,6 +1401,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "run_planner") {
     return runPlannerFromChatCommand(args);
+  }
+  if (args.intentType === "run_workflow") {
+    return runWorkflowFromChatCommand(args);
   }
   throw new Error("この実行タイプは未対応です。");
 }
@@ -2185,6 +2247,7 @@ export async function confirmChatCommand(formData: FormData) {
     revalidatePath("/app/approvals");
     revalidatePath("/app/planner");
     revalidatePath("/app/proposals");
+    revalidatePath("/app/workflows/runs");
     if (executed.touchedTaskId) {
       revalidatePath(`/app/tasks/${executed.touchedTaskId}`);
     }

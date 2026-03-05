@@ -909,3 +909,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `run_planner` は他の実行系intent同様に確認必須・監査対象（`chat_commands`）として扱い、実行後は `/app/planner` と `/app/proposals` を再検証する。
 - Why: 安全性（誤起動防止）と監査性（誰がいつ起動したか）を維持したまま自律機能を開放するため。
+
+- Decision: チャット意図に `run_workflow` を追加し、「ワークフロー実行して」要求を確認付きで `startWorkflowRun` に接続した。
+- Why: ユーザーがタスク詳細画面へ遷移せずに実行オーケストレーションを起動できるようにし、会話起点運用を前進させるため。
+
+- Decision: `run_workflow` は対象タスクの `workflow_template_id` を必須とし、未設定時は実行せず明確な修正導線（`/app/tasks` で設定）を返す。
+- Why: 誤起動・不完全起動を防ぎ、失敗時もオペレーターが次に取るべき行動を即判断できるようにするため。

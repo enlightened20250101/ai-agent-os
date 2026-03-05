@@ -65,6 +65,12 @@ export type ParsedChatIntent =
       plan: { summary: string; maxProposals: number };
     }
   | {
+      intentType: "run_workflow";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; taskHint: string | null };
+    }
+  | {
       intentType: "unknown";
       confidence: number;
       requiresConfirmation: false;
@@ -319,6 +325,25 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     };
   }
 
+  const workflowLike =
+    /(ワークフロー|workflow)/i.test(text) &&
+    /(実行|開始|start|run|進め|起動)/i.test(text);
+  if (workflowLike) {
+    return {
+      intentType: "run_workflow",
+      confidence: 0.8,
+      requiresConfirmation: true,
+      plan: {
+        summary: quoted
+          ? `タスク「${quoted}」のワークフロー実行を開始します。`
+          : taskIdHint
+            ? `タスクID ${taskIdHint} のワークフロー実行を開始します。`
+            : "最新の対象タスクでワークフロー実行を開始します。",
+        taskHint: explicitTaskHint
+      }
+    };
+  }
+
   const createTaskLike =
     (/タスク/.test(text) && /(追加|作成|登録|入れて|起票)/.test(text)) ||
     /^add task/i.test(text) ||
@@ -347,7 +372,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     requiresConfirmation: false,
     plan: {
       summary:
-        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認、プランナー実行として具体的に指示してください。"
+        "要望を理解できませんでした。タスク追加、提案受け入れ、承認依頼、承認/却下（一括可）、状況確認、プランナー実行、ワークフロー実行として具体的に指示してください。"
     }
   };
 }
