@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { createTask } from "@/app/app/tasks/actions";
 import { AGENT_EVENTS_TASK_TITLE } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
@@ -9,6 +11,7 @@ export const dynamic = "force-dynamic";
 type TasksPageProps = {
   searchParams?: Promise<{
     error?: string;
+    ok?: string;
     source?: string;
   }>;
 };
@@ -148,9 +151,7 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
         <h1 className="text-xl font-semibold">タスク</h1>
         <p className="mt-2 text-sm text-slate-600">現在の組織向けタスクを作成し、進行を追跡します。</p>
 
-        {params.error ? (
-          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{params.error}</p>
-        ) : null}
+        <StatusNotice ok={params.ok} error={params.error} className="mt-4" />
 
         <form action={createTask} className="mt-6 space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
@@ -184,9 +185,12 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
             placeholder="タスク入力"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
-          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
-            タスクを作成
-          </button>
+          <ConfirmSubmitButton
+            label="タスクを作成"
+            pendingLabel="作成中..."
+            confirmMessage="新しいタスクを作成します。実行しますか？"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          />
         </form>
       </section>
 

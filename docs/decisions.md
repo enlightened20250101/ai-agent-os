@@ -990,3 +990,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/operations/jobs` の手動実行ボタン（インシデント判定、workflow tick、ops alert再送）と `/app/workflows/runs/[id]` の進行/再試行ボタンを `ConfirmSubmitButton` 化した。
 - Why: 本番運用への影響が大きい手動オペレーションに確認ダイアログと二重送信防止を適用するため。
+
+- Decision: `/app/agents` と `/app/tasks` の作成/状態変更操作を `ConfirmSubmitButton` に統一し、確認ダイアログと送信中disabledを適用した。
+- Why: 基本CRUD操作でも誤操作や二重送信を防ぎ、全画面で同じ安全操作体験を提供するため。
+
+- Decision: `agents/actions` と `tasks/actions` は成功時に `?ok=` を付けて同画面に戻すようにした。
+- Why: 作成/更新直後に明示的な成功フィードバックを返し、操作完了の認知を高めるため。

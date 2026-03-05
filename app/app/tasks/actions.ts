@@ -10,6 +10,10 @@ function toErrorRedirect(message: string) {
   return `/app/tasks?error=${encodeURIComponent(message)}`;
 }
 
+function toOkRedirect(message: string) {
+  return `/app/tasks?ok=${encodeURIComponent(message)}`;
+}
+
 export async function createTask(formData: FormData) {
   const agentId = String(formData.get("agent_id") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
@@ -99,4 +103,5 @@ export async function createTask(formData: FormData) {
   });
 
   revalidatePath("/app/tasks");
+  redirect(toOkRedirect("タスクを作成しました。"));
 }

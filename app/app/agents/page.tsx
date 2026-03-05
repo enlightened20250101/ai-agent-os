@@ -1,3 +1,5 @@
+import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { StatusNotice } from "@/app/app/StatusNotice";
 import { createAgent, toggleAgentStatus } from "@/app/app/agents/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -5,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 type AgentsPageProps = {
   searchParams?: Promise<{
     error?: string;
+    ok?: string;
   }>;
 };
 
@@ -29,11 +32,7 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
         <h1 className="text-xl font-semibold">エージェント</h1>
         <p className="mt-2 text-sm text-slate-600">実行プロファイルを作成・管理します。</p>
 
-        {params.error ? (
-          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {params.error}
-          </p>
-        ) : null}
+        <StatusNotice ok={params.ok} error={params.error} className="mt-4" />
 
         <form action={createAgent} className="mt-6 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <input
@@ -50,12 +49,12 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
             required
             className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            label="エージェントを作成"
+            pendingLabel="作成中..."
+            confirmMessage="新しいエージェントを作成します。実行しますか？"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            エージェントを作成
-          </button>
+          />
         </form>
       </section>
 
@@ -77,12 +76,16 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
                 <form action={toggleAgentStatus}>
                   <input type="hidden" name="agent_id" value={agent.id} />
                   <input type="hidden" name="current_status" value={agent.status} />
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    label={agent.status === "active" ? "無効化" : "有効化"}
+                    pendingLabel="更新中..."
+                    confirmMessage={
+                      agent.status === "active"
+                        ? "このエージェントを無効化します。実行しますか？"
+                        : "このエージェントを有効化します。実行しますか？"
+                    }
                     className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    {agent.status === "active" ? "無効化" : "有効化"}
-                  </button>
+                  />
                 </form>
               </li>
             ))}

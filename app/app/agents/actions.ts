@@ -10,6 +10,10 @@ function toErrorRedirect(message: string) {
   return `/app/agents?error=${encodeURIComponent(message)}`;
 }
 
+function toOkRedirect(message: string) {
+  return `/app/agents?ok=${encodeURIComponent(message)}`;
+}
+
 export async function createAgent(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const roleKey = String(formData.get("role_key") ?? "").trim();
@@ -55,6 +59,7 @@ export async function createAgent(formData: FormData) {
 
   revalidatePath("/app/agents");
   revalidatePath("/app/tasks");
+  redirect(toOkRedirect("エージェントを作成しました。"));
 }
 
 export async function toggleAgentStatus(formData: FormData) {
@@ -98,4 +103,5 @@ export async function toggleAgentStatus(formData: FormData) {
 
   revalidatePath("/app/agents");
   revalidatePath("/app/tasks");
+  redirect(toOkRedirect(nextStatus === "active" ? "エージェントを有効化しました。" : "エージェントを無効化しました。"));
 }
