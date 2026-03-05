@@ -87,7 +87,10 @@ export async function clearJobCircuitNow(formData: FormData) {
   const supabase = await createClient();
   const jobName = String(formData.get("job_name") ?? "").trim();
   const reasonRaw = String(formData.get("reason") ?? "").trim();
-  const reason = reasonRaw.slice(0, 500) || "manual_clear";
+  const reason = reasonRaw.slice(0, 500);
+  if (!reason) {
+    redirect(withMessage("error", "サーキット解除理由を入力してください。"));
+  }
 
   const targetQuery = supabase
     .from("org_job_circuit_breakers")

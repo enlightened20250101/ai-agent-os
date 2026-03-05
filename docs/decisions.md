@@ -583,3 +583,21 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 例外通知にSLAベースの段階エスカレーション（medium/high/critical）を導入し、`CASE_ESCALATED` を高優先ケースに記録する。
 - Why: 期限超過の深刻度を運用チャネルで即判別できるようにし、対応優先度の判断を高速化するため。
+
+- Decision: ジョブサーキット復帰の可観測性を高めるため、運用画面に `resume_stage / dry_run_until / last_error` を表示し、解除理由を必須入力にした。
+- Why: 停止状態の解釈と再開判断の根拠を運用者がUI上で即確認できるようにするため。
+
+- Decision: 例外キュー各カテゴリに「次アクション」と「回収質問テンプレ」を表示するガイダンスを追加した。
+- Why: 例外対応を担当者依存の属人作業にせず、最短で回収・前進させる標準オペレーションを作るため。
+
+- Decision: E2E専用に `seed-job-circuit` API を追加し、`skipped_circuit` / `skipped_dry_run` を回帰テスト可能にした。
+- Why: サーキット制御の安全ロジックが将来変更で壊れないよう、自動検証の入口を確保するため。
+
+- Decision: プロダクトの理想像を「AIネイティブ業務OS（バックオフィス実行OS）」として明示し、対象業務を事務・経理・総務・購買・法務オペレーションに拡張定義した。
+- Why: 単機能自動化ではなく、業務実行・統制・監査を統合したOS価値をロードマップ全体で一貫させるため。
+
+- Decision: 理想像のうち「役割分離（実行エージェント/監査エージェント）」「根拠アンカー」「例外回収を主戦場」は採用し、既存の event-ledger / evidence-pack を中核に段階実装する。
+- Why: 既存アーキテクチャと整合しつつ、説明責任と運用品質を強化できるため。
+
+- Decision: 高リスク金融操作の完全自律化（銀行書込など）は即時目標にせず、L3/L4の risk/trust/budget + SoD 統制成熟後に段階導入する。
+- Why: 現行MVPの安全原則（approval-first, policy-first）と矛盾する先行自動化を避けるため。

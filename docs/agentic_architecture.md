@@ -18,6 +18,11 @@ This architecture extends the current MVP foundation:
   - connector webhooks (Slack, future: CRM, ticketing, ERP)
   - scheduled scans
   - internal events (policy block, failed action, stale approval)
+  - backoffice events:
+    - invoice/document arrival
+    - payment/incoming funds status changes
+    - close-cycle deadlines
+    - master data changes (vendor/employee/department)
 
 ### New components
 - `signal_sources` (catalog of enabled sources per org).
@@ -35,6 +40,10 @@ This architecture extends the current MVP foundation:
   - model planner
   - template planner
 - Produces ranked proposals with rationale, risk estimate, expected impact.
+- Backoffice-specific planner intents:
+  - AP: invoice intake -> validation -> approval -> payment scheduling
+  - AR: remittance matching -> reconciliation -> exception query
+  - Close: stale/unmatched/missing-evidence backlog reduction
 
 ### New fields/tables
 - `task_proposals.priority_score numeric`
@@ -50,6 +59,9 @@ This architecture extends the current MVP foundation:
 - `workflow_templates` define step graph and required capabilities.
 - `workflow_runs` instantiate template execution.
 - `workflow_steps` track each step lifecycle and retries.
+- Add case-centric stage model for business visibility:
+  - intake -> understand -> reconcile -> approve -> execute -> close
+  - mapped to technical workflow step transitions.
 
 ### Suggested schema
 - `workflow_templates(id, org_id, name, version, definition_json, created_at)`
@@ -72,6 +84,10 @@ This architecture extends the current MVP foundation:
   - `execute(action)` interface per connector/action type
   - per-connector scopes + rate limits
   - compensation handlers for reversible actions
+- Action classes by risk:
+  - read/query actions
+  - document/workflow updates
+  - monetary or customer-facing side effects (strictest gating)
 
 ### Suggested schema additions
 - `actions.workflow_run_id uuid null`
@@ -91,6 +107,7 @@ This architecture extends the current MVP foundation:
   - risk scoring
   - trust scoring
   - budget controls (daily spend, action quotas, domain limits)
+  - SoD checks (requester != approver, initiator != payer)
 
 ### Suggested schema
 - `policy_rules(id, org_id, scope_type, scope_id, rule_key, config_json, status, created_at)`
@@ -109,6 +126,10 @@ This architecture extends the current MVP foundation:
   - approvals/rejections and reasons
   - execution success/failure and retries
   - manual edits after drafts
+- Track exception recovery quality:
+  - question effectiveness
+  - time-to-resolution
+  - repeat exception patterns by vendor/workflow
 - Train/update heuristic weights (not necessarily ML first).
 
 ### Suggested schema
@@ -132,6 +153,31 @@ This architecture extends the current MVP foundation:
 ### Runtime behavior
 - Trigger safe mode on threshold breaches (policy violations, high failure burst, trust collapse).
 - In safe mode: disable autopilot, force human approvals, increase alerting.
+
+## 8) Unified Business Ledger (Case-Centric)
+
+### Purpose
+- Merge source artifacts, extracted facts, workflow state, and execution audit into a single case timeline.
+
+### Suggested schema extensions
+- `business_cases(id, org_id, case_type, source_type, source_ref, status, priority, opened_at, closed_at, created_at)`
+- `case_artifacts(id, org_id, case_id, artifact_type, storage_ref, hash, metadata_json, created_at)`
+- `case_links(id, org_id, case_id, entity_type, entity_id, relation_type, created_at)`
+
+### Notes
+- Existing `tasks` can remain operational unit in MVP; `business_cases` becomes cross-task umbrella as autonomy grows.
+
+## 9) Document Intelligence Layer (Phased)
+
+### Purpose
+- Convert invoices/receipts/contracts/emails into structured facts with confidence and anchor spans.
+
+### Suggested schema extensions
+- `document_extractions(id, org_id, case_id, artifact_id, schema_key, extracted_json, confidence_json, created_at)`
+- `evidence_anchors(id, org_id, case_id, artifact_id, anchor_type, anchor_ref, extracted_field, created_at)`
+
+### Guardrails
+- Never auto-execute high-impact actions when extraction confidence and policy confidence are both below threshold.
 
 ## Event Model Extensions
 

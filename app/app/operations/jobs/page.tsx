@@ -54,6 +54,9 @@ type CircuitRow = {
   job_name: string;
   consecutive_failures: number;
   paused_until: string | null;
+  resume_stage: "active" | "paused" | "dry_run";
+  dry_run_until: string | null;
+  last_error: string | null;
   updated_at: string;
 };
 
@@ -64,6 +67,10 @@ function asObject(value: unknown) {
 
 function isMissingTable(message: string, table: string) {
   return message.includes(`relation "${table}" does not exist`) || message.includes(`public.${table}`);
+}
+
+function isMissingColumn(message: string, column: string) {
+  return message.includes(`column "${column}" does not exist`) || message.includes(`column ${column} does not exist`);
 }
 
 function prettyJson(value: unknown) {
@@ -116,7 +123,7 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const sp = searchParams ? await searchParams : {};
   const failedOnly = String(sp.failed_only ?? "") === "1";
 
-  const [plannerRunsRes, reviewEventsRes, alertEventsRes, incidentEventsRes, retryEventsRes, circuitRes] =
+  const [plannerRunsRes, reviewEventsRes, alertEventsRes, incidentEventsRes, retryEventsRes] =
     await Promise.all([
     supabase
       .from("planner_runs")
@@ -167,12 +174,6 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
       ])
       .order("created_at", { ascending: false })
       .limit(30),
-    supabase
-      .from("org_job_circuit_breakers")
-      .select("id, job_name, consecutive_failures, paused_until, updated_at")
-      .eq("org_id", orgId)
-      .order("updated_at", { ascending: false })
-      .limit(30)
     ]);
 
   if (plannerRunsRes.error && !isMissingTable(plannerRunsRes.error.message, "planner_runs")) {
@@ -190,8 +191,47 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   if (retryEventsRes.error) {
     throw new Error(`Failed to load retry events: ${retryEventsRes.error.message}`);
   }
-  if (circuitRes.error && !isMissingTable(circuitRes.error.message, "org_job_circuit_breakers")) {
-    throw new Error(`Failed to load job circuit state: ${circuitRes.error.message}`);
+  let circuits: CircuitRow[] = [];
+  const circuitPrimary = await supabase
+    .from("org_job_circuit_breakers")
+    .select("id, job_name, consecutive_failures, paused_until, resume_stage, dry_run_until, last_error, updated_at")
+    .eq("org_id", orgId)
+    .order("updated_at", { ascending: false })
+    .limit(30);
+  if (!circuitPrimary.error) {
+    circuits = ((circuitPrimary.data ?? []) as CircuitRow[]).map((row) => ({
+      ...row,
+      resume_stage: row.resume_stage ?? "active",
+      dry_run_until: row.dry_run_until ?? null,
+      last_error: row.last_error ?? null
+    }));
+  } else if (isMissingTable(circuitPrimary.error.message, "org_job_circuit_breakers")) {
+    circuits = [];
+  } else if (isMissingColumn(circuitPrimary.error.message, "resume_stage")) {
+    const circuitFallback = await supabase
+      .from("org_job_circuit_breakers")
+      .select("id, job_name, consecutive_failures, paused_until, updated_at")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false })
+      .limit(30);
+    if (!circuitFallback.error) {
+      circuits = ((circuitFallback.data ?? []) as Array<{
+        id: string;
+        job_name: string;
+        consecutive_failures: number;
+        paused_until: string | null;
+        updated_at: string;
+      }>).map((row) => ({
+        ...row,
+        resume_stage: row.paused_until ? "paused" : "active",
+        dry_run_until: null,
+        last_error: null
+      }));
+    } else if (!isMissingTable(circuitFallback.error.message, "org_job_circuit_breakers")) {
+      throw new Error(`Failed to load job circuit state: ${circuitFallback.error.message}`);
+    }
+  } else {
+    throw new Error(`Failed to load job circuit state: ${circuitPrimary.error.message}`);
   }
 
   const plannerRuns = (plannerRunsRes.data ?? []) as PlannerRunRow[];
@@ -199,7 +239,6 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const alertEvents = (alertEventsRes.data ?? []) as AlertEventRow[];
   const incidentEvents = (incidentEventsRes.data ?? []) as IncidentEventRow[];
   const retryEvents = (retryEventsRes.data ?? []) as RetryEventRow[];
-  const circuits = (circuitRes.data ?? []) as CircuitRow[];
   const filteredPlannerRuns = failedOnly ? plannerRuns.filter((row) => row.status === "failed") : plannerRuns;
   const filteredReviewEvents = failedOnly
     ? reviewEvents.filter((row) => row.event_type === "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED")
@@ -460,6 +499,7 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
               type="text"
               name="reason"
               placeholder="解除理由（監査用）"
+              required
               className="w-48 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
             />
             <button
@@ -479,7 +519,10 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
                 <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-2 py-2">job_name</th>
                   <th className="px-2 py-2">consecutive_failures</th>
+                  <th className="px-2 py-2">stage</th>
                   <th className="px-2 py-2">paused_until</th>
+                  <th className="px-2 py-2">dry_run_until</th>
+                  <th className="px-2 py-2">last_error</th>
                   <th className="px-2 py-2">updated_at</th>
                   <th className="px-2 py-2 text-right">actions</th>
                 </tr>
@@ -494,8 +537,19 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
                     <tr key={row.id} className="border-b border-slate-100 text-slate-700">
                       <td className="px-2 py-2 font-mono text-xs">{row.job_name}</td>
                       <td className="px-2 py-2">{row.consecutive_failures}</td>
+                      <td className="px-2 py-2">
+                        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs">
+                          {row.resume_stage}
+                        </span>
+                      </td>
                       <td className={`px-2 py-2 ${isOpen ? "font-semibold text-orange-700" : "text-slate-500"}`}>
                         {row.paused_until ? new Date(row.paused_until).toLocaleString("ja-JP") : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-slate-500">
+                        {row.dry_run_until ? new Date(row.dry_run_until).toLocaleString("ja-JP") : "-"}
+                      </td>
+                      <td className="max-w-[240px] truncate px-2 py-2 text-xs text-slate-500">
+                        {row.last_error || "-"}
                       </td>
                       <td className="px-2 py-2 text-slate-500">{new Date(row.updated_at).toLocaleString("ja-JP")}</td>
                       <td className="px-2 py-2 text-right">
@@ -505,6 +559,7 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
                             type="text"
                             name="reason"
                             placeholder="理由"
+                            required
                             className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
                           />
                           <button

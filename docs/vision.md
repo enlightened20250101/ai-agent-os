@@ -75,3 +75,50 @@ It does not mean unbounded control. It means bounded autonomy with measurable sa
 
 ## Strategic Outcome
 By year 10, AI Agent OS is the default enterprise automation governance layer: workflows are mostly autonomous, humans intervene by exception, and audit confidence remains first-class.
+
+## Backoffice Native OS Extension (Adopted)
+
+This product explicitly targets backoffice execution domains:
+- accounting
+- finance operations
+- general affairs
+- procurement
+- legal operations (document/approval-heavy paths first)
+
+### Core experience to optimize
+- AI receives and detects work (not only user-entered tasks).
+- AI understands source documents/events, plans work, and executes eligible actions.
+- Humans primarily handle:
+  - approvals for high-risk operations
+  - exception resolution
+  - policy and governance tuning
+
+### Operating principles added
+- Multi-agent specialization is first-class:
+  - executor agents (process/act)
+  - verifier/auditor agents (challenge/check)
+- Every decision must carry evidence anchors:
+  - source artifact reference
+  - applied rule/policy reference
+  - prior-case reference where applicable
+- Exception handling is a core throughput path:
+  - system should recover missing data, ask targeted questions, and continue flow.
+
+## Rational Scope Alignment (Adopt / Defer / Not target now)
+
+### Adopt now (aligned with current architecture)
+- Event-driven task discovery and planner-led proactive proposals.
+- Unified case/task ledger with end-to-end traceability.
+- Policy-first execution gates and approval controls.
+- Audit-ready evidence output as default artifact.
+- Per-org connector identity/config and strict org isolation.
+
+### Defer to phased rollout (not removed)
+- Bank write operations and high-impact financial side effects.
+- Fully autonomous legal decisioning beyond rule-bounded operations.
+- Broad ERP coverage before robust connector governance and conformance tests.
+
+### Not target as primary product behavior
+- Unbounded single-agent autonomy without role separation.
+- Opaque decisioning without recoverable evidence anchors.
+- “Autopilot first” in high-risk domains without risk/trust/budget gates.

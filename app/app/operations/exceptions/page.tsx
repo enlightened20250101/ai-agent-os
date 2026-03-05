@@ -491,6 +491,45 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
   const exportCsvHref = `/api/operations/exceptions/export?${exportParams.toString()}`;
   const exportJsonHref = `/api/operations/exceptions/export?${exportParams.toString()}&format=json`;
 
+  function guidanceForKind(kind: ExceptionKind) {
+    if (kind === "failed_action") {
+      return {
+        nextAction: "実行ログの原因を確認し、再試行可否を判断してから再実行します。",
+        question: "直近の設定変更や外部API制限に変更はありましたか？"
+      };
+    }
+    if (kind === "failed_workflow") {
+      return {
+        nextAction: "失敗ステップの入力値と前段出力を確認し、再試行または差戻しを選びます。",
+        question: "どのステップ結果が不整合で、再実行の前提条件は満たされていますか？"
+      };
+    }
+    if (kind === "stale_approval") {
+      return {
+        nextAction: "承認者へ期限付きリマインドを送り、必要なら代替承認者へエスカレーションします。",
+        question: "この承認を止めている判断材料は何で、追加情報は何が必要ですか？"
+      };
+    }
+    return {
+      nextAction: "ポリシーブロック理由を確認し、入力値修正または例外承認ルートへ回します。",
+      question: "どのポリシー条件に抵触しており、修正可能な入力項目はどれですか？"
+    };
+  }
+
+  function renderGuidance(kind: ExceptionKind) {
+    const guide = guidanceForKind(kind);
+    return (
+      <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 p-2 text-xs text-indigo-900">
+        <p>
+          <span className="font-semibold">次アクション:</span> {guide.nextAction}
+        </p>
+        <p className="mt-1">
+          <span className="font-semibold">回収質問テンプレ:</span> {guide.question}
+        </p>
+      </div>
+    );
+  }
+
   function renderCaseControls(args: { kind: ExceptionKind; refId: string; taskId: string | null; existing: ExceptionCase | null }) {
     const existing = args.existing;
     return (
@@ -933,6 +972,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                     ) : null}
                   </p>
                   {error ? <p className="mt-1 text-xs text-rose-700">error: {error}</p> : null}
+                  {renderGuidance("failed_action")}
                   <div className="mt-2 flex gap-3 text-xs">
                     <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-sky-700 underline">
                       タスクを開く
@@ -1013,6 +1053,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       </button>
                     </form>
                   </div>
+                  {renderGuidance("failed_workflow")}
                   {renderCaseControls({
                     kind: "failed_workflow",
                     refId: row.id,
@@ -1073,6 +1114,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       タスクを開く
                     </Link>
                   </div>
+                  {renderGuidance("stale_approval")}
                   {renderCaseControls({
                     kind: "stale_approval",
                     refId: row.id,
@@ -1128,6 +1170,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       Evidence
                     </Link>
                   </div>
+                  {renderGuidance("policy_block")}
                   {renderCaseControls({
                     kind: "policy_block",
                     refId: task.id,

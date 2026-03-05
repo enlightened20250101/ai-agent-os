@@ -727,3 +727,123 @@ test("exceptions notify performs auto-assign and escalation audit events", async
     }
   }
 });
+
+test("planner API returns skipped_circuit and skipped_dry_run under circuit stages", async ({ page, request }, testInfo) => {
+  const password = requireEnv("E2E_PASSWORD");
+  const cleanupToken = requireEnv("E2E_CLEANUP_TOKEN");
+
+  const timestamp = Date.now();
+  const email = `e2e+circuit+${timestamp}@example.com`;
+  let orgId: string | null = null;
+  let flowSucceeded = false;
+
+  try {
+    const provisionResponse = await request.post("/api/e2e/provision-user", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: { email, password }
+    });
+    if (!provisionResponse.ok()) {
+      const body = await provisionResponse.text();
+      throw new Error(`Failed to provision E2E user: ${provisionResponse.status()} ${body}`);
+    }
+
+    await page.goto("/login");
+    await page.getByLabel("メールアドレス").fill(email);
+    await page.getByLabel("パスワード").fill(password);
+    await page.getByRole("button", { name: "ログイン" }).click();
+    await page.waitForURL(/\/app(\/onboarding)?/);
+
+    if (new URL(page.url()).pathname === "/app/onboarding") {
+      const continueButton = page.getByRole("button", { name: /続行|ワークスペース作成中/ });
+      await expect(continueButton).toBeVisible();
+      await continueButton.click();
+      await page.waitForURL("/app", { timeout: 30_000 });
+    }
+
+    await expect(page).toHaveURL(/\/app$/);
+    const orgContextText = await page.getByText(/組織コンテキスト:\s+/).innerText();
+    orgId = orgContextText.split("組織コンテキスト:")[1]?.trim() ?? null;
+    if (!orgId) {
+      throw new Error("Failed to resolve orgId for circuit e2e.");
+    }
+
+    const seedPausedRes = await request.post("/api/e2e/seed-job-circuit", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: {
+        orgId,
+        jobName: "planner_run_single",
+        stage: "paused",
+        pausedMinutes: 20,
+        consecutiveFailures: 5
+      }
+    });
+    if (!seedPausedRes.ok()) {
+      throw new Error(`Failed to seed paused circuit: ${seedPausedRes.status()} ${await seedPausedRes.text()}`);
+    }
+
+    const pausedRunRes = await request.post(`/api/planner/run?org_id=${orgId}`);
+    expect(pausedRunRes.ok()).toBeTruthy();
+    const pausedRunJson = (await pausedRunRes.json()) as Record<string, unknown>;
+    expect(pausedRunJson.skipped_circuit).toBeTruthy();
+
+    await page.goto("/app/operations/jobs");
+    await expect(page.getByText("ジョブサーキット状態")).toBeVisible();
+    const row = page.locator("tr").filter({ hasText: "planner_run_single" }).first();
+    await expect(row).toBeVisible();
+    await row.getByPlaceholder("理由").fill("e2e resume");
+    await row.getByRole("button", { name: "このjobを解除" }).click();
+    await expect(page.getByText(/job\(planner_run_single\)のサーキットを解除しました/)).toBeVisible({
+      timeout: 30_000
+    });
+
+    const seedDryRes = await request.post("/api/e2e/seed-job-circuit", {
+      headers: {
+        "content-type": "application/json",
+        "x-e2e-cleanup-token": cleanupToken
+      },
+      data: {
+        orgId,
+        jobName: "planner_run_single",
+        stage: "dry_run",
+        dryRunMinutes: 15,
+        consecutiveFailures: 1
+      }
+    });
+    if (!seedDryRes.ok()) {
+      throw new Error(`Failed to seed dry-run circuit: ${seedDryRes.status()} ${await seedDryRes.text()}`);
+    }
+
+    const dryRunRes = await request.post(`/api/planner/run?org_id=${orgId}`);
+    expect(dryRunRes.ok()).toBeTruthy();
+    const dryRunJson = (await dryRunRes.json()) as Record<string, unknown>;
+    expect(dryRunJson.skipped_dry_run).toBeTruthy();
+
+    await page.goto("/app/operations/jobs");
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if ((await page.getByText("OPS_JOB_DRY_RUN_PASSED").count()) > 0) break;
+      await page.reload();
+    }
+    await expect(page.getByText("OPS_JOB_DRY_RUN_PASSED").first()).toBeVisible({ timeout: 30_000 });
+
+    flowSucceeded = true;
+  } finally {
+    const didPassByStatus = testInfo.status === testInfo.expectedStatus;
+    if (flowSucceeded && didPassByStatus && orgId) {
+      await request.post("/api/test/cleanup", {
+        headers: {
+          "content-type": "application/json",
+          "x-e2e-cleanup-token": cleanupToken
+        },
+        data: { orgId }
+      });
+    } else {
+      console.error(`[E2E_DEBUG][circuit] skipping cleanup for failed run orgId=${orgId ?? "unknown"}`);
+    }
+  }
+});

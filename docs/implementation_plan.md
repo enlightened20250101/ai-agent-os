@@ -8,6 +8,11 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Improve planner quality and proposal triage UX.
 - Proposal filters by reason/risk/policy status.
 - Proposal accept/reject reason taxonomy.
+- Backoffice trigger presets:
+  - overdue approvals
+  - failed executions
+  - deadline proximity (close cycle)
+  - unmatched/blocked operational records
 
 ### DB changes
 - `task_proposals`:
@@ -37,6 +42,8 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Workflow templates page (define multi-step flows).
 - Workflow run view with step-by-step status and retry actions.
 - Tasks can attach a workflow template.
+- Add case-stage templates for backoffice:
+  - intake -> reconcile -> approve -> execute -> close
 
 ### DB changes
 - Add `workflow_templates`, `workflow_runs`, `workflow_steps`.
@@ -63,6 +70,9 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Autonomy settings page per org (`L0-L3` toggles by action type).
 - “Auto-executed” badges and rationale in task timeline.
 - Approval queue excludes policy-approved low-risk actions.
+- Add SoD policy presets for finance ops:
+  - initiator/approver separation
+  - high-amount forced approval
 
 ### DB changes
 - Add `risk_assessments`, `trust_scores`, `budget_limits`, `budget_usage`.
@@ -88,6 +98,10 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Exception inbox page with severity and ownership.
 - Safe mode toggle at org level.
 - Workflow compensation/recovery actions.
+- Exception recovery assistant:
+  - targeted clarification prompts
+  - auto-assignment and SLA escalation
+  - explicit next-best-action suggestions
 
 ### DB changes
 - Add `incidents`, `incident_events`, `org_runtime_modes`.
@@ -113,6 +127,11 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Dashboard: success rate, approval latency, policy block rate, trust trend, savings estimate.
 - Policy tuning suggestions based on outcomes.
 - Agent quality scorecards.
+- Backoffice KPI set:
+  - touchless processing rate
+  - reconciliation cycle time
+  - exception recurrence rate
+  - audit finding rate
 
 ### DB changes
 - Add `feedback_events`, `outcome_summaries`, `agent_preferences`.
@@ -138,6 +157,10 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Connector scope management (least privilege per org/connector).
 - Key rotation controls and audit exports.
 - Compliance report center (SOC2-ready evidence views).
+- Formal control packs for backoffice audits:
+  - approval lineage
+  - evidence-anchor completeness
+  - SoD violation reports
 
 ### DB changes
 - Encrypt `connector_accounts.secrets_json` at rest (KMS-backed envelope or pgcrypto strategy).
