@@ -951,3 +951,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `bulkRetryFailedCommands` 実行時に `/app` も再検証対象に追加した。
 - Why: ホーム画面起点の操作後に指標とバナー状態が即時反映されるようにするため。
+
+- Decision: `TOP(/app)` の優先対応キューに `Next Actions (auto-sorted)` を追加し、incident/failed action/stale approval/policy block/high-failure intent/job failure を重み付きスコアで並べ替えて上位5件を表示する。
+- Why: オペレーターが毎回どこから着手するか判断するコストを減らし、復旧初動の一貫性を高めるため。
