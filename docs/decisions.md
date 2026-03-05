@@ -753,3 +753,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/api/chat/confirmations/expire` を追加し、org単体/全orgバッチで pending確認の期限切れ処理を実行できるようにした（token guard + retry/circuit対応）。
 - Why: 手動整理に依存せず、確認キューを自動で健全化する定期保守ループを確立するため。
+
+- Decision: `/api/chat/audit/export` を追加し、`/app/chat/audit` のフィルタ条件をそのまま CSV/JSON 出力できるようにした。
+- Why: チャット起点オペレーションの監査証跡を外部レビュー・保存へ渡しやすくするため。
+
+- Decision: chat監査エクスポートに `CHAT_EXPORT_TOKEN` を導入し、`x-export-token + org_id` で server-to-server 取得を許可するモードを追加した。
+- Why: UIセッションなしでも安全に定期取得やバックアップを実行できるようにするため。

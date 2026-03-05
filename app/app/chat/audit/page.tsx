@@ -145,6 +145,12 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
         .filter(Boolean)
     )
   ).sort();
+  const exportParams = new URLSearchParams();
+  exportParams.set("status", statusFilter);
+  exportParams.set("scope", scopeFilter);
+  exportParams.set("intent", intentFilter);
+  exportParams.set("include_result", "1");
+  exportParams.set("limit", "5000");
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -168,6 +174,18 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
           </Link>
           <Link href="/app/chat/me" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700">
             個人チャット
+          </Link>
+          <Link
+            href={`/api/chat/audit/export?${exportParams.toString()}&format=csv`}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700"
+          >
+            CSV出力
+          </Link>
+          <Link
+            href={`/api/chat/audit/export?${exportParams.toString()}&format=json`}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700"
+          >
+            JSON出力
           </Link>
         </div>
       </header>

@@ -56,6 +56,7 @@ Set these in `.env.local`:
 - `APPROVAL_REMINDER_TOKEN` (optional; fallback to exception/incident/governance/planner token)
 - `CHAT_CONFIRMATIONS_TOKEN` (optional; fallback to approval/exception/incident/governance/planner token)
 - `EXCEPTION_EXPORT_TOKEN` (optional; enables server-to-server exception export API access)
+- `CHAT_EXPORT_TOKEN` (optional; enables server-to-server chat audit export API access)
 - `EXCEPTION_ALERT_COOLDOWN_MINUTES` (default `60`)
 - `OPS_JOB_RETRY_MAX_ATTEMPTS` (default `2`, max per-org attempt count for batch APIs)
 - `OPS_JOB_RETRY_BACKOFF_MS` (default `500`, linear backoff base milliseconds)
@@ -156,6 +157,8 @@ Set these in `.env.local`:
   - filter bar also controls `include_payload` toggle for CSV/JSON export.
   - exception queue UI provides both CSV and JSON export buttons with current filters.
   - records case change audit trail and shows recent `exception_case_events`.
+  - `/app/chat/audit` supports CSV/JSON export with current filters.
+  - `/api/chat/audit/export` supports token mode (`x-export-token`) with `CHAT_EXPORT_TOKEN` + `org_id`.
 
 ### Exception Export CLI
 
