@@ -699,3 +699,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 個人チャット秘匿を担保するため、chat系RLSを `org member` 条件のみから `session access` 条件（shared or owner_user_id=auth.uid）へ強化した。
 - Why: 同一org内でも personal chat の内容は本人のみ参照可能にし、shared chat と明確にアクセス境界を分離するため。
+
+- Decision: Gmail実行ロジックを `executeTaskDraftActionShared` に共通化し、タスク詳細UI実行とチャット実行で同一のガード（policy/governance/idempotency/concurrency）を使用する。
+- Why: 実行経路ごとの差分バグを減らし、安全条件と監査イベントの一貫性を維持するため。
+
+- Decision: チャット意図に `execute_action` を追加し、対象タスクのメール実行を Yes 確認後にのみ実行する。
+- Why: 「UI操作なし実行」を前進させつつ、誤実行防止の human confirmation を維持するため。

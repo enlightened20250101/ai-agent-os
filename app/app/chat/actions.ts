@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { executeTaskDraftActionShared } from "@/lib/actions/executeDraft";
 import { decideApprovalShared } from "@/lib/approvals/decide";
 import { parseChatIntent } from "@/lib/chat/intents";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
@@ -460,6 +461,41 @@ async function runDecideApprovalCommand(args: {
   };
 }
 
+async function runExecuteActionCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const taskHint = typeof intentJson.taskHint === "string" ? intentJson.taskHint : null;
+  const task = await findTaskForChat({ supabase, orgId, taskHint });
+
+  const result = await executeTaskDraftActionShared({
+    supabase,
+    orgId,
+    userId,
+    taskId: task.id,
+    source: "chat_command"
+  });
+
+  return {
+    executionRefType: "action",
+    executionRefId: result.actionId,
+    result: {
+      task_id: task.id,
+      action_id: result.actionId,
+      status: result.status,
+      reason: result.reason ?? null
+    },
+    message:
+      result.status === "success"
+        ? `メール実行が完了しました: ${task.title} (/app/tasks/${task.id})`
+        : `メール実行はスキップされました: ${result.message} (/app/tasks/${task.id})`,
+    touchedTaskId: task.id
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -475,6 +511,9 @@ async function executeIntentCommand(args: {
   }
   if (args.intentType === "decide_approval") {
     return runDecideApprovalCommand(args);
+  }
+  if (args.intentType === "execute_action") {
+    return runExecuteActionCommand(args);
   }
   throw new Error("この実行タイプは未対応です。");
 }

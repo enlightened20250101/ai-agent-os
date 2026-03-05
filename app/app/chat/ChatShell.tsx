@@ -160,7 +160,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
           />
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-500">
-              タスク作成系は必ず確認ステップを挟んで実行されます。
+              起票・承認依頼・承認判断・実行はすべて確認ステップを挟んで実行されます。
             </p>
             <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
               送信

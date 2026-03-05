@@ -24,6 +24,12 @@ export type ParsedChatIntent =
       plan: { summary: string; decision: "approved" | "rejected"; taskHint: string | null; reason: string | null };
     }
   | {
+      intentType: "execute_action";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; taskHint: string | null };
+    }
+  | {
       intentType: "unknown";
       confidence: number;
       requiresConfirmation: false;
@@ -101,6 +107,23 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         decision,
         taskHint: quoted,
         reason: extractReason(text)
+      }
+    };
+  }
+
+  const executeLike =
+    /(実行して|実行していい|メール送信して|メールを送って|execute|send email)/i.test(text) ||
+    (/タスク/.test(text) && /(実行|送信)/.test(text));
+  if (executeLike) {
+    return {
+      intentType: "execute_action",
+      confidence: 0.79,
+      requiresConfirmation: true,
+      plan: {
+        summary: quoted
+          ? `タスク「${quoted}」のメール実行を開始します。`
+          : "最新の対象タスクでメール実行を開始します。",
+        taskHint: quoted
       }
     };
   }
