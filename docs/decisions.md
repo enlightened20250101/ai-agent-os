@@ -1749,3 +1749,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `external_events` 系 migration（`20260306220000`, `20260306223000`）に「テーブル存在時のみ実行するガード」を追加し、`20260306235000_external_events_intake.sql` 側へ `priority/triage_note/triaged_at/linked_case_id` と関連 index を統合した。
 - Why: 既存 migration の時系列差で `supabase db push` が失敗する環境があったため。順序を変えずに前方互換で修復し、新規環境でも同一スキーマに収束させるため。
+
+- Decision: 承認拒否のうち職務分掌（SoD）で弾いたケースを `APPROVAL_BLOCKED` として `task_events` に記録し、`/app/approvals` に期間内ブロック件数（合計/SoD）と直近履歴を追加した。あわせて `blocked_only=1` フィルタで「ブロック発生タスク」へ絞り込めるようにした。
+- Why: これまで SoD 拒否はユーザーエラー表示のみで運用監査に残らず、再発傾向や訓練対象の把握が難しかったため。Ledgerに残して可視化することで、統制運用の改善サイクルを回しやすくするため。

@@ -102,6 +102,21 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
     const settings = await getGovernanceSettings({ supabase, orgId });
     const taskCreatorId = (task.created_by_user_id as string | null | undefined) ?? null;
     if (settings.enforceInitiatorApproverSeparation && taskCreatorId && taskCreatorId === actorId) {
+      await appendTaskEvent({
+        supabase,
+        orgId,
+        taskId,
+        actorType,
+        actorId,
+        eventType: "APPROVAL_BLOCKED",
+        payload: {
+          approval_id: approvalId,
+          source,
+          reason_code: "sod_initiator_approver_conflict",
+          task_creator_user_id: taskCreatorId,
+          attempted_approver_user_id: actorId
+        }
+      });
       throw new Error("職務分掌ポリシーにより、起票者は自分のタスクを承認できません。");
     }
   }

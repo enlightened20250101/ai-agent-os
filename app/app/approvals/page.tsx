@@ -23,6 +23,7 @@ type ApprovalsPageProps = {
     ok?: string;
     stale_only?: string;
     high_risk_only?: string;
+    blocked_only?: string;
     sort?: string;
     window?: string;
     ref_from?: string;
@@ -41,6 +42,13 @@ type ApprovalRow = {
 
 type ReminderEventRow = {
   task_id: string;
+  created_at: string;
+  payload_json: unknown;
+};
+
+type ApprovalBlockedEventRow = {
+  task_id: string;
+  actor_id: string | null;
   created_at: string;
   payload_json: unknown;
 };
@@ -81,6 +89,11 @@ function reminderSourceLabel(source: string) {
   return "不明";
 }
 
+function blockedReasonLabel(reasonCode: string) {
+  if (reasonCode === "sod_initiator_approver_conflict") return "職務分掌: 起票者は自身の承認不可";
+  return reasonCode || "不明";
+}
+
 export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -95,11 +108,13 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const staleHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleOnly = sp.stale_only === "1";
   const highRiskOnly = sp.high_risk_only === "1";
+  const blockedOnly = sp.blocked_only === "1";
   const sort = sp.sort === "newest" ? "newest" : "oldest";
-  const hasActiveFilters = staleOnly || highRiskOnly || sort !== "oldest" || windowFilter !== "7d";
+  const hasActiveFilters = staleOnly || highRiskOnly || blockedOnly || sort !== "oldest" || windowFilter !== "7d";
   const filterSummary = [
     staleOnly ? "SLA超過のみ" : null,
     highRiskOnly ? "高リスク承認不足のみ" : null,
+    blockedOnly ? "承認ブロック発生タスクのみ" : null,
     sort === "newest" ? "並び順=新しい順" : null,
     windowFilter !== "7d" ? `期間=${windowLabel(windowFilter)}` : null
   ]
@@ -108,6 +123,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const currentFilterParams = new URLSearchParams();
   if (staleOnly) currentFilterParams.set("stale_only", "1");
   if (highRiskOnly) currentFilterParams.set("high_risk_only", "1");
+  if (blockedOnly) currentFilterParams.set("blocked_only", "1");
   if (sort !== "oldest") currentFilterParams.set("sort", sort);
   if (windowFilter !== "7d") currentFilterParams.set("window", windowFilter);
   const currentFilterPath =
@@ -115,7 +131,8 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const autoMinStaleRaw = Number.parseInt(process.env.APPROVAL_REMINDER_AUTO_MIN_STALE ?? "3", 10);
   const autoMinStale = Number.isNaN(autoMinStaleRaw) ? 3 : Math.max(1, Math.min(1000, autoMinStaleRaw));
 
-  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }, reminderEventsRes, autoRunEventsRes] = await Promise.all([
+  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }, reminderEventsRes, autoRunEventsRes, blockedEventsRes] =
+    await Promise.all([
     supabase
       .from("approvals")
       .select("id, task_id, status, created_at, reason")
@@ -144,8 +161,16 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .in("event_type", ["APPROVAL_REMINDER_AUTO_RUN", "APPROVAL_REMINDER_AUTO_SKIPPED"])
       .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
-      .limit(100)
-  ]);
+      .limit(100),
+    supabase
+      .from("task_events")
+      .select("task_id, actor_id, created_at, payload_json")
+      .eq("org_id", orgId)
+      .eq("event_type", "APPROVAL_BLOCKED")
+      .gte("created_at", windowStartIso)
+      .order("created_at", { ascending: false })
+      .limit(500)
+    ]);
 
   if (error) {
     throw new Error(`Failed to load approvals: ${error.message}`);
@@ -158,6 +183,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   }
   if (autoRunEventsRes.error) {
     throw new Error(`Failed to load auto reminder run events: ${autoRunEventsRes.error.message}`);
+  }
+  if (blockedEventsRes.error) {
+    throw new Error(`Failed to load blocked approval events: ${blockedEventsRes.error.message}`);
   }
 
   const pendingApprovals = (approvals ?? []) as ApprovalRow[];
@@ -202,6 +230,22 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     event_type: "APPROVAL_REMINDER_AUTO_RUN" | "APPROVAL_REMINDER_AUTO_SKIPPED";
     payload_json: unknown;
   }>;
+  const blockedEvents = ((blockedEventsRes.data ?? []) as ApprovalBlockedEventRow[]).map((row) => {
+    const payload = parseObject(row.payload_json);
+    const reasonCode = typeof payload?.reason_code === "string" ? payload.reason_code : "";
+    const source = typeof payload?.source === "string" ? payload.source : "unknown";
+    return {
+      taskId: row.task_id,
+      actorId: row.actor_id,
+      createdAt: row.created_at,
+      reasonCode,
+      source
+    };
+  });
+  const blockedTaskIds = new Set(blockedEvents.map((row) => row.taskId));
+  const sodBlockedCount = blockedEvents.filter((row) => row.reasonCode === "sod_initiator_approver_conflict").length;
+  const blockedTotalCount = blockedEvents.length;
+  const blockedRecent = blockedEvents.slice(0, 10);
   const autoSentRuns = autoEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_RUN").length;
   const autoSkippedRuns = autoEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_SKIPPED").length;
   const latestAutoEvent = autoEvents[0] ?? null;
@@ -232,7 +276,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     autoStaleDelta !== null && autoStaleDelta > 0
       ? Math.max(1, Math.min(suggestedOneOffMinStale, Math.max(1, currentStalePendingCount - 1)))
       : suggestedOneOffMinStale;
-  const taskIds = Array.from(new Set([...pendingApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
+  const taskIds = Array.from(
+    new Set([...pendingApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId), ...blockedEvents.map((row) => row.taskId)])
+  );
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
   const pendingCount = weeklyRows.filter((row) => row.status === "pending").length;
@@ -400,6 +446,10 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     .filter((row) => {
       if (!highRiskOnly) return true;
       return row.requiredApprovals > 0 && row.approvalGap > 0;
+    })
+    .filter((row) => {
+      if (!blockedOnly) return true;
+      return blockedTaskIds.has(row.approval.task_id);
     });
 
   const highlightedApprovalId = (() => {
@@ -473,6 +523,16 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
               />
               高リスク承認不足のみ
             </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                name="blocked_only"
+                value="1"
+                defaultChecked={blockedOnly}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              承認ブロック発生タスクのみ
+            </label>
             <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
               適用
             </button>
@@ -518,7 +578,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </div>
       </form>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
           <p className="text-amber-700">{windowLabel(windowFilter)} 保留</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{pendingCount}</p>
@@ -536,7 +596,51 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           <p className="mt-1 text-2xl font-semibold text-slate-900">{highRiskInsufficientCount}</p>
           <p className="mt-1 text-[11px] text-slate-600">threshold={highRiskThreshold}</p>
         </div>
+        <div className={`rounded-md border p-3 text-sm ${blockedTotalCount > 0 ? "border-amber-300 bg-amber-100" : "border-slate-200 bg-slate-50"}`}>
+          <p className="text-slate-700">承認ブロック（合計）</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{blockedTotalCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">{windowLabel(windowFilter)} / APPROVAL_BLOCKED</p>
+        </div>
+        <div className={`rounded-md border p-3 text-sm ${sodBlockedCount > 0 ? "border-rose-300 bg-rose-100" : "border-slate-200 bg-slate-50"}`}>
+          <p className="text-slate-700">SoDブロック</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{sodBlockedCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">起票者≠承認者違反</p>
+        </div>
       </div>
+
+      <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-amber-900">承認ブロック履歴（{windowLabel(windowFilter)}）</p>
+          <span className="text-xs text-amber-800">APPROVAL_BLOCKED</span>
+        </div>
+        {blockedRecent.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {blockedRecent.map((event, idx) => {
+              const actorName =
+                event.actorId && memberDisplayNameByUserId.has(event.actorId)
+                  ? memberDisplayNameByUserId.get(event.actorId)
+                  : event.actorId
+                    ? "メンバー"
+                    : "system";
+              return (
+                <li key={`${event.taskId}-${event.createdAt}-${idx}`} className="rounded-md border border-amber-200 bg-white p-2 text-xs text-slate-700">
+                  <p className="font-medium text-slate-900">
+                    <Link href={`/app/tasks/${event.taskId}`} className="underline">
+                      {taskTitleById.get(event.taskId) ?? "タスク"}
+                    </Link>
+                  </p>
+                  <p className="mt-1 text-slate-600">
+                    {new Date(event.createdAt).toLocaleString("ja-JP")} | {blockedReasonLabel(event.reasonCode)}
+                  </p>
+                  <p className="mt-1 text-slate-500">実行者: {actorName ?? "不明"} / source: {event.source}</p>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs text-amber-900">直近{windowLabel(windowFilter)}の承認ブロックはありません。</p>
+        )}
+      </section>
 
       <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
