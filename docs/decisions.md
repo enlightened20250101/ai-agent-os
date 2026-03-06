@@ -1119,3 +1119,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` の Auto Guard カードは悪化時に「推奨実行」ボタンを主ボタンスタイル（rose塗り）へ切り替え、ラベルも `優先実行` に変更する。
 - Why: 悪化局面で最初に押すべきアクションを視覚的に明示し、対応着手までの判断時間を短縮するため。
+
+- Decision: 悪化時の Auto Guard 主ボタンはカード上段へ配置し、通常時の推奨ボタンは従来位置に残す出し分けにした。
+- Why: 悪化シグナル時に最優先アクションを視線の最初に置いて、クリックまでの迷いを最小化するため。

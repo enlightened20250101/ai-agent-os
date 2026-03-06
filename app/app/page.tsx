@@ -696,6 +696,17 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           <p className={`text-xs ${stalePendingApprovals >= autoMinStale ? "text-indigo-700" : "text-slate-600"}`}>
             Auto Guard ({autoMinStale}件閾値)
           </p>
+          {isAutoWorsening ? (
+            <form action={runGuardedAutoReminderNow} className="mt-2">
+              <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
+              <ConfirmSubmitButton
+                label={`優先実行: 推奨値(${suggestedGuardMinStale})`}
+                pendingLabel="実行中..."
+                confirmMessage={`Auto Guardを推奨閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
+                className="rounded-md border border-rose-600 bg-rose-600 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-700"
+              />
+            </form>
+          ) : null}
           <p className={`mt-1 text-2xl font-semibold ${stalePendingApprovals >= autoMinStale ? "text-indigo-900" : "text-slate-900"}`}>
             stale {stalePendingApprovals}
           </p>
@@ -703,19 +714,17 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           <p className="mt-1 text-[11px] text-slate-600">
             delta: {autoDelta === null ? "-" : autoDelta > 0 ? `+${autoDelta}` : `${autoDelta}`}
           </p>
-          <form action={runGuardedAutoReminderNow} className="mt-2">
-            <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
-            <ConfirmSubmitButton
-              label={isAutoWorsening ? `優先実行: 推奨値(${suggestedGuardMinStale})` : `推奨値(${suggestedGuardMinStale})で実行`}
-              pendingLabel="実行中..."
-              confirmMessage={`Auto Guardを推奨閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
-              className={`rounded-md px-2 py-1 text-xs ${
-                isAutoWorsening
-                  ? "border border-rose-600 bg-rose-600 font-semibold text-white hover:bg-rose-700"
-                  : "border border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-100"
-              }`}
-            />
-          </form>
+          {!isAutoWorsening ? (
+            <form action={runGuardedAutoReminderNow} className="mt-2">
+              <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
+              <ConfirmSubmitButton
+                label={`推奨値(${suggestedGuardMinStale})で実行`}
+                pendingLabel="実行中..."
+                confirmMessage={`Auto Guardを推奨閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
+                className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
+              />
+            </form>
+          ) : null}
           {urgentGuardMinStale !== suggestedGuardMinStale ? (
             <form action={runGuardedAutoReminderNow} className="mt-2">
               <input type="hidden" name="min_stale" value={String(urgentGuardMinStale)} />
