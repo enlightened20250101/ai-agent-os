@@ -442,6 +442,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const autoDeltaText =
     autoDelta === null ? "delta=n/a" : autoDelta > 0 ? `delta=+${autoDelta}` : `delta=${autoDelta}`;
   const autoQueueSummary = `${autoReason} / ${autoDeltaText}`;
+  const isAutoWorsening = autoDelta !== null && autoDelta > 0;
   const autoSummaryTextClass =
     autoDelta === null
       ? "text-slate-600"
@@ -705,10 +706,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           <form action={runGuardedAutoReminderNow} className="mt-2">
             <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
             <ConfirmSubmitButton
-              label={`推奨値(${suggestedGuardMinStale})で実行`}
+              label={isAutoWorsening ? `優先実行: 推奨値(${suggestedGuardMinStale})` : `推奨値(${suggestedGuardMinStale})で実行`}
               pendingLabel="実行中..."
               confirmMessage={`Auto Guardを推奨閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
-              className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
+              className={`rounded-md px-2 py-1 text-xs ${
+                isAutoWorsening
+                  ? "border border-rose-600 bg-rose-600 font-semibold text-white hover:bg-rose-700"
+                  : "border border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-100"
+              }`}
             />
           </form>
           {urgentGuardMinStale !== suggestedGuardMinStale ? (

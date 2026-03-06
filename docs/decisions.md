@@ -1116,3 +1116,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` の滞留承認カードは `delta>0`（悪化）時に `悪化中` バッジを pulse 表示する。
 - Why: 優先対応キュー内で悪化シグナルに視線を集め、初動対応の見落としを減らすため。
+
+- Decision: `/app` の Auto Guard カードは悪化時に「推奨実行」ボタンを主ボタンスタイル（rose塗り）へ切り替え、ラベルも `優先実行` に変更する。
+- Why: 悪化局面で最初に押すべきアクションを視覚的に明示し、対応着手までの判断時間を短縮するため。
