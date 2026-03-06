@@ -1032,3 +1032,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `business_cases` / `tasks.case_id` が未適用の環境でも既存フローを壊さないよう、UIとserver actionに missing table/column フォールバックを実装した。
 - Why: migration適用タイミング差で開発・検証環境が一時不一致でも、既存のタスク運用を継続可能にするため。
+
+- Decision: `chat_*` テーブル未適用環境で `/app/chat/shared|me|audit` が 500 にならないよう、missing-schema検知 (`isMissingChatSchemaError`) とフォールバックUIを実装した。
+- Why: 現場の migration 適用遅延時でも画面が即死せず、原因と対処（`supabase db push`）を明示して運用停止を避けるため。

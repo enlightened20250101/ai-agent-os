@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { bulkRetryFailedCommands, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { CopyFilterLinkButton } from "@/app/app/chat/audit/CopyFilterLinkButton";
+import { isMissingChatSchemaError } from "@/lib/chat/schema";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -133,6 +134,16 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
   }
   const { data: commandsData, error: commandsError } = await commandQuery;
   if (commandsError) {
+    if (isMissingChatSchemaError(commandsError.message)) {
+      return (
+        <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <h1 className="text-xl font-semibold text-amber-900">チャット監査</h1>
+          <p className="text-sm text-amber-800">
+            chat 機能のDB migration（`chat_*` テーブル）が未適用です。`supabase db push` 実行後に監査ログを表示できます。
+          </p>
+        </section>
+      );
+    }
     throw new Error(`Failed to load chat command logs: ${commandsError.message}`);
   }
 
@@ -164,6 +175,16 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
       .eq("org_id", orgId)
       .in("id", sessionIds);
     if (sessionsError) {
+      if (isMissingChatSchemaError(sessionsError.message)) {
+        return (
+          <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
+            <h1 className="text-xl font-semibold text-amber-900">チャット監査</h1>
+            <p className="text-sm text-amber-800">
+              chat session テーブルが未適用です。`supabase db push` 実行後に監査ログを表示できます。
+            </p>
+          </section>
+        );
+      }
       throw new Error(`Failed to load chat sessions: ${sessionsError.message}`);
     }
     sessionMap = new Map(
@@ -185,6 +206,16 @@ export default async function ChatAuditPage({ searchParams }: AuditPageProps) {
       .eq("org_id", orgId)
       .in("id", intentIds);
     if (intentsError) {
+      if (isMissingChatSchemaError(intentsError.message)) {
+        return (
+          <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
+            <h1 className="text-xl font-semibold text-amber-900">チャット監査</h1>
+            <p className="text-sm text-amber-800">
+              chat intent テーブルが未適用です。`supabase db push` 実行後に監査ログを表示できます。
+            </p>
+          </section>
+        );
+      }
       throw new Error(`Failed to load chat intents: ${intentsError.message}`);
     }
     intentMap = new Map(

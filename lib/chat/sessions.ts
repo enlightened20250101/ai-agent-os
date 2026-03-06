@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isMissingChatSchemaError } from "@/lib/chat/schema";
 
 export type ChatScope = "shared" | "personal";
 
@@ -23,6 +24,9 @@ export async function getOrCreateChatSession(args: {
 
   const { data: existing, error: lookupError } = await query.maybeSingle();
   if (lookupError) {
+    if (isMissingChatSchemaError(lookupError.message)) {
+      throw new Error(`chat schema missing: ${lookupError.message}`);
+    }
     throw new Error(`chat session lookup failed: ${lookupError.message}`);
   }
   if (existing?.id) {
@@ -45,6 +49,9 @@ export async function getOrCreateChatSession(args: {
     .select("id, scope, owner_user_id, title")
     .single();
   if (createError) {
+    if (isMissingChatSchemaError(createError.message)) {
+      throw new Error(`chat schema missing: ${createError.message}`);
+    }
     throw new Error(`chat session create failed: ${createError.message}`);
   }
 

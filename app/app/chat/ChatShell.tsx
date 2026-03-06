@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { confirmChatCommand, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
+import { isMissingChatSchemaError } from "@/lib/chat/schema";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import type { ChatScope } from "@/lib/chat/sessions";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
@@ -76,7 +77,26 @@ export async function ChatShell({ scope, title, description, submitAction, searc
     sp.cmd_status === "failed" || sp.cmd_status === "pending" || sp.cmd_status === "running" || sp.cmd_status === "done"
       ? sp.cmd_status
       : "all";
-  const session = await getOrCreateChatSession({ supabase, orgId, scope, userId });
+  let session: Awaited<ReturnType<typeof getOrCreateChatSession>> | null = null;
+  try {
+    session = await getOrCreateChatSession({ supabase, orgId, scope, userId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "chat session error";
+    if (isMissingChatSchemaError(message)) {
+      return (
+        <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <h1 className="text-xl font-semibold text-amber-900">{title}</h1>
+          <p className="text-sm text-amber-800">
+            chat 機能のDB migration（`chat_*` テーブル）が未適用です。`supabase db push` を実行後に再読み込みしてください。
+          </p>
+        </section>
+      );
+    }
+    throw error;
+  }
+  if (!session) {
+    throw new Error("chat session unavailable");
+  }
   const openIncident = await getLatestOpenIncident({ supabase, orgId });
 
   const [
@@ -123,6 +143,16 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   ]);
 
   if (messagesError) {
+    if (isMissingChatSchemaError(messagesError.message)) {
+      return (
+        <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <h1 className="text-xl font-semibold text-amber-900">{title}</h1>
+          <p className="text-sm text-amber-800">
+            chat メッセージテーブルが未適用です。`supabase db push` 後に利用可能になります。
+          </p>
+        </section>
+      );
+    }
     throw new Error(`Failed to load chat messages: ${messagesError.message}`);
   }
   if (confirmationsError) {
