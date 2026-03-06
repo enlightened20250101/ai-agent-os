@@ -10,6 +10,10 @@ create table if not exists public.external_events (
   payload_json jsonb not null default '{}'::jsonb,
   status text not null default 'new' check (status in ('new', 'processed', 'ignored', 'failed')),
   source text not null default 'api',
+  priority text not null default 'normal' check (priority in ('low', 'normal', 'high', 'urgent')),
+  triage_note text,
+  triaged_at timestamptz,
+  linked_case_id uuid references public.business_cases(id) on delete set null,
   occurred_at timestamptz not null default timezone('utc', now()),
   processed_at timestamptz,
   created_at timestamptz not null default timezone('utc', now())
@@ -24,6 +28,12 @@ create index if not exists idx_external_events_org_status_created_at
 
 create index if not exists idx_external_events_org_occurred_at
   on public.external_events (org_id, occurred_at desc);
+
+create index if not exists idx_external_events_org_priority_created_at
+  on public.external_events (org_id, priority, created_at desc);
+
+create index if not exists idx_external_events_org_linked_case
+  on public.external_events (org_id, linked_case_id);
 
 grant select, insert, update, delete on public.external_events to authenticated, service_role;
 

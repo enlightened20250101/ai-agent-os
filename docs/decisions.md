@@ -1743,3 +1743,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Playwright E2E はプレースホルダ文言や英語固定テキストへの依存を減らし、`name` 属性セレクタ・`href` セレクタ・日英両対応の状態ラベル正規表現で判定する方針に更新した。UI上で再実行ボタンが非表示になるケースは「非表示+実行済み文言」を成功条件として扱う。
 - Why: 日本語UI改善や文言変更でE2Eが連鎖的に不安定化するのを防ぎ、機能の本質（状態遷移・イベント記録）を検証対象として維持するため。
+
+- Decision: `org_autonomy_settings` に `enforce_initiator_approver_separation`（default: false）を追加し、ガバナンス設定UIから起票者≠承認者（SoD）を組織単位で有効化できるようにした。承認処理では有効時に「起票者が自身のタスクを承認」しようとした場合、承認更新前に拒否する。
+- Why: 理想像で求める職務分掌（申請者/起票者と承認者の分離）を段階導入するため。既存運用を壊さない初期値（false）を維持しつつ、組織ごとに安全強化へ移行できるようにするため。
+
+- Decision: `external_events` 系 migration（`20260306220000`, `20260306223000`）に「テーブル存在時のみ実行するガード」を追加し、`20260306235000_external_events_intake.sql` 側へ `priority/triage_note/triaged_at/linked_case_id` と関連 index を統合した。
+- Why: 既存 migration の時系列差で `supabase db push` が失敗する環境があったため。順序を変えずに前方互換で修復し、新規環境でも同一スキーマに収束させるため。

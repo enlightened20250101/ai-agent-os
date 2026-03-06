@@ -10,6 +10,7 @@ export type AutonomyLevel = "L0" | "L1" | "L2" | "L3" | "L4";
 export type GovernanceSettings = {
   autonomyLevel: AutonomyLevel;
   autoExecuteGoogleSendEmail: boolean;
+  enforceInitiatorApproverSeparation: boolean;
   maxAutoExecuteRiskScore: number;
   minTrustScore: number;
   dailySendEmailLimit: number;
@@ -58,6 +59,7 @@ export type GovernanceEvaluation = {
 const DEFAULT_SETTINGS: GovernanceSettings = {
   autonomyLevel: "L1",
   autoExecuteGoogleSendEmail: false,
+  enforceInitiatorApproverSeparation: false,
   maxAutoExecuteRiskScore: 25,
   minTrustScore: 80,
   dailySendEmailLimit: 20
@@ -104,6 +106,10 @@ function parseSettingsRow(row: Record<string, unknown> | null): GovernanceSettin
       typeof row.auto_execute_google_send_email === "boolean"
         ? row.auto_execute_google_send_email
         : DEFAULT_SETTINGS.autoExecuteGoogleSendEmail,
+    enforceInitiatorApproverSeparation:
+      typeof row.enforce_initiator_approver_separation === "boolean"
+        ? row.enforce_initiator_approver_separation
+        : DEFAULT_SETTINGS.enforceInitiatorApproverSeparation,
     maxAutoExecuteRiskScore:
       typeof row.max_auto_execute_risk_score === "number"
         ? row.max_auto_execute_risk_score
@@ -124,7 +130,7 @@ export async function getGovernanceSettings(args: {
   const { data, error } = await args.supabase
     .from("org_autonomy_settings")
     .select(
-      "autonomy_level, auto_execute_google_send_email, max_auto_execute_risk_score, min_trust_score, daily_send_email_limit"
+      "autonomy_level, auto_execute_google_send_email, enforce_initiator_approver_separation, max_auto_execute_risk_score, min_trust_score, daily_send_email_limit"
     )
     .eq("org_id", args.orgId)
     .maybeSingle();

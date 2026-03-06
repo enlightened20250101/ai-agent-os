@@ -10,6 +10,7 @@ import {
   runGuardedAutoReminderNow,
   sendStaleApprovalRemindersNow
 } from "@/app/app/approvals/actions";
+import { getGovernanceSettings } from "@/lib/governance/evaluate";
 import { getHighRiskThreshold, getRequiredApprovalCountForRisk } from "@/lib/governance/guardrails";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -81,8 +82,9 @@ function reminderSourceLabel(source: string) {
 }
 
 export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps) {
-  const { orgId } = await requireOrgContext();
+  const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
+  const governanceSettings = await getGovernanceSettings({ supabase, orgId });
   const sp = searchParams ? await searchParams : {};
   const refFrom = typeof sp.ref_from === "string" ? sp.ref_from : "";
   const refIntent = typeof sp.ref_intent === "string" ? sp.ref_intent : "";
@@ -713,6 +715,11 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         <ul className="mt-5 space-y-4">
           {enrichedApprovals.map((row) => {
             const approval = row.approval;
+            const taskCreatorId = taskCreatorById.get(approval.task_id) ?? null;
+            const isSodBlocked =
+              governanceSettings.enforceInitiatorApproverSeparation &&
+              taskCreatorId !== null &&
+              taskCreatorId === userId;
             const isRef = highlightedApprovalId !== null && approval.id === highlightedApprovalId;
             return (
             <li
@@ -788,14 +795,24 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm md:max-w-md"
                 />
                 <div className="flex gap-2">
-                  <ConfirmSubmitButton
-                    name="decision"
-                    value="approved"
-                    label="承認"
-                    pendingLabel="処理中..."
-                    confirmMessage="この承認を承認に更新します。実行しますか？"
-                    className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
-                  />
+                  {isSodBlocked ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="cursor-not-allowed rounded-md bg-slate-300 px-3 py-2 text-sm text-white opacity-70"
+                    >
+                      承認不可（起票者）
+                    </button>
+                  ) : (
+                    <ConfirmSubmitButton
+                      name="decision"
+                      value="approved"
+                      label="承認"
+                      pendingLabel="処理中..."
+                      confirmMessage="この承認を承認に更新します。実行しますか？"
+                      className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
+                    />
+                  )}
                   <ConfirmSubmitButton
                     name="decision"
                     value="rejected"
@@ -806,6 +823,11 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                   />
                 </div>
               </form>
+              {isSodBlocked ? (
+                <p className="mt-2 text-xs text-slate-600">
+                  職務分掌ポリシーにより、起票者は自分のタスクを承認できません。
+                </p>
+              ) : null}
               <form action={resendApprovalSlackReminder} className="mt-2">
                 <input type="hidden" name="window" value={windowFilter} />
                 <input type="hidden" name="return_to" value={currentFilterPath} />

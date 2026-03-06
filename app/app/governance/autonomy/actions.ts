@@ -42,6 +42,7 @@ export async function saveAutonomySettings(formData: FormData) {
     org_id: orgId,
     autonomy_level: autonomyLevel,
     auto_execute_google_send_email: formData.get("auto_execute_google_send_email") === "on",
+    enforce_initiator_approver_separation: formData.get("enforce_initiator_approver_separation") === "on",
     max_auto_execute_risk_score: parseIntInRange(formData.get("max_auto_execute_risk_score"), 25, 0, 100),
     min_trust_score: parseIntInRange(formData.get("min_trust_score"), 80, 0, 100),
     daily_send_email_limit: parseIntInRange(formData.get("daily_send_email_limit"), 20, 0, 100000),

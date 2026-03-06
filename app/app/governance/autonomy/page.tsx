@@ -58,6 +58,17 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
           Google `send_email` の自動実行を許可する
         </label>
 
+        <label className="flex items-center gap-2 text-sm text-slate-700" htmlFor="enforce_initiator_approver_separation">
+          <input
+            id="enforce_initiator_approver_separation"
+            name="enforce_initiator_approver_separation"
+            type="checkbox"
+            defaultChecked={settings.enforceInitiatorApproverSeparation}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          起票者と承認者の分離（起票者は自分のタスクを承認不可）
+        </label>
+
         <div className="grid gap-4 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="max_auto_execute_risk_score">
@@ -116,6 +127,7 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
           <li>policy が `block` の場合は常に停止します。</li>
           <li>`L3/L4` かつ自動実行が有効のときのみ、自動実行候補になります。</li>
           <li>リスク/信頼スコア/日次予算をすべて満たした場合だけ承認バイパスします。</li>
+          <li>分離を有効化すると、起票者と承認者を同一ユーザーにできません。</li>
         </ul>
       </div>
     </section>

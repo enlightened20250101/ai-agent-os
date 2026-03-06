@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { appendCaseEventSafe, getCaseIdForTask } from "@/lib/cases/events";
 import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { getGovernanceSettings } from "@/lib/governance/evaluate";
 import { evaluateApprovalGuardrail, inferTaskRiskScore } from "@/lib/governance/guardrails";
 import { recordTrustOutcome } from "@/lib/governance/trust";
 
@@ -86,6 +87,25 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
     throw new Error("This approval has already been decided.");
   }
 
+  const { data: task, error: taskError } = await supabase
+    .from("tasks")
+    .select("id, status, created_by_user_id")
+    .eq("id", taskId)
+    .eq("org_id", orgId)
+    .single();
+
+  if (taskError) {
+    throw new Error(`Task lookup failed: ${taskError.message}`);
+  }
+
+  if (decision === "approved" && actorType === "user" && actorId) {
+    const settings = await getGovernanceSettings({ supabase, orgId });
+    const taskCreatorId = (task.created_by_user_id as string | null | undefined) ?? null;
+    if (settings.enforceInitiatorApproverSeparation && taskCreatorId && taskCreatorId === actorId) {
+      throw new Error("職務分掌ポリシーにより、起票者は自分のタスクを承認できません。");
+    }
+  }
+
   const { error: approvalUpdateError } = await supabase
     .from("approvals")
     .update({
@@ -99,17 +119,6 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
 
   if (approvalUpdateError) {
     throw new Error(`Approval update failed: ${approvalUpdateError.message}`);
-  }
-
-  const { data: task, error: taskError } = await supabase
-    .from("tasks")
-    .select("id, status")
-    .eq("id", taskId)
-    .eq("org_id", orgId)
-    .single();
-
-  if (taskError) {
-    throw new Error(`Task lookup failed: ${taskError.message}`);
   }
 
   let nextTaskStatus: "approved" | "ready_for_approval" | "draft" = decision === "approved" ? "approved" : "draft";
