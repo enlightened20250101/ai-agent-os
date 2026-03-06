@@ -1065,3 +1065,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/cases` 一覧は `blocked` と長時間未更新 `open` を優先表示する並びに変更し、`緊急`/`滞留` バッジと滞留アラートを追加した（`CASE_STALE_HOURS`, default 48h）。
 - Why: 運用者が案件一覧を開いた瞬間に「先に処理すべき案件」を判断できるようにし、ケース滞留の見落としを減らすため。
+
+- Decision: Planner signal に `stale_open_cases`（`business_cases.status=open` かつ長時間未更新）を追加し、提案生成時の優先度計算に反映した。
+- Why: タスク滞留だけでなく案件滞留を自律提案の入力に含め、Case起点で未解消案件を前倒し処理できるようにするため。

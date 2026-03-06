@@ -3,7 +3,7 @@ import type { DraftOutput } from "@/lib/llm/openai";
 import { checkDraftPolicy } from "@/lib/policy/check";
 
 type PlannerSignal = {
-  kind: "stale_tasks" | "recent_action_failures" | "stale_pending_approvals" | "policy_warn_block";
+  kind: "stale_tasks" | "recent_action_failures" | "stale_pending_approvals" | "policy_warn_block" | "stale_open_cases";
   title: string;
   details: string;
   count: number;
@@ -50,6 +50,13 @@ function isMissingColumnError(message: string, columnName: string) {
   return (
     message.includes(`Could not find the '${columnName}' column`) ||
     message.includes(`column task_proposals.${columnName} does not exist`)
+  );
+}
+
+function isMissingTableError(message: string, tableName: string) {
+  return (
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`Could not find the table 'public.${tableName}'`)
   );
 }
 
@@ -200,7 +207,8 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     staleTasksRes,
     failedEventsRes,
     staleApprovalsRes,
-    policyEventsRes
+    policyEventsRes,
+    staleCasesRes
   ] = await Promise.all([
     supabase
       .from("tasks")
@@ -233,7 +241,15 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
       .eq("event_type", "POLICY_CHECKED")
       .gte("created_at", last24h)
       .order("created_at", { ascending: false })
-      .limit(30)
+      .limit(30),
+    supabase
+      .from("business_cases")
+      .select("id, title, updated_at")
+      .eq("org_id", orgId)
+      .eq("status", "open")
+      .lt("updated_at", staleCutoff)
+      .order("updated_at", { ascending: true })
+      .limit(20)
   ]);
 
   if (staleTasksRes.error) throw new Error(`stale_tasks query failed: ${staleTasksRes.error.message}`);
@@ -243,6 +259,9 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     throw new Error(`stale_approvals query failed: ${staleApprovalsRes.error.message}`);
   if (policyEventsRes.error)
     throw new Error(`policy_checked query failed: ${policyEventsRes.error.message}`);
+  if (staleCasesRes.error && !isMissingTableError(staleCasesRes.error.message, "business_cases")) {
+    throw new Error(`stale_cases query failed: ${staleCasesRes.error.message}`);
+  }
 
   const signals: PlannerSignal[] = [];
   const staleTasks = staleTasksRes.data ?? [];
@@ -291,6 +310,16 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     });
   }
 
+  const staleCases = staleCasesRes.error ? [] : (staleCasesRes.data ?? []);
+  if (staleCases.length > 0) {
+    signals.push({
+      kind: "stale_open_cases",
+      title: "Stale open cases",
+      details: `${staleCases.length} open cases are stale for more than ${staleHours}h.`,
+      count: staleCases.length
+    });
+  }
+
   return signals;
 }
 
@@ -333,7 +362,8 @@ function calculatePriorityScore(args: {
     stale_tasks: 4,
     recent_action_failures: 8,
     stale_pending_approvals: 6,
-    policy_warn_block: 5
+    policy_warn_block: 5,
+    stale_open_cases: 7
   };
 
   const signalContribution = args.signals.reduce((sum, signal) => {
