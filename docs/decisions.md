@@ -1023,3 +1023,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: E2Eで`confirm`ダイアログ自動承認ヘルパーを導入し、確認文言（`実行しますか`）が実際に出ることを検証した。
 - Why: `ConfirmSubmitButton` 標準化の回帰検知を自動化し、UI安全ガードが外れた場合に早期検出できるようにするため。
+
+- Decision: Gmail送信MIMEの本文エンコードを `Content-Transfer-Encoding: base64` から `8bit` に変更し、UTF-8本文をそのままRFC822メッセージへ載せる方式に統一した。
+- Why: 日本語メールでの文字化けリスクを下げるため、二重エンコード解釈に依存しないシンプルなUTF-8送信を採用する。

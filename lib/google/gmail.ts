@@ -21,11 +21,6 @@ function toBase64Url(input: string) {
     .replace(/=+$/, "");
 }
 
-function toBase64WithLineWrap(input: string) {
-  const b64 = Buffer.from(input, "utf8").toString("base64");
-  return b64.replace(/.{1,76}/g, "$&\r\n").trimEnd();
-}
-
 function encodeHeaderValue(value: string) {
   // RFC 2047 encoded-word for non-ASCII-safe subject headers.
   if (/^[\x20-\x7E]*$/.test(value)) {
@@ -99,10 +94,10 @@ export async function sendEmailWithGmail(args: SendEmailArgs): Promise<SendEmail
     `To: ${args.to}`,
     `Subject: ${encodeHeaderValue(args.subject)}`,
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: base64",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
     "",
-    toBase64WithLineWrap(args.bodyText)
+    args.bodyText
   ].join("\r\n");
 
   const encodedMessage = toBase64Url(rawMessage);
