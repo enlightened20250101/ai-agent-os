@@ -8,7 +8,7 @@ type MentionTextareaProps = {
   required?: boolean;
   rows?: number;
   placeholder?: string;
-  candidates: string[];
+  candidates: Array<{ value: string; label: string }>;
 };
 
 export function MentionTextarea({ id, name, required, rows = 3, placeholder, candidates }: MentionTextareaProps) {
@@ -17,7 +17,7 @@ export function MentionTextarea({ id, name, required, rows = 3, placeholder, can
 
   const trigger = useMemo(() => {
     const head = value.slice(0, cursor);
-    const m = head.match(/(?:^|\s)@([A-Za-z0-9_.-]*)$/);
+    const m = head.match(/(?:^|\s)@([^\s@]*)$/);
     if (!m) return null;
     return {
       query: (m[1] ?? "").toLowerCase(),
@@ -29,15 +29,15 @@ export function MentionTextarea({ id, name, required, rows = 3, placeholder, can
   const suggestions = useMemo(() => {
     if (!trigger) return [];
     const q = trigger.query;
-    const matched = candidates.filter((c) => c.toLowerCase().startsWith(q));
+    const matched = candidates.filter((c) => c.value.toLowerCase().startsWith(q) || c.label.toLowerCase().startsWith(q));
     return matched.slice(0, 8);
   }, [trigger, candidates]);
 
-  function applySuggestion(candidate: string) {
+  function applySuggestion(candidate: { value: string; label: string }) {
     if (!trigger) return;
     const before = value.slice(0, trigger.start);
     const after = value.slice(trigger.end);
-    const next = `${before}@${candidate} ${after}`;
+    const next = `${before}@${candidate.value} ${after}`;
     setValue(next);
   }
 
@@ -64,12 +64,12 @@ export function MentionTextarea({ id, name, required, rows = 3, placeholder, can
           <div className="flex flex-wrap gap-1">
             {suggestions.map((candidate) => (
               <button
-                key={candidate}
+                key={`${candidate.value}-${candidate.label}`}
                 type="button"
                 onClick={() => applySuggestion(candidate)}
                 className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
               >
-                @{candidate}
+                @{candidate.label}
               </button>
             ))}
           </div>

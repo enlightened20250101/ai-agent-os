@@ -81,7 +81,7 @@ function isMutatingIntent(intentType: string) {
 }
 
 function extractMentions(text: string) {
-  const matches = text.match(/@[A-Za-z0-9_.-]+/g) ?? [];
+  const matches = text.match(/@[^\s@]+/g) ?? [];
   return Array.from(new Set(matches.map((m) => m.slice(1))));
 }
 

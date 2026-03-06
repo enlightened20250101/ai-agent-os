@@ -1170,3 +1170,18 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `user_profiles`（display_name, avatar_emoji）を追加し、設定画面で更新可能にしてチャットバブルに表示名/アイコンを表示する。
 - Why: 複数アカウント運用時の識別性を高め、チーム会話の可読性を上げるため。
+
+- Decision: `user_profiles.avatar_url` を追加し、設定画面で画像URLまたは画像ファイル（256KB以下）を保存できるようにした。
+- Why: チーム会話時の人物識別性を上げ、Slackライクな視認性を確保するため。
+
+- Decision: 取引先情報の最小台帳として `vendors` を追加し、`/app/partners` で作成・状態更新（active/inactive）・メモ編集を可能にした。
+- Why: バックオフィス実務で必要な取引先データの保管/更新導線を先に確保するため。
+
+- Decision: 社外連絡先テーブル `external_contacts` を追加し、チャンネルで `dm_external` を作成できるようにした。
+- Why: 社外関係者との会話文脈をワークスペース内で追跡し、将来の外部送信連携の母体にするため。
+
+- Decision: チャットチャンネルを `channel_type(group/dm_internal/dm_external)` に拡張し、`/app/chat/channels` でグループ・DM（社内/社外）を作成できるようにした。
+- Why: 会話コンテキストを用途別に分離し、共有/個人チャットだけでは不足する実務コミュニケーション構造を補うため。
+
+- Decision: `ai_execution_logs` を org横断監査台帳として運用し、チャットの confirmed 実行を `done/failed/declined` で記録する方式を採用した。
+- Why: チャンネル閲覧権限とは独立して、組織全体のAI実行責任トレースを一元化するため。

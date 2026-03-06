@@ -28,7 +28,8 @@ const NAV_LINKS_JA = [
   { href: "/app/governance/trust", label: "Trust" },
   { href: "/app/governance/incidents", label: "インシデント" },
   { href: "/app/integrations/slack", label: "Slack" },
-  { href: "/app/integrations/google", label: "Google" }
+  { href: "/app/integrations/google", label: "Google" },
+  { href: "/app/partners", label: "取引先" }
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -58,6 +59,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         { href: "/app/governance/incidents", label: "Incidents" },
         { href: "/app/integrations/slack", label: "Slack" },
         { href: "/app/integrations/google", label: "Google" },
+        { href: "/app/partners", label: "Partners" },
         { href: "/app/settings", label: "Settings" }
       ]
     : [...NAV_LINKS_JA, { href: "/app/settings", label: "設定" }];

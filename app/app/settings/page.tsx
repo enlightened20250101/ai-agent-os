@@ -17,7 +17,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   const supabase = await createClient();
   const { data: profileRes, error: profileError } = await supabase
     .from("user_profiles")
-    .select("display_name, avatar_emoji")
+    .select("display_name, avatar_emoji, avatar_url")
     .eq("org_id", orgId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -28,7 +28,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   if (profileError && !missingProfileTable) {
     throw new Error(`Failed to load profile: ${profileError.message}`);
   }
-  const profile = (profileRes ?? null) as { display_name: string | null; avatar_emoji: string | null } | null;
+  const profile = (profileRes ?? null) as { display_name: string | null; avatar_emoji: string | null; avatar_url: string | null } | null;
 
   return (
     <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -70,7 +70,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
         </button>
       </form>
 
-      <form action={updateProfile} className="max-w-sm space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <form action={updateProfile} encType="multipart/form-data" className="max-w-sm space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
         <label htmlFor="display_name" className="block text-sm font-medium text-slate-800">
           {isEn ? "Display Name" : "表示名"}
         </label>
@@ -91,6 +91,20 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
           placeholder="🙂"
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
         />
+        <label htmlFor="avatar_url" className="block text-sm font-medium text-slate-800">
+          {isEn ? "Avatar Image URL" : "アイコン画像URL"}
+        </label>
+        <input
+          id="avatar_url"
+          name="avatar_url"
+          defaultValue={profile?.avatar_url ?? ""}
+          placeholder="https://..."
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+        />
+        <label htmlFor="avatar_file" className="block text-sm font-medium text-slate-800">
+          {isEn ? "Or Upload Image" : "または画像アップロード"}
+        </label>
+        <input id="avatar_file" name="avatar_file" type="file" accept="image/*" className="w-full text-sm" />
         <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
           {isEn ? "Save Profile" : "プロフィール保存"}
         </button>

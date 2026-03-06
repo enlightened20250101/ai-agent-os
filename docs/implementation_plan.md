@@ -27,7 +27,9 @@ Assumption: small team (2-4 engineers + AI coding support), incremental delivery
 - Extend `/app/proposals` with sorting/filtering/bulk actions.
 - Extend `/app/planner` with run diagnostics and input snapshot preview.
 - Add route handler `/api/planner/runs/:id` (run detail).
-- Add `/app/chat/shared` and `/app/chat/me` read-only MVP screens.
+- Add `/app/chat/shared`, `/app/chat/me`, `/app/chat/channels` with `@AI` explicit execution gate.
+- Add `/app/executions` org-wide execution history with rich filters.
+- Add `/app/partners` for vendor/external-contact management.
 
 ### E2E extensions
 - Verify proposal filtering and accept/reject reason persistence.

@@ -29,6 +29,16 @@ The default operating model is:
   - can still trigger org-side actions, but requires explicit confirmation and audit trail.
 - Both chat lanes produce ledgered events and can be replayed in Evidence Pack context.
 
+### Channel and DM operating model (added)
+- Slack-like channels are first-class:
+  - team channels for shared operations
+  - internal DM channels
+  - external-contact DM channels (for tracked conversations with vendors/partners)
+- `@AI` explicit mention gate:
+  - only messages with `@AI` trigger intent parsing/execution flow
+  - other messages/mentions remain human conversation and memo only
+- Org-wide execution history is always visible to org members regardless of channel membership.
+
 ### Human role
 - Define policy and autonomy boundaries per org, workflow, connector, and risk tier.
 - Review high-risk approvals and exception queues.
@@ -117,6 +127,7 @@ This product explicitly targets backoffice execution domains:
   - approvals for high-risk operations
   - exception resolution
   - policy and governance tuning
+  - partner/vendor relationship updates and external communication review
 
 ### Operating principles added
 - Multi-agent specialization is first-class:

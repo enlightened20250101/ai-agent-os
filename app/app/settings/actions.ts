@@ -26,6 +26,21 @@ export async function updateProfile(formData: FormData) {
   const displayName = String(formData.get("display_name") ?? "").trim();
   const avatarEmojiRaw = String(formData.get("avatar_emoji") ?? "🙂").trim();
   const avatarEmoji = avatarEmojiRaw.length > 0 ? avatarEmojiRaw.slice(0, 2) : "🙂";
+  const avatarUrlRaw = String(formData.get("avatar_url") ?? "").trim();
+  const avatarFile = formData.get("avatar_file");
+  let avatarUrl: string | null = avatarUrlRaw.length > 0 ? avatarUrlRaw : null;
+  if (avatarFile instanceof File && avatarFile.size > 0) {
+    const maxBytes = 256 * 1024;
+    if (avatarFile.size > maxBytes) {
+      redirect(`/app/settings?error=${encodeURIComponent("画像サイズは256KB以下にしてください。")}`);
+    }
+    if (!avatarFile.type.startsWith("image/")) {
+      redirect(`/app/settings?error=${encodeURIComponent("画像ファイルを選択してください。")}`);
+    }
+    const bytes = Buffer.from(await avatarFile.arrayBuffer());
+    const base64 = bytes.toString("base64");
+    avatarUrl = `data:${avatarFile.type};base64,${base64}`;
+  }
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -35,6 +50,7 @@ export async function updateProfile(formData: FormData) {
       user_id: userId,
       display_name: displayName.length > 0 ? displayName : null,
       avatar_emoji: avatarEmoji,
+      avatar_url: avatarUrl,
       updated_at: new Date().toISOString()
     },
     { onConflict: "org_id,user_id", ignoreDuplicates: false }

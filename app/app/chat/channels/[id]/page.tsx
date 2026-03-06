@@ -18,7 +18,12 @@ export default async function ChatChannelDetailPage({ params, searchParams }: Ch
   const supabase = await createClient();
 
   const [channelRes, membersRes] = await Promise.all([
-    supabase.from("chat_channels").select("id, name, description, created_at").eq("org_id", orgId).eq("id", id).maybeSingle(),
+    supabase
+      .from("chat_channels")
+      .select("id, name, description, channel_type, external_contact_id, created_at")
+      .eq("org_id", orgId)
+      .eq("id", id)
+      .maybeSingle(),
     supabase
       .from("chat_channel_members")
       .select("user_id, role, created_at")
@@ -41,6 +46,20 @@ export default async function ChatChannelDetailPage({ params, searchParams }: Ch
   if (membersRes.error) {
     throw new Error(`Failed to load channel members: ${membersRes.error.message}`);
   }
+  const channelType = (channelRes.data.channel_type as string | null) ?? "group";
+  const externalContactId = (channelRes.data.external_contact_id as string | null) ?? null;
+  const externalRes =
+    externalContactId && channelType === "dm_external"
+      ? await supabase
+          .from("external_contacts")
+          .select("id, display_name, email, company")
+          .eq("org_id", orgId)
+          .eq("id", externalContactId)
+          .maybeSingle()
+      : { data: null, error: null };
+  if (externalRes.error && !externalRes.error.message.includes('relation "external_contacts" does not exist')) {
+    throw new Error(`Failed to load external contact: ${externalRes.error.message}`);
+  }
 
   const members = (membersRes.data ?? []) as Array<{ user_id: string; role: string; created_at: string }>;
   const sp = searchParams ? await searchParams : {};
@@ -53,6 +72,13 @@ export default async function ChatChannelDetailPage({ params, searchParams }: Ch
             <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Channel</p>
             <h1 className="text-xl font-semibold text-slate-900">#{channelRes.data.name as string}</h1>
             <p className="text-sm text-slate-600">{(channelRes.data.description as string | null) ?? "説明なし"}</p>
+            <p className="text-xs text-slate-500">type: {channelType}</p>
+            {externalRes.data ? (
+              <p className="text-xs text-slate-500">
+                external: {(externalRes.data.display_name as string) ?? "-"} / {(externalRes.data.company as string | null) ?? "company未設定"} /{" "}
+                {(externalRes.data.email as string | null) ?? "email未設定"}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <Link href="/app/chat/channels" className="rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">

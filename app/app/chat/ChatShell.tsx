@@ -82,9 +82,9 @@ function isMissingTableError(message: string, tableName: string) {
 }
 
 function renderMessageBody(text: string) {
-  const tokens = text.split(/(@[A-Za-z0-9_.-]+)/g);
+  const tokens = text.split(/(@[^\s@]+)/g);
   return tokens.map((token, idx) => {
-    if (/^@[A-Za-z0-9_.-]+$/.test(token)) {
+    if (/^@[^\s@]+$/.test(token)) {
       const ai = /^@ai$/i.test(token);
       return (
         <span
@@ -255,15 +255,21 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
     throw new Error(`Failed to load chat channels: ${channelsRes.error.message}`);
   }
   const profileMap = new Map(
-    ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null; avatar_emoji: string | null }>).map((p) => [
+    ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null; avatar_emoji: string | null; avatar_url?: string | null }>).map((p) => [
       p.user_id,
-      { name: p.display_name ?? null, avatar: p.avatar_emoji ?? "🙂" }
+      { name: p.display_name ?? null, avatar: p.avatar_emoji ?? "🙂", avatarUrl: p.avatar_url ?? null }
     ])
   );
+  const memberIds = ((membersRes.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
   const mentionCandidates = [
-    "AI",
-    ...((membersRes.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id.slice(0, 8)),
-    ...((channelsRes.data ?? []) as Array<{ name: string }>).map((c) => c.name)
+    { value: "AI", label: "AI" },
+    ...memberIds.map((uid) => {
+      const profile = profileMap.get(uid);
+      const rawLabel = profile?.name ?? uid.slice(0, 8);
+      const value = rawLabel.replace(/\s+/g, "_");
+      return { value, label: rawLabel };
+    }),
+    ...((channelsRes.data ?? []) as Array<{ name: string }>).map((c) => ({ value: c.name, label: `#${c.name}` }))
   ];
   const confirmedToday = todayConfirmedCount ?? 0;
   const remainingToday = Math.max(0, dailyLimit - confirmedToday);
@@ -395,7 +401,11 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                     >
                       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
                         <span className="inline-flex items-center gap-1">
-                          <span>{avatar}</span>
+                          {profile?.avatarUrl && message.sender_type !== "system" ? (
+                            <img src={profile.avatarUrl} alt={label} className="h-4 w-4 rounded-full object-cover" />
+                          ) : (
+                            <span>{avatar}</span>
+                          )}
                           <span>{label}</span>
                         </span>
                         <span>{new Date(message.created_at).toLocaleString()}</span>
