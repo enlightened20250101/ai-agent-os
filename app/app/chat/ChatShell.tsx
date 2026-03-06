@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { confirmChatCommand, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
 import { MentionTextarea } from "@/app/app/chat/MentionTextarea";
 import { getAppLocale } from "@/lib/i18n/locale";
@@ -8,6 +9,7 @@ import type { ChatScope } from "@/lib/chat/sessions";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 type ChatShellProps = {
   scope: ChatScope;
@@ -51,6 +53,14 @@ function speakerLabel(senderType: string, isEn: boolean) {
   return isEn ? "Agent" : "エージェント";
 }
 
+function incidentSeverityLabel(severity: string, isEn: boolean) {
+  if (severity === "critical") return isEn ? "Critical" : "重大";
+  if (severity === "high") return isEn ? "High" : "高";
+  if (severity === "medium") return isEn ? "Medium" : "中";
+  if (severity === "low") return isEn ? "Low" : "低";
+  return severity;
+}
+
 function commandStatusLabel(status: string, isEn: boolean) {
   if (status === "done") return isEn ? "done" : "完了";
   if (status === "running") return isEn ? "running" : "実行中";
@@ -72,20 +82,60 @@ function parseResultJson(value: unknown) {
 }
 
 function skipReasonLabel(reason: string) {
-  if (reason === "approval_not_pending") return "skip: approval_not_pending";
-  if (reason === "approval_already_pending") return "skip: approval_already_pending";
-  return `skip: ${reason}`;
+  if (reason === "approval_not_pending") return "スキップ: 既に承認待ちではない";
+  if (reason === "approval_already_pending") return "スキップ: 承認待ちが既に存在";
+  if (reason === "stale_top_candidates") return "スキップ: 候補情報が古い";
+  return `スキップ: ${reason}`;
+}
+
+function quickActionLabel(action: string) {
+  if (action === "request_approval") return "承認依頼";
+  if (action === "execute_action") return "アクション実行";
+  if (action === "run_workflow") return "ワークフロー実行";
+  if (action === "run_planner") return "プランナー実行";
+  if (action === "bulk_retry_failed_workflows") return "失敗WF一括再試行";
+  return action;
 }
 
 function isMissingTableError(message: string, tableName: string) {
   return message.includes(`relation "${tableName}" does not exist`) || message.includes(`Could not find the table 'public.${tableName}'`);
 }
 
+function splitTrailingPunctuation(token: string) {
+  const match = token.match(/^(.*?)([.,!?)]*)$/);
+  if (!match) return { core: token, suffix: "" };
+  return { core: match[1] ?? token, suffix: match[2] ?? "" };
+}
+
 function renderMessageBody(text: string) {
-  const tokens = text.split(/(@[^\s@]+)/g);
+  const tokens = text.split(/(\s+)/g);
   return tokens.map((token, idx) => {
-    if (/^@[^\s@]+$/.test(token)) {
-      const ai = /^@ai$/i.test(token);
+    if (token.trim().length === 0) {
+      return <span key={`ws-${idx}`}>{token}</span>;
+    }
+    const { core, suffix } = splitTrailingPunctuation(token);
+    if (/^https?:\/\/\S+$/i.test(core)) {
+      return (
+        <span key={`${token}-${idx}`}>
+          <a href={core} target="_blank" rel="noreferrer" className="underline text-sky-700 hover:text-sky-800">
+            {core}
+          </a>
+          {suffix}
+        </span>
+      );
+    }
+    if (/^\/app\/\S+$/i.test(core)) {
+      return (
+        <span key={`${token}-${idx}`}>
+          <Link href={core} className="underline text-sky-700 hover:text-sky-800">
+            {core}
+          </Link>
+          {suffix}
+        </span>
+      );
+    }
+    if (/^@[^\s@]+$/.test(core)) {
+      const ai = /^@ai$/i.test(core);
       return (
         <span
           key={`${token}-${idx}`}
@@ -93,7 +143,7 @@ function renderMessageBody(text: string) {
             ai ? "bg-emerald-100 text-emerald-800" : "bg-violet-100 text-violet-800"
           }`}
         >
-          {token}
+          {core}
         </span>
       );
     }
@@ -184,7 +234,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
     supabase.from("orgs").select("id, name").eq("id", orgId).maybeSingle(),
     supabase.from("memberships").select("id", { count: "exact", head: true }).eq("org_id", orgId)
   ]);
-  const workspaceName = (orgRow?.name as string | null | undefined) ?? orgId;
+  const workspaceName = (orgRow?.name as string | null | undefined) ?? (isEn ? "Unnamed Workspace" : "名称未設定ワークスペース");
 
   if (messagesError) {
     if (isMissingChatSchemaError(messagesError.message)) {
@@ -268,7 +318,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
       p.user_id,
       {
         name: p.display_name ?? null,
-        handle: p.mention_handle ?? p.user_id.slice(0, 8),
+        handle: p.mention_handle ?? null,
         avatarUrl: p.avatar_url ?? null
       }
     ])
@@ -286,12 +336,15 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
   const memberProfileMap = new Map(memberProfiles.map((p) => [p.user_id, p]));
   const mentionCandidates = [
     { value: "AI", label: "AI" },
-    ...memberIds.map((uid) => {
-      const profile = memberProfileMap.get(uid);
-      const rawLabel = profile?.display_name ?? uid.slice(0, 8);
-      const value = profile?.mention_handle ?? uid.slice(0, 8);
-      return { value, label: `${rawLabel} (${value})` };
-    }),
+    ...memberIds
+      .map((uid) => {
+        const profile = memberProfileMap.get(uid);
+        const handle = profile?.mention_handle?.trim() ?? "";
+        if (!handle) return null;
+        const rawLabel = profile?.display_name?.trim() || "表示名未設定メンバー";
+        return { value: handle, label: `${rawLabel} (@${handle})` };
+      })
+      .filter((value): value is { value: string; label: string } => value !== null),
     ...((channelsRes.data ?? []) as Array<{ name: string }>).map((c) => ({ value: c.name, label: `#${c.name}` }))
   ];
   const confirmedToday = todayConfirmedCount ?? 0;
@@ -330,7 +383,8 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
       ) : null}
       {openIncident ? (
         <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {isEn ? "Incident mode enabled:" : "インシデントモード有効:"} {openIncident.severity.toUpperCase()} / {openIncident.reason}
+          {isEn ? "Incident mode enabled:" : "インシデントモード有効:"} {incidentSeverityLabel(openIncident.severity, isEn)} /{" "}
+          {openIncident.reason}
           {isEn ? " (approval/execute commands are blocked)" : "（承認判断・実行コマンドは停止されます）"}
         </p>
       ) : null}
@@ -365,7 +419,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                 <div key={confirmation.id} className="rounded-md border border-amber-300 bg-white p-3">
                   <p className="text-sm text-slate-800">{intentMap.get(confirmation.intent_id) ?? (isEn ? "Confirmation" : "実行確認")}</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    {isEn ? "Expires:" : "期限:"} {new Date(confirmation.expires_at).toLocaleString()}
+                    {isEn ? "Expires:" : "期限:"} {new Date(confirmation.expires_at).toLocaleString("ja-JP")}
                   </p>
                   <div className="mt-3 flex gap-2">
                     <form action={confirmChatCommand}>
@@ -378,7 +432,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                         value="confirmed"
                         className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs text-white hover:bg-emerald-600"
                       >
-                        {isEn ? "Yes, execute" : "Yes 実行する"}
+                        {isEn ? "Yes, execute" : "はい、実行する"}
                       </button>
                     </form>
                     <form action={confirmChatCommand}>
@@ -391,7 +445,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                         value="declined"
                         className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
                       >
-                        {isEn ? "No, cancel" : "No キャンセル"}
+                        {isEn ? "No, cancel" : "いいえ、キャンセル"}
                       </button>
                     </form>
                   </div>
@@ -411,8 +465,8 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                       ? isEn
                         ? "Agent"
                         : "エージェント"
-                      : profile?.name ?? message.sender_user_id?.slice(0, 8) ?? speakerLabel(message.sender_type, isEn);
-                  const avatar = message.sender_type === "system" ? "🤖" : "👤";
+                      : profile?.name ?? speakerLabel(message.sender_type, isEn);
+                  const avatarLabel = message.sender_type === "system" ? "AI" : label.slice(0, 1).toUpperCase();
                   return (
                     <li
                       key={message.id}
@@ -425,13 +479,15 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
                         <span className="inline-flex items-center gap-1">
                           {profile?.avatarUrl && message.sender_type !== "system" ? (
-                            <img src={profile.avatarUrl} alt={label} className="h-4 w-4 rounded-full object-cover" />
+                            <Image src={profile.avatarUrl} alt={label} width={16} height={16} unoptimized className="h-4 w-4 rounded-full object-cover" />
                           ) : (
-                            <span>{avatar}</span>
+                            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700">
+                              {avatarLabel}
+                            </span>
                           )}
                           <span>{label}</span>
                         </span>
-                        <span>{new Date(message.created_at).toLocaleString()}</span>
+                        <span>{new Date(message.created_at).toLocaleString("ja-JP")}</span>
                       </div>
                       <p className="whitespace-pre-wrap text-slate-800">{renderMessageBody(message.body_text)}</p>
                     </li>
@@ -513,7 +569,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                     <span className={`rounded-full border px-2 py-0.5 ${commandStatusClass(command.execution_status)}`}>
                       {commandStatusLabel(command.execution_status, isEn)}
                     </span>
-                    <span className="text-slate-500">{new Date(command.created_at).toLocaleString()}</span>
+                    <span className="text-slate-500">{new Date(command.created_at).toLocaleString("ja-JP")}</span>
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
                       {intentMap.get(command.intent_id) ?? (isEn ? "intent" : "意図")}
                     </span>
@@ -524,7 +580,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                     ) : null}
                     {quickIndex && quickAction ? (
                       <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
-                        quick #{quickIndex} {quickAction}
+                        クイック #{quickIndex} {quickActionLabel(quickAction)}
                       </span>
                     ) : null}
                     {taskId ? (
@@ -535,14 +591,14 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                   </div>
                   {result ? (
                     <details className="mt-2">
-                      <summary className="cursor-pointer text-xs text-slate-600">result_json</summary>
+                      <summary className="cursor-pointer text-xs text-slate-600">結果JSON</summary>
                       <pre className="mt-2 overflow-x-auto rounded-md bg-slate-50 p-2 text-[11px] text-slate-700">
-                        {JSON.stringify(result, null, 2)}
+                        {toRedactedJson(result)}
                       </pre>
                     </details>
                   ) : null}
                   {command.finished_at ? (
-                    <p className="mt-1 text-[11px] text-slate-500">finished: {new Date(command.finished_at).toLocaleString()}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">終了: {new Date(command.finished_at).toLocaleString("ja-JP")}</p>
                   ) : null}
                   {command.execution_status === "failed" ? (
                     <form action={retryChatCommand} className="mt-2">

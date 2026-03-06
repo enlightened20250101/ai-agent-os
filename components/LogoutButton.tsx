@@ -4,7 +4,17 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export function LogoutButton() {
+type LogoutButtonProps = {
+  className?: string;
+  label?: string;
+  pendingLabel?: string;
+};
+
+export function LogoutButton({
+  className = "rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100",
+  label = "ログアウト",
+  pendingLabel = "ログアウト中..."
+}: LogoutButtonProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -20,11 +30,11 @@ export function LogoutButton() {
   return (
     <button
       type="button"
-      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+      className={className}
       onClick={onLogout}
       disabled={isPending}
     >
-      {isPending ? "ログアウト中..." : "ログアウト"}
+      {isPending ? pendingLabel : label}
     </button>
   );
 }

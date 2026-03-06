@@ -1,9 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
+import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { sendEmailWithGmail } from "@/lib/google/gmail";
 import { evaluateGovernance, incrementBudgetUsage } from "@/lib/governance/evaluate";
+import {
+  evaluateApprovalGuardrail,
+  evaluateHourlyBudgetGuardrail
+} from "@/lib/governance/guardrails";
 import { recordTrustOutcome } from "@/lib/governance/trust";
 
 type ParsedProposedAction = {
@@ -208,6 +213,28 @@ export async function executeTaskDraftActionShared(params: ExecuteDraftActionPar
   });
 
   const canAutoExecute = governance.decision === "allow_auto_execute";
+  const approvalGuardrail = await evaluateApprovalGuardrail({
+    supabase,
+    orgId,
+    taskId,
+    riskScore: governance.riskScore
+  });
+  if (approvalGuardrail.distinctApproverCount < approvalGuardrail.requiredApprovals) {
+    eligibilityReasons.push(
+      `承認者数が不足しています（必要=${approvalGuardrail.requiredApprovals}, 現在=${approvalGuardrail.distinctApproverCount}）。`
+    );
+  }
+  const hourlyGuardrail = await evaluateHourlyBudgetGuardrail({
+    supabase,
+    orgId,
+    provider: "google",
+    actionType: "send_email"
+  });
+  if (hourlyGuardrail.remainingLastHour <= 0) {
+    eligibilityReasons.push(
+      `1時間あたり実行上限に達しています（limit=${hourlyGuardrail.hourlyLimit}）。`
+    );
+  }
   if (task.status !== "approved" && !canAutoExecute) {
     eligibilityReasons.push("実行前にタスクが approved である必要があります。");
   }
@@ -257,6 +284,13 @@ export async function executeTaskDraftActionShared(params: ExecuteDraftActionPar
         },
         source: "autonomy_auto_approval"
       }
+    });
+    await syncCaseStageForTask({
+      supabase,
+      orgId,
+      taskId,
+      actorUserId: null,
+      source: "autonomy_auto_approval"
     });
   }
 

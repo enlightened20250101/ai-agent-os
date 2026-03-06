@@ -11,6 +11,13 @@ type IncidentsPageProps = {
   searchParams?: Promise<{ ok?: string; error?: string }>;
 };
 
+function severityLabel(value: string) {
+  if (value === "critical") return "重大";
+  if (value === "warning") return "警告";
+  if (value === "info") return "情報";
+  return value;
+}
+
 export default async function IncidentsPage({ searchParams }: IncidentsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -23,7 +30,7 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
       <div>
         <h1 className="text-xl font-semibold">インシデントモード</h1>
         <p className="mt-2 text-sm text-slate-600">
-          インシデント宣言中はガバナンス判定が強制 `block` になり、自動実行を停止します。
+          インシデント宣言中はガバナンス判定が強制ブロックになり、自動実行を停止します。
         </p>
       </div>
 
@@ -42,9 +49,9 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
               defaultValue="critical"
               className="w-48 rounded-md border border-slate-300 px-3 py-2 text-sm"
             >
-              <option value="critical">critical</option>
-              <option value="warning">warning</option>
-              <option value="info">info</option>
+              <option value="critical">重大</option>
+              <option value="warning">警告</option>
+              <option value="info">情報</option>
             </select>
           </div>
           <div>
@@ -78,9 +85,9 @@ export default async function IncidentsPage({ searchParams }: IncidentsPageProps
             {openIncidents.map((incident) => (
               <li key={incident.id} className="rounded-md border border-rose-200 bg-rose-50/50 p-4 text-sm">
                 <p className="font-medium text-rose-800">
-                  {incident.severity.toUpperCase()} | {incident.reason}
+                  {severityLabel(incident.severity)} | {incident.reason}
                 </p>
-                <p className="mt-1 text-rose-700">opened_at: {new Date(incident.opened_at).toLocaleString()}</p>
+                <p className="mt-1 text-rose-700">発生日時: {new Date(incident.opened_at).toLocaleString("ja-JP")}</p>
                 <form action={resolveIncident} className="mt-3">
                   <input type="hidden" name="incident_id" value={incident.id} />
                   <ConfirmSubmitButton

@@ -1,20 +1,33 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
+import { CopyFilterLinkButton } from "@/app/app/chat/audit/CopyFilterLinkButton";
 import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   decideApproval,
+  sendHighRiskInsufficientRemindersNow,
   resendSelectedApprovalSlackReminders,
   resendApprovalSlackReminder,
   runGuardedAutoReminderNow,
   sendStaleApprovalRemindersNow
 } from "@/app/app/approvals/actions";
+import { getHighRiskThreshold, getRequiredApprovalCountForRisk } from "@/lib/governance/guardrails";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 type ApprovalsPageProps = {
-  searchParams?: Promise<{ error?: string; ok?: string; stale_only?: string; sort?: string }>;
+  searchParams?: Promise<{
+    error?: string;
+    ok?: string;
+    stale_only?: string;
+    high_risk_only?: string;
+    sort?: string;
+    window?: string;
+    ref_from?: string;
+    ref_intent?: string;
+    ref_ts?: string;
+  }>;
 };
 
 type ApprovalRow = {
@@ -35,14 +48,68 @@ function parseObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+function parseDraftRisksFromModelPayload(payload: unknown) {
+  const obj = parseObject(payload);
+  const output = parseObject(obj?.output);
+  if (!output || !Array.isArray(output.risks)) return [];
+  return output.risks.filter((item): item is string => typeof item === "string");
+}
+
+function isMissingTableError(message: string, tableName: string) {
+  return (
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`Could not find the table 'public.${tableName}'`)
+  );
+}
+
+function resolveWindowHours(windowValue: string) {
+  if (windowValue === "24h") return 24;
+  if (windowValue === "30d") return 24 * 30;
+  return 24 * 7;
+}
+
+function windowLabel(value: "24h" | "7d" | "30d") {
+  if (value === "24h") return "24時間";
+  if (value === "30d") return "30日";
+  return "7日";
+}
+
+function reminderSourceLabel(source: string) {
+  if (source === "manual") return "手動";
+  if (source === "cron") return "定期実行";
+  return "不明";
+}
+
 export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
-  const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const refFrom = typeof sp.ref_from === "string" ? sp.ref_from : "";
+  const refIntent = typeof sp.ref_intent === "string" ? sp.ref_intent : "";
+  const refTs = typeof sp.ref_ts === "string" ? sp.ref_ts : "";
+  const windowFilter = sp.window === "24h" || sp.window === "30d" ? sp.window : "7d";
+  const windowHours = resolveWindowHours(windowFilter);
+  const windowStartIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   const staleHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleOnly = sp.stale_only === "1";
+  const highRiskOnly = sp.high_risk_only === "1";
   const sort = sp.sort === "newest" ? "newest" : "oldest";
+  const hasActiveFilters = staleOnly || highRiskOnly || sort !== "oldest" || windowFilter !== "7d";
+  const filterSummary = [
+    staleOnly ? "SLA超過のみ" : null,
+    highRiskOnly ? "高リスク承認不足のみ" : null,
+    sort === "newest" ? "並び順=新しい順" : null,
+    windowFilter !== "7d" ? `期間=${windowLabel(windowFilter)}` : null
+  ]
+    .filter((v): v is string => Boolean(v))
+    .join(" / ");
+  const currentFilterParams = new URLSearchParams();
+  if (staleOnly) currentFilterParams.set("stale_only", "1");
+  if (highRiskOnly) currentFilterParams.set("high_risk_only", "1");
+  if (sort !== "oldest") currentFilterParams.set("sort", sort);
+  if (windowFilter !== "7d") currentFilterParams.set("window", windowFilter);
+  const currentFilterPath =
+    currentFilterParams.size > 0 ? `/app/approvals?${currentFilterParams.toString()}` : "/app/approvals";
   const autoMinStaleRaw = Number.parseInt(process.env.APPROVAL_REMINDER_AUTO_MIN_STALE ?? "3", 10);
   const autoMinStale = Number.isNaN(autoMinStaleRaw) ? 3 : Math.max(1, Math.min(1000, autoMinStaleRaw));
 
@@ -57,7 +124,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .from("approvals")
       .select("id, status, created_at")
       .eq("org_id", orgId)
-      .gte("created_at", sevenDaysAgoIso)
+      .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(500),
     supabase
@@ -65,7 +132,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .select("task_id, created_at, payload_json")
       .eq("org_id", orgId)
       .eq("event_type", "SLACK_APPROVAL_POSTED")
-      .gte("created_at", sevenDaysAgoIso)
+      .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(500),
     supabase
@@ -73,7 +140,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .select("task_id, created_at, event_type, payload_json")
       .eq("org_id", orgId)
       .in("event_type", ["APPROVAL_REMINDER_AUTO_RUN", "APPROVAL_REMINDER_AUTO_SKIPPED"])
-      .gte("created_at", sevenDaysAgoIso)
+      .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(100)
   ]);
@@ -163,31 +230,192 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     autoStaleDelta !== null && autoStaleDelta > 0
       ? Math.max(1, Math.min(suggestedOneOffMinStale, Math.max(1, currentStalePendingCount - 1)))
       : suggestedOneOffMinStale;
-  const taskIds = Array.from(new Set([...filteredApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
+  const taskIds = Array.from(new Set([...pendingApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
   const pendingCount = weeklyRows.filter((row) => row.status === "pending").length;
   const maxCount = Math.max(1, approvedCount, rejectedCount, pendingCount);
 
   let taskTitleById = new Map<string, string>();
+  let taskCreatorById = new Map<string, string | null>();
+  let allMemberUserIds: string[] = [];
+  let memberDisplayNameByUserId = new Map<string, string>();
+  const highRiskThreshold = getHighRiskThreshold();
   if (taskIds.length > 0) {
-    const { data: tasks, error: tasksError } = await supabase
-      .from("tasks")
-      .select("id, title")
-      .in("id", taskIds)
-      .eq("org_id", orgId);
+    const [tasksRes, membersRes, profilesRes] = await Promise.all([
+      supabase
+        .from("tasks")
+        .select("id, title, created_by_user_id")
+        .in("id", taskIds)
+        .eq("org_id", orgId),
+      supabase.from("memberships").select("user_id").eq("org_id", orgId).limit(500),
+      supabase.from("user_profiles").select("user_id, display_name").eq("org_id", orgId).limit(500)
+    ]);
 
-    if (tasksError) {
-      throw new Error(`Failed to load approval tasks: ${tasksError.message}`);
+    if (tasksRes.error) {
+      throw new Error(`Failed to load approval tasks: ${tasksRes.error.message}`);
+    }
+    if (membersRes.error) {
+      throw new Error(`Failed to load members: ${membersRes.error.message}`);
+    }
+    if (profilesRes.error && !isMissingTableError(profilesRes.error.message, "user_profiles")) {
+      throw new Error(`Failed to load user profiles: ${profilesRes.error.message}`);
     }
 
+    const tasks = tasksRes.data ?? [];
     taskTitleById = new Map<string, string>((tasks ?? []).map((task) => [task.id as string, task.title as string]));
+    taskCreatorById = new Map<string, string | null>(
+      (tasks ?? []).map((task) => [task.id as string, (task.created_by_user_id as string | null | undefined) ?? null])
+    );
+    allMemberUserIds = (membersRes.data ?? [])
+      .map((row) => (row.user_id as string | null | undefined) ?? null)
+      .filter((value): value is string => Boolean(value));
+    memberDisplayNameByUserId = new Map(
+      ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null }>)
+        .map((row) => [row.user_id, (row.display_name ?? "").trim()] as const)
+        .filter((entry) => entry[1].length > 0)
+    );
   }
 
+  let riskScoreByTaskId = new Map<string, number>();
+  let policyByTaskId = new Map<string, "pass" | "warn" | "block">();
+  let draftRiskCountByTaskId = new Map<string, number>();
+  let approvedDistinctByTaskId = new Map<string, number>();
+  let approvedApproversByTaskId = new Map<string, Set<string>>();
+  if (taskIds.length > 0) {
+    const [riskRes, policyEventRes, modelEventRes, approvedRes] = await Promise.all([
+      supabase
+        .from("risk_assessments")
+        .select("task_id, risk_score, created_at")
+        .eq("org_id", orgId)
+        .in("task_id", taskIds)
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("task_events")
+        .select("task_id, payload_json, created_at")
+        .eq("org_id", orgId)
+        .in("task_id", taskIds)
+        .eq("event_type", "POLICY_CHECKED")
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("task_events")
+        .select("task_id, payload_json, created_at")
+        .eq("org_id", orgId)
+        .in("task_id", taskIds)
+        .eq("event_type", "MODEL_INFERRED")
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("approvals")
+        .select("task_id, approver_user_id")
+        .eq("org_id", orgId)
+        .in("task_id", taskIds)
+        .eq("status", "approved")
+    ]);
+    if (riskRes.error) throw new Error(`Failed to load risk assessments: ${riskRes.error.message}`);
+    if (policyEventRes.error) throw new Error(`Failed to load policy events: ${policyEventRes.error.message}`);
+    if (modelEventRes.error) throw new Error(`Failed to load model events: ${modelEventRes.error.message}`);
+    if (approvedRes.error) throw new Error(`Failed to load approved approvals: ${approvedRes.error.message}`);
+
+    for (const row of riskRes.data ?? []) {
+      const taskId = row.task_id as string;
+      if (!taskId || riskScoreByTaskId.has(taskId)) continue;
+      const score = Number(row.risk_score ?? NaN);
+      if (Number.isFinite(score)) {
+        riskScoreByTaskId.set(taskId, Math.max(0, Math.min(100, Math.round(score))));
+      }
+    }
+
+    for (const row of policyEventRes.data ?? []) {
+      const taskId = row.task_id as string;
+      if (!taskId || policyByTaskId.has(taskId)) continue;
+      const payload = parseObject(row.payload_json);
+      const status = payload?.status;
+      if (status === "pass" || status === "warn" || status === "block") {
+        policyByTaskId.set(taskId, status);
+      }
+    }
+
+    for (const row of modelEventRes.data ?? []) {
+      const taskId = row.task_id as string;
+      if (!taskId || draftRiskCountByTaskId.has(taskId)) continue;
+      draftRiskCountByTaskId.set(taskId, parseDraftRisksFromModelPayload(row.payload_json).length);
+    }
+
+    const approversByTaskId = new Map<string, Set<string>>();
+    for (const row of approvedRes.data ?? []) {
+      const taskId = row.task_id as string;
+      const approver = (row.approver_user_id as string | null | undefined) ?? null;
+      if (!taskId || !approver) continue;
+      const creator = taskCreatorById.get(taskId) ?? null;
+      if (creator && approver === creator) continue;
+      const set = approversByTaskId.get(taskId) ?? new Set<string>();
+      set.add(approver);
+      approversByTaskId.set(taskId, set);
+    }
+    approvedDistinctByTaskId = new Map(
+      Array.from(approversByTaskId.entries()).map(([taskId, set]) => [taskId, set.size])
+    );
+    approvedApproversByTaskId = approversByTaskId;
+  }
+
+  const enrichedApprovals = filteredApprovals
+    .map((approval) => {
+      const taskId = approval.task_id;
+      const policy = policyByTaskId.get(taskId) ?? "pass";
+      const draftRiskCount = draftRiskCountByTaskId.get(taskId) ?? 0;
+      const riskScore =
+        riskScoreByTaskId.get(taskId) ??
+        Math.min(
+          100,
+          20 + (policy === "block" ? 50 : policy === "warn" ? 15 : 0) + Math.min(20, draftRiskCount * 5)
+        );
+      const requiredApprovals = getRequiredApprovalCountForRisk(riskScore);
+      const approvedDistinctCount = approvedDistinctByTaskId.get(taskId) ?? 0;
+      const approvalGap = Math.max(0, requiredApprovals - approvedDistinctCount);
+      const creatorUserId = taskCreatorById.get(taskId) ?? null;
+      const approvedSet = approvedApproversByTaskId.get(taskId) ?? new Set<string>();
+      const candidateUserIds = allMemberUserIds.filter(
+        (userId) => userId !== creatorUserId && !approvedSet.has(userId)
+      );
+      const displayLimit = Math.max(3, approvalGap);
+      const suggestedApprovers = candidateUserIds.slice(0, displayLimit).map(
+        (userId) => memberDisplayNameByUserId.get(userId) ?? "メンバー"
+      );
+      const suggestedApproverOverflow = Math.max(0, candidateUserIds.length - displayLimit);
+      return {
+        approval,
+        riskScore,
+        requiredApprovals,
+        approvedDistinctCount,
+        approvalGap,
+        suggestedApprovers,
+        suggestedApproverOverflow
+      };
+    })
+    .filter((row) => {
+      if (!highRiskOnly) return true;
+      return row.requiredApprovals > 0 && row.approvalGap > 0;
+    });
+
+  const highlightedApprovalId = (() => {
+    if (refTs) {
+      const exact = enrichedApprovals.find((row) => row.approval.created_at === refTs);
+      if (exact) return exact.approval.id;
+    }
+    if (refIntent === "request_approval" || refIntent === "decide_approval" || refIntent === "bulk_decide_approvals") {
+      return enrichedApprovals[0]?.approval.id ?? null;
+    }
+    return null;
+  })();
+  const highRiskInsufficientCount = enrichedApprovals.filter((row) => row.requiredApprovals > 0 && row.approvalGap > 0).length;
+
   const chartRows = [
-    { key: "approved", label: "approved", count: approvedCount, color: "bg-emerald-500" },
-    { key: "rejected", label: "rejected", count: rejectedCount, color: "bg-rose-500" },
-    { key: "pending", label: "pending", count: pendingCount, color: "bg-amber-500" }
+    { key: "approved", label: "承認", count: approvedCount, color: "bg-emerald-500" },
+    { key: "rejected", label: "却下", count: rejectedCount, color: "bg-rose-500" },
+    { key: "pending", label: "保留", count: pendingCount, color: "bg-amber-500" }
   ];
 
   return (
@@ -196,45 +424,92 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       <p className="mt-2 text-sm text-slate-600">組織内の保留中承認です。</p>
 
       <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
+      {refFrom || refIntent || refTs ? (
+        <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+          参照コンテキスト: {refFrom || "unknown"}
+          {refIntent ? ` / ${refIntent}` : ""}
+          {refTs ? ` / ${new Date(refTs).toLocaleString("ja-JP")}` : ""}
+        </div>
+      ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
-        <form method="get" className="flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              name="stale_only"
-              value="1"
-              defaultChecked={staleOnly}
-              className="h-4 w-4 rounded border-slate-300"
+      <details open={hasActiveFilters} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
+        <summary className="cursor-pointer list-none font-semibold text-slate-700">絞り込み・再通知操作</summary>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <form method="get" className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                name="stale_only"
+                value="1"
+                defaultChecked={staleOnly}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              SLA超過のみ
+            </label>
+            <label className="inline-flex items-center gap-2">
+              並び順
+              <select name="sort" defaultValue={sort} className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="oldest">古い順</option>
+                <option value="newest">新しい順</option>
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              期間
+              <select name="window" defaultValue={windowFilter} className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="24h">24時間</option>
+                <option value="7d">7日</option>
+                <option value="30d">30日</option>
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                name="high_risk_only"
+                value="1"
+                defaultChecked={highRiskOnly}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              高リスク承認不足のみ
+            </label>
+            <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
+              適用
+            </button>
+          </form>
+          <CopyFilterLinkButton path={currentFilterPath} />
+          {hasActiveFilters ? (
+            <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800">条件付き表示</span>
+          ) : null}
+          <form action={sendStaleApprovalRemindersNow}>
+            <input type="hidden" name="window" value={windowFilter} />
+            <input type="hidden" name="return_to" value={currentFilterPath} />
+            <ConfirmSubmitButton
+              label="SLA超過をSlack再通知"
+              pendingLabel="再通知中..."
+              confirmMessage="SLA超過の承認待ちをSlackへ再通知します。実行しますか？"
+              className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-700 hover:bg-sky-100"
             />
-            SLA超過のみ
-          </label>
-          <label className="inline-flex items-center gap-2">
-            並び順
-            <select name="sort" defaultValue={sort} className="rounded-md border border-slate-300 px-2 py-1">
-              <option value="oldest">古い順</option>
-              <option value="newest">新しい順</option>
-            </select>
-          </label>
-          <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1">
-            適用
-          </button>
-        </form>
-        <form action={sendStaleApprovalRemindersNow}>
-          <ConfirmSubmitButton
-            label="SLA超過をSlack再通知"
-            pendingLabel="再通知中..."
-            confirmMessage="SLA超過の承認待ちをSlackへ再通知します。実行しますか？"
-            className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-700 hover:bg-sky-100"
-          />
-        </form>
-      </div>
+          </form>
+          <form action={sendHighRiskInsufficientRemindersNow}>
+            <input type="hidden" name="window" value={windowFilter} />
+            <input type="hidden" name="return_to" value={currentFilterPath} />
+            <ConfirmSubmitButton
+              label="高リスク承認不足を再通知"
+              pendingLabel="再通知中..."
+              confirmMessage="高リスクで承認不足の保留承認をSlackへ再通知します。実行しますか？"
+              className="rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100"
+            />
+          </form>
+        </div>
+        {hasActiveFilters ? <p className="mt-2 text-xs text-slate-600">{filterSummary}</p> : null}
+      </details>
       <form action={resendSelectedApprovalSlackReminders} id="bulk-approval-remind-form" className="rounded-md border border-sky-200 bg-sky-50 p-3">
+        <input type="hidden" name="window" value={windowFilter} />
+        <input type="hidden" name="return_to" value={currentFilterPath} />
         <div className="flex flex-wrap items-center gap-2">
           <ConfirmSubmitButton
             label="選択承認をSlack一括再通知"
             pendingLabel="再通知中..."
-            confirmMessage="選択した pending 承認をSlackへ再通知します。実行しますか？"
+            confirmMessage="選択した保留承認をSlackへ再通知します。実行しますか？"
             className="rounded-md border border-sky-300 bg-white px-2 py-1 text-xs text-sky-700 hover:bg-sky-100"
           />
           <span className="text-xs text-sky-800">各カードのチェック項目で対象を選択</span>
@@ -243,22 +518,27 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
-          <p className="text-amber-700">7日 pending</p>
+          <p className="text-amber-700">{windowLabel(windowFilter)} 保留</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{pendingCount}</p>
         </div>
         <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm">
-          <p className="text-emerald-700">7日 approved</p>
+          <p className="text-emerald-700">{windowLabel(windowFilter)} 承認</p>
           <p className="mt-1 text-2xl font-semibold text-emerald-900">{approvedCount}</p>
         </div>
         <div className={`rounded-md border p-3 text-sm ${rejectedCount > 0 ? "border-rose-300 bg-rose-100" : "border-rose-200 bg-rose-50"}`}>
-          <p className="text-rose-700">7日 rejected</p>
+          <p className="text-rose-700">{windowLabel(windowFilter)} 却下</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{rejectedCount}</p>
+        </div>
+        <div className={`rounded-md border p-3 text-sm ${highRiskInsufficientCount > 0 ? "border-rose-300 bg-rose-100" : "border-slate-200 bg-slate-50"}`}>
+          <p className="text-slate-700">高リスク承認不足</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{highRiskInsufficientCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">threshold={highRiskThreshold}</p>
         </div>
       </div>
 
       <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-sky-900">リマインド実績（7日）</p>
+          <p className="text-sm font-semibold text-sky-900">リマインド実績（{windowLabel(windowFilter)}）</p>
           <span className="text-xs text-sky-800">SLACK_APPROVAL_POSTED / reminder=true</span>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-4">
@@ -267,11 +547,11 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
             <p className="mt-1 text-xl font-semibold text-sky-900">{reminderTotal}</p>
           </div>
           <div className="rounded-md border border-sky-200 bg-white p-3">
-            <p className="text-xs text-sky-700">manual</p>
+            <p className="text-xs text-sky-700">手動</p>
             <p className="mt-1 text-xl font-semibold text-sky-900">{reminderManualCount}</p>
           </div>
           <div className="rounded-md border border-sky-200 bg-white p-3">
-            <p className="text-xs text-sky-700">cron</p>
+            <p className="text-xs text-sky-700">定期実行</p>
             <p className="mt-1 text-xl font-semibold text-sky-900">{reminderCronCount}</p>
           </div>
           <div className="rounded-md border border-sky-200 bg-white p-3">
@@ -285,42 +565,42 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
               <li key={`${event.taskId}-${event.createdAt}-${idx}`} className="rounded-md border border-sky-200 bg-white p-2 text-xs text-slate-700">
                 <p>
                   <Link href={`/app/tasks/${event.taskId}`} className="font-medium underline">
-                    {taskTitleById.get(event.taskId) ?? event.taskId}
+                    {taskTitleById.get(event.taskId) ?? "タスク"}
                   </Link>
                 </p>
                 <p className="mt-1 text-slate-500">
-                  {new Date(event.createdAt).toLocaleString()} | source: {event.source} | approval_id: {event.approvalId ?? "-"}
+                  {new Date(event.createdAt).toLocaleString("ja-JP")} | 起点: {reminderSourceLabel(event.source)}
                 </p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-xs text-sky-900">直近7日のリマインド送信はありません。</p>
+          <p className="mt-3 text-xs text-sky-900">直近{windowLabel(windowFilter)}のリマインド送信はありません。</p>
         )}
       </section>
 
       <section className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-indigo-900">Auto Guard 状態（7日）</p>
+          <p className="text-sm font-semibold text-indigo-900">Auto Guard 状態（{windowLabel(windowFilter)}）</p>
           <span className="text-xs text-indigo-800">/api/approvals/reminders/auto</span>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-4">
           <div className="rounded-md border border-indigo-200 bg-white p-3">
-            <p className="text-xs text-indigo-700">guard threshold</p>
+            <p className="text-xs text-indigo-700">ガード閾値</p>
             <p className="mt-1 text-xl font-semibold text-indigo-900">{autoMinStale}</p>
           </div>
           <div className="rounded-md border border-indigo-200 bg-white p-3">
-            <p className="text-xs text-indigo-700">current stale pending</p>
+            <p className="text-xs text-indigo-700">現在の滞留承認数</p>
             <p className={`mt-1 text-xl font-semibold ${currentStalePendingCount >= autoMinStale ? "text-rose-700" : "text-indigo-900"}`}>
               {currentStalePendingCount}
             </p>
           </div>
           <div className="rounded-md border border-indigo-200 bg-white p-3">
-            <p className="text-xs text-indigo-700">auto sent runs</p>
+            <p className="text-xs text-indigo-700">自動実行回数</p>
             <p className="mt-1 text-xl font-semibold text-indigo-900">{autoSentRuns}</p>
           </div>
           <div className="rounded-md border border-indigo-200 bg-white p-3">
-            <p className="text-xs text-indigo-700">auto skipped runs</p>
+            <p className="text-xs text-indigo-700">自動スキップ回数</p>
             <p className="mt-1 text-xl font-semibold text-indigo-900">{autoSkippedRuns}</p>
           </div>
         </div>
@@ -328,11 +608,11 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           <div className="mt-3 rounded-md border border-indigo-200 bg-white p-3 text-xs text-slate-700">
             <p className="font-medium text-indigo-900">直近 auto 実行結果</p>
             <p className="mt-1 text-slate-600">
-              {new Date(latestAutoEvent.created_at).toLocaleString()} | {latestAutoEvent.event_type}
+              {new Date(latestAutoEvent.created_at).toLocaleString("ja-JP")} | {latestAutoEvent.event_type}
             </p>
             <p className="mt-1 text-slate-600">
-              stale={String(latestAutoPayload?.stale_pending_count ?? "-")} threshold={String(latestAutoPayload?.threshold ?? autoMinStale)} reason=
-              {String(latestAutoPayload?.reason ?? "-")} sent_count={String(latestAutoPayload?.sent_count ?? 0)}
+              滞留件数={String(latestAutoPayload?.stale_pending_count ?? "-")} 閾値={String(latestAutoPayload?.threshold ?? autoMinStale)} 理由=
+              {String(latestAutoPayload?.reason ?? "-")} 送信件数={String(latestAutoPayload?.sent_count ?? 0)}
             </p>
             <p className="mt-1 text-slate-600">
               前回比(stale):{" "}
@@ -349,13 +629,15 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
             <p className="mt-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-indigo-900">{trendAction}</p>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-indigo-900">直近7日の auto 実行ログはありません。</p>
+          <p className="mt-3 text-xs text-indigo-900">直近{windowLabel(windowFilter)}の auto 実行ログはありません。</p>
         )}
         <p className="mt-3 text-xs text-indigo-900">
           推奨閾値: <span className="font-semibold">{suggestedOneOffMinStale}</span>
-          （現在の stale pending 件数 {currentStalePendingCount} に基づく）
+          （現在の滞留承認件数 {currentStalePendingCount} に基づく）
         </p>
         <form action={runGuardedAutoReminderNow} className="mt-2">
+          <input type="hidden" name="window" value={windowFilter} />
+          <input type="hidden" name="return_to" value={currentFilterPath} />
           <input type="hidden" name="min_stale" value={String(suggestedOneOffMinStale)} />
           <ConfirmSubmitButton
             label={`推奨値(${suggestedOneOffMinStale})で即実行`}
@@ -366,6 +648,8 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </form>
         {suggestedUrgentMinStale !== suggestedOneOffMinStale ? (
           <form action={runGuardedAutoReminderNow} className="mt-2">
+            <input type="hidden" name="window" value={windowFilter} />
+            <input type="hidden" name="return_to" value={currentFilterPath} />
             <input type="hidden" name="min_stale" value={String(suggestedUrgentMinStale)} />
             <ConfirmSubmitButton
               label={`悪化対応: 閾値${suggestedUrgentMinStale}で即実行`}
@@ -376,6 +660,8 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           </form>
         ) : null}
         <form action={runGuardedAutoReminderNow} className="mt-3 rounded-md border border-indigo-200 bg-white p-3">
+          <input type="hidden" name="window" value={windowFilter} />
+          <input type="hidden" name="return_to" value={currentFilterPath} />
           <p className="text-xs font-medium text-indigo-900">今回のみ閾値指定で実行</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <label className="inline-flex items-center gap-2 text-xs text-slate-700">
@@ -404,7 +690,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
 
       <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-slate-700">7日ステータス分布（縦棒）</p>
+          <p className="text-sm font-medium text-slate-700">{windowLabel(windowFilter)} ステータス分布（縦棒）</p>
           <span className="text-xs text-slate-500">0件は棒なし</span>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-3">
@@ -423,10 +709,19 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         </div>
       </div>
 
-      {filteredApprovals.length > 0 ? (
+      {enrichedApprovals.length > 0 ? (
         <ul className="mt-5 space-y-4">
-          {filteredApprovals.map((approval) => (
-            <li key={approval.id} className="rounded-md border border-amber-200 bg-amber-50/30 p-4">
+          {enrichedApprovals.map((row) => {
+            const approval = row.approval;
+            const isRef = highlightedApprovalId !== null && approval.id === highlightedApprovalId;
+            return (
+            <li
+              key={approval.id}
+              id={isRef ? "ref-target" : undefined}
+              className={`rounded-md border p-4 ${
+                isRef ? "border-indigo-300 bg-indigo-50/50 ring-1 ring-indigo-200" : "border-amber-200 bg-amber-50/30"
+              }`}
+            >
               <label className="mb-2 inline-flex items-center gap-2 text-xs text-slate-600">
                 <input
                   type="checkbox"
@@ -441,10 +736,10 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                 <p className="text-sm text-slate-700">
                   タスク:{" "}
                   <Link href={`/app/tasks/${approval.task_id}`} className="font-medium">
-                    {taskTitleById.get(approval.task_id) ?? approval.task_id}
+                    {taskTitleById.get(approval.task_id) ?? "タスク"}
                   </Link>
                 </p>
-                <p className="text-xs text-slate-500">依頼日時 {new Date(approval.created_at).toLocaleString()}</p>
+                <p className="text-xs text-slate-500">依頼日時 {new Date(approval.created_at).toLocaleString("ja-JP")}</p>
                 {(() => {
                   const ageHours = Math.floor((Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000));
                   const isStale = ageHours >= staleHours;
@@ -458,9 +753,33 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                     </span>
                   );
                 })()}
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                    row.approvalGap > 0
+                      ? "border-rose-300 bg-rose-50 text-rose-700"
+                      : "border-emerald-300 bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  リスク={row.riskScore} / 承認 {row.approvedDistinctCount}/{row.requiredApprovals}
+                </span>
               </div>
+              {row.approvalGap > 0 ? (
+                <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+                  <p>追加で {row.approvalGap} 名の承認が必要です。</p>
+                  {row.suggestedApprovers.length > 0 ? (
+                    <p className="mt-1">
+                      候補: {row.suggestedApprovers.join(" / ")}
+                      {row.suggestedApproverOverflow > 0 ? ` ほか${row.suggestedApproverOverflow}名` : ""}
+                    </p>
+                  ) : (
+                    <p className="mt-1">候補が不足しています。メンバー招待または担当体制を確認してください。</p>
+                  )}
+                </div>
+              ) : null}
 
               <form action={decideApproval} className="mt-3 flex flex-col gap-3 md:flex-row md:items-center">
+                <input type="hidden" name="window" value={windowFilter} />
+                <input type="hidden" name="return_to" value={currentFilterPath} />
                 <input type="hidden" name="approval_id" value={approval.id} />
                 <input
                   type="text"
@@ -474,7 +793,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                     value="approved"
                     label="承認"
                     pendingLabel="処理中..."
-                    confirmMessage="この承認を approved に更新します。実行しますか？"
+                    confirmMessage="この承認を承認に更新します。実行しますか？"
                     className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white hover:bg-emerald-600"
                   />
                   <ConfirmSubmitButton
@@ -482,12 +801,14 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                     value="rejected"
                     label="却下"
                     pendingLabel="処理中..."
-                    confirmMessage="この承認を rejected に更新します。実行しますか？"
+                    confirmMessage="この承認を却下に更新します。実行しますか？"
                     className="rounded-md bg-rose-700 px-3 py-2 text-sm text-white hover:bg-rose-600"
                   />
                 </div>
               </form>
               <form action={resendApprovalSlackReminder} className="mt-2">
+                <input type="hidden" name="window" value={windowFilter} />
+                <input type="hidden" name="return_to" value={currentFilterPath} />
                 <input type="hidden" name="approval_id" value={approval.id} />
                 <ConfirmSubmitButton
                   label="Slackに再通知"
@@ -497,11 +818,16 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                 />
               </form>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : (
         <p className="mt-4 text-sm text-slate-600">
-          {staleOnly ? `SLA超過（${staleHours}h以上）の保留承認はありません。` : "保留中の承認はありません。"}
+          {highRiskOnly
+            ? "高リスク承認不足の保留承認はありません。"
+            : staleOnly
+              ? `SLA超過（${staleHours}時間以上）の保留承認はありません。`
+              : "保留中の承認はありません。"}
         </p>
       )}
     </section>

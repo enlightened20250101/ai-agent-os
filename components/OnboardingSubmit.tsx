@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 
 function SubmitButton() {
@@ -18,22 +17,10 @@ function SubmitButton() {
 }
 
 export function OnboardingSubmit() {
-  const hasSubmittedRef = useRef(false);
-
-  useEffect(() => {
-    if (hasSubmittedRef.current) {
-      return;
-    }
-
-    const form = document.getElementById("onboarding-form") as HTMLFormElement | null;
-    form?.requestSubmit();
-    hasSubmittedRef.current = true;
-  }, []);
-
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-600">
-        初期組織とオーナー権限のメンバーシップを作成しています。
+        ワークスペースを作成、または招待リンクで既存ワークスペースへ参加します。
       </p>
       <SubmitButton />
     </div>

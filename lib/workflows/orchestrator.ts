@@ -1,9 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeGoogleSendEmailIdempotencyKey } from "@/lib/actions/idempotency";
+import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { sendEmailWithGmail } from "@/lib/google/gmail";
+import { appendExceptionCaseEvent } from "@/lib/governance/exceptionCaseEvents";
 import { evaluateGovernance, incrementBudgetUsage } from "@/lib/governance/evaluate";
+import {
+  evaluateApprovalGuardrail,
+  evaluateHourlyBudgetGuardrail
+} from "@/lib/governance/guardrails";
 import { recordTrustOutcome } from "@/lib/governance/trust";
 
 type StepDef = {
@@ -225,6 +231,97 @@ function getWorkflowStepMaxRetries() {
   return Math.max(0, Math.min(20, raw));
 }
 
+function isMissingTableError(message: string, tableName: string) {
+  return (
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`Could not find the table 'public.${tableName}'`)
+  );
+}
+
+function shouldAutoCreateWorkflowExceptionCase() {
+  return process.env.WORKFLOW_FAILURE_EXCEPTION_AUTO_CREATE !== "0";
+}
+
+function workflowFailureSlaHours() {
+  const raw = Number.parseInt(process.env.WORKFLOW_FAILURE_EXCEPTION_SLA_HOURS ?? "8", 10);
+  if (Number.isNaN(raw)) return 8;
+  return Math.max(1, Math.min(168, raw));
+}
+
+async function upsertWorkflowFailureExceptionCase(args: {
+  supabase: SupabaseClient;
+  orgId: string;
+  actorId: string | null;
+  workflowRunId: string;
+  taskId: string;
+  note: string;
+}) {
+  if (!shouldAutoCreateWorkflowExceptionCase()) {
+    return { created: 0, updated: 0, skipped: true as const };
+  }
+
+  const dueAtIso = new Date(Date.now() + workflowFailureSlaHours() * 60 * 60 * 1000).toISOString();
+  const { data: existing, error: existingError } = await args.supabase
+    .from("exception_cases")
+    .select("id")
+    .eq("org_id", args.orgId)
+    .eq("kind", "failed_workflow")
+    .eq("ref_id", args.workflowRunId)
+    .maybeSingle();
+  if (existingError && !isMissingTableError(existingError.message, "exception_cases")) {
+    throw new Error(`workflow exception case lookup failed: ${existingError.message}`);
+  }
+
+  const { data: upserted, error: upsertError } = await args.supabase
+    .from("exception_cases")
+    .upsert(
+      {
+        org_id: args.orgId,
+        kind: "failed_workflow",
+        ref_id: args.workflowRunId,
+        task_id: args.taskId,
+        status: "open",
+        note: `[auto:workflow_failure] ${args.note}`.slice(0, 500),
+        due_at: dueAtIso,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "org_id,kind,ref_id" }
+    )
+    .select("id")
+    .maybeSingle();
+  if (upsertError) {
+    if (isMissingTableError(upsertError.message, "exception_cases")) {
+      return { created: 0, updated: 0, skipped: true as const };
+    }
+    throw new Error(`workflow exception case upsert failed: ${upsertError.message}`);
+  }
+
+  const exceptionCaseId = (upserted?.id as string | undefined) ?? (existing?.id as string | undefined);
+  if (!exceptionCaseId) {
+    return { created: 0, updated: 0, skipped: false as const };
+  }
+
+  await appendExceptionCaseEvent({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    exceptionCaseId,
+    actorUserId: args.actorId,
+    eventType: existing?.id ? "CASE_UPDATED" : "CASE_CREATED",
+    payload: {
+      source: "workflow_orchestrator",
+      workflow_run_id: args.workflowRunId,
+      task_id: args.taskId,
+      note: args.note
+    }
+  });
+
+  return {
+    created: existing?.id ? 0 : 1,
+    updated: existing?.id ? 1 : 0,
+    skipped: false as const
+  };
+}
+
 async function moveQueuedStepToRunning(args: {
   supabase: SupabaseClient;
   orgId: string;
@@ -361,6 +458,15 @@ async function failRunningStepAndRun(args: {
       error: args.errorMessage.slice(0, 500)
     }
   });
+
+  await upsertWorkflowFailureExceptionCase({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    actorId: args.actorId,
+    workflowRunId: args.workflowRunId,
+    taskId: args.taskId,
+    note: args.errorMessage.slice(0, 300)
+  });
 }
 
 async function executeGoogleSendEmailForTask(args: {
@@ -458,6 +564,26 @@ async function executeGoogleSendEmailForTask(args: {
   if (governance.decision === "block") {
     throw new Error(`ガバナンス判定が block です。${governance.reasons.join(" ")}`);
   }
+  const approvalGuardrail = await evaluateApprovalGuardrail({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    taskId: args.taskId,
+    riskScore: governance.riskScore
+  });
+  if (approvalGuardrail.distinctApproverCount < approvalGuardrail.requiredApprovals) {
+    throw new Error(
+      `承認者数が不足しています（必要=${approvalGuardrail.requiredApprovals}, 現在=${approvalGuardrail.distinctApproverCount}）。`
+    );
+  }
+  const hourlyGuardrail = await evaluateHourlyBudgetGuardrail({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    provider: "google",
+    actionType: "send_email"
+  });
+  if (hourlyGuardrail.remainingLastHour <= 0) {
+    throw new Error(`1時間あたり実行上限に達しています（limit=${hourlyGuardrail.hourlyLimit}）。`);
+  }
 
   if (task.status !== "approved" && governance.decision !== "allow_auto_execute") {
     throw new Error("タスクステータスが approved ではありません。自動実行条件を満たしていません。");
@@ -502,6 +628,13 @@ async function executeGoogleSendEmailForTask(args: {
         },
         source: "workflow_autonomy_auto_approval"
       }
+    });
+    await syncCaseStageForTask({
+      supabase: args.supabase,
+      orgId: args.orgId,
+      taskId: args.taskId,
+      actorUserId: null,
+      source: "workflow_autonomy_auto_approval"
     });
   }
 
@@ -1423,6 +1556,14 @@ export async function tickWorkflowRuns({
           step_key: row.current_step_key ?? null,
           error: `workflow_tick: ${message.slice(0, 500)}`
         }
+      });
+      await upsertWorkflowFailureExceptionCase({
+        supabase,
+        orgId,
+        actorId: null,
+        workflowRunId,
+        taskId,
+        note: `workflow_tick: ${message.slice(0, 300)}`
       });
 
       resultRows.push({

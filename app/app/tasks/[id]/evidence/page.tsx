@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 import { PrintButton } from "@/app/app/tasks/[id]/evidence/PrintButton";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
 type EvidencePageProps = {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ execution_id?: string }>;
 };
 
 function isMissingTableError(message: string, tableName: string) {
@@ -26,7 +28,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function pretty(value: unknown) {
-  return JSON.stringify(value, null, 2);
+  return toRedactedJson(value);
 }
 
 function getLatestEvent(events: Array<{ event_type: string; payload_json: unknown }>, eventType: string) {
@@ -112,8 +114,21 @@ function parsePolicy(eventPayload: unknown): PolicyView | null {
   };
 }
 
-export default async function EvidencePage({ params }: EvidencePageProps) {
+type ApprovalDecisionAuditRow = {
+  id: string;
+  eventType: string;
+  createdAt: string;
+  actorType: string;
+  actorId: string | null;
+  approvalStage: "partial" | "final" | "rejected" | "unknown";
+  reason: string | null;
+  approvalId: string | null;
+};
+
+export default async function EvidencePage({ params, searchParams }: EvidencePageProps) {
   const { id } = await params;
+  const sp = searchParams ? await searchParams : {};
+  const executionId = typeof sp.execution_id === "string" && sp.execution_id.length > 0 ? sp.execution_id : null;
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
@@ -178,6 +193,24 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       : Promise.resolve({ data: { user: null }, error: null })
   ]);
 
+  const actorUserIds = new Set<string>();
+  if (typeof task.created_by_user_id === "string" && task.created_by_user_id.length > 0) {
+    actorUserIds.add(task.created_by_user_id);
+  }
+  for (const approval of approvals ?? []) {
+    if (typeof approval.requested_by === "string" && approval.requested_by.length > 0) {
+      actorUserIds.add(approval.requested_by);
+    }
+    if (typeof approval.approver_user_id === "string" && approval.approver_user_id.length > 0) {
+      actorUserIds.add(approval.approver_user_id);
+    }
+  }
+  for (const event of events ?? []) {
+    if (typeof event.actor_id === "string" && event.actor_id.length > 0) {
+      actorUserIds.add(event.actor_id);
+    }
+  }
+
   const [caseRes, caseEventsRes] = caseId
     ? await Promise.all([
         supabase
@@ -223,6 +256,12 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       ? []
       : (caseEventsRes.data ?? []);
 
+  for (const event of caseEvents) {
+    if (typeof event.actor_user_id === "string" && event.actor_user_id.length > 0) {
+      actorUserIds.add(event.actor_user_id);
+    }
+  }
+
   const { data: exceptionCasesRaw, error: exceptionCasesError } = await supabase
     .from("exception_cases")
     .select("id, kind, ref_id, status, owner_user_id, note, due_at, last_alerted_at, updated_at, created_at")
@@ -237,6 +276,12 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
     exceptionCasesError && isMissingTableError(exceptionCasesError.message, "exception_cases")
       ? []
       : (exceptionCasesRaw ?? []);
+
+  for (const row of exceptionCases) {
+    if (typeof row.owner_user_id === "string" && row.owner_user_id.length > 0) {
+      actorUserIds.add(row.owner_user_id);
+    }
+  }
 
   const exceptionCaseIds = exceptionCases.map((row) => row.id as string).filter(Boolean);
   const exceptionCaseById = new Map(
@@ -268,6 +313,29 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
         })()
       : [];
 
+  for (const event of exceptionCaseEvents) {
+    if (typeof event.actor_user_id === "string" && event.actor_user_id.length > 0) {
+      actorUserIds.add(event.actor_user_id);
+    }
+  }
+
+  const userProfileRes =
+    actorUserIds.size > 0
+      ? await supabase.from("user_profiles").select("user_id, display_name").eq("org_id", orgId).in("user_id", Array.from(actorUserIds))
+      : { data: [], error: null };
+  if (userProfileRes.error && !isMissingTableError(userProfileRes.error.message, "user_profiles")) {
+    throw new Error(`Failed to load user profiles: ${userProfileRes.error.message}`);
+  }
+  const displayNameByUserId = new Map(
+    ((userProfileRes.data ?? []) as Array<{ user_id: string; display_name: string | null }>)
+      .map((row) => [row.user_id, (row.display_name ?? "").trim()] as const)
+      .filter((row): row is [string, string] => Boolean(row[0]) && Boolean(row[1]))
+  );
+  const userLabel = (userId: string | null | undefined, fallback = "（なし）") => {
+    if (!userId) return fallback;
+    return displayNameByUserId.get(userId) ?? "表示名未設定メンバー";
+  };
+
   const eventRows = events ?? [];
   const latestModel = getLatestEvent(eventRows, "MODEL_INFERRED");
   const latestPolicy = getLatestEvent(eventRows, "POLICY_CHECKED");
@@ -285,6 +353,25 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
   const draft = parseDraft(latestModel?.payload_json);
   const policy = parsePolicy(latestPolicy?.payload_json);
   const slackPayload = asObject(latestSlackPosted?.payload_json);
+  const approvalDecisionAuditRows: ApprovalDecisionAuditRow[] = eventRows
+    .filter((event) => event.event_type === "HUMAN_APPROVED" || event.event_type === "HUMAN_REJECTED")
+    .map((event) => {
+      const payload = asObject(event.payload_json);
+      const stageRaw = payload?.approval_stage;
+      const approvalStage: ApprovalDecisionAuditRow["approvalStage"] =
+        stageRaw === "partial" || stageRaw === "final" || stageRaw === "rejected" ? stageRaw : "unknown";
+      return {
+        id: event.id as string,
+        eventType: event.event_type as string,
+        createdAt: event.created_at as string,
+        actorType: (event.actor_type as string) ?? "unknown",
+        actorId: (event.actor_id as string) ?? null,
+        approvalStage,
+        reason: typeof payload?.reason === "string" ? payload.reason : null,
+        approvalId: typeof payload?.approval_id === "string" ? payload.approval_id : null
+      };
+    })
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 print:max-w-none print:text-black">
@@ -310,6 +397,14 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             >
               タスクへ戻る
             </Link>
+            {executionId ? (
+              <Link
+                href={`/app/executions/${executionId}`}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+              >
+                実行履歴へ戻る
+              </Link>
+            ) : null}
             <PrintButton />
           </div>
         </div>
@@ -318,11 +413,10 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       <section className="rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="text-lg font-semibold">A. タスク概要</h2>
         <div className="mt-3 space-y-1 text-sm text-slate-700">
-          <p>タスクID: {task.id as string}</p>
           <p>タイトル: {task.title as string}</p>
           <p>ステータス: {task.status as string}</p>
           <p>作成日時: {new Date(task.created_at as string).toLocaleString()}</p>
-          <p>作成ユーザーID: {task.created_by_user_id as string}</p>
+          <p>作成ユーザー: {userLabel(task.created_by_user_id as string | null, "（なし）")}</p>
           <p>作成ユーザーメール: {creatorRes.data.user?.email ?? "（取得不可）"}</p>
           <p>エージェント: {agentRes.data?.name ?? "（なし）"}</p>
           <p>エージェント role_key: {agentRes.data?.role_key ?? "（なし）"}</p>
@@ -330,7 +424,7 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             提案元:{" "}
             {proposalOriginId ? (
               <>
-                {proposalOriginId} (
+                提案経由 (
                 <Link href="/app/proposals" className="underline">
                   提案一覧を見る
                 </Link>
@@ -347,7 +441,6 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
         <h2 className="text-lg font-semibold">A2. 案件コンテキスト（Case Ledger）</h2>
         {caseRow ? (
           <div className="mt-3 space-y-1 text-sm text-slate-700">
-            <p>ケースID: {caseRow.id}</p>
             <p>ケース名: {caseRow.title}</p>
             <p>ケース種別: {caseRow.case_type}</p>
             <p>ケース状態: {caseRow.status}</p>
@@ -361,7 +454,7 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             </p>
           </div>
         ) : caseId ? (
-          <p className="mt-3 text-sm text-slate-600">ケース情報を取得できませんでした（case_id: {caseId}）。</p>
+          <p className="mt-3 text-sm text-slate-600">ケース情報を取得できませんでした。</p>
         ) : (
           <p className="mt-3 text-sm text-slate-600">このタスクはケース未紐付けです。</p>
         )}
@@ -375,7 +468,7 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                   <p>
                     {event.event_type as string} | at: {new Date(event.created_at as string).toLocaleString()}
                   </p>
-                  <p>actor_user_id: {(event.actor_user_id as string) ?? "system"}</p>
+                  <p>actor: {userLabel(event.actor_user_id as string | null, "system")}</p>
                   <details className="mt-2">
                     <summary className="cursor-pointer font-medium">payload JSON</summary>
                     <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
@@ -464,8 +557,8 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             {approvals.map((approval) => (
               <li key={approval.id} className="rounded-md border border-slate-200 p-3">
                 <p>ステータス: {approval.status as string}</p>
-                <p>依頼者: {approval.requested_by as string}</p>
-                <p>承認者ユーザーID: {(approval.approver_user_id as string) ?? "（なし）"}</p>
+                <p>依頼者: {userLabel(approval.requested_by as string | null, "（なし）")}</p>
+                <p>承認者: {userLabel(approval.approver_user_id as string | null, "（なし）")}</p>
                 <p>作成日時: {new Date(approval.created_at as string).toLocaleString()}</p>
                 <p>
                   判断日時:{" "}
@@ -487,6 +580,27 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             </p>
           ) : (
             <p>（なし）</p>
+          )}
+        </div>
+        <div className="mt-4 text-sm text-slate-700">
+          <p className="font-medium">承認イベント監査（approval_stage）</p>
+          {approvalDecisionAuditRows.length > 0 ? (
+            <ul className="mt-2 space-y-2">
+              {approvalDecisionAuditRows.map((row) => (
+                <li key={row.id} className="rounded-md border border-slate-200 p-3">
+                  <p>
+                    {row.eventType} | stage: {row.approvalStage}
+                  </p>
+                  <p>
+                    actor: {row.actorType}/{userLabel(row.actorId, "（なし）")} | at:{" "}
+                    {new Date(row.createdAt).toLocaleString()}
+                  </p>
+                  <p>reason: {row.reason ?? "（なし）"}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2">（承認イベントなし）</p>
           )}
         </div>
       </section>
@@ -536,7 +650,7 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                   <th className="px-2 py-2">作成日時</th>
                   <th className="px-2 py-2">イベント種別</th>
                   <th className="px-2 py-2">アクター種別</th>
-                  <th className="px-2 py-2">アクターID</th>
+                  <th className="px-2 py-2">アクター</th>
                   <th className="px-2 py-2">ペイロードJSON</th>
                 </tr>
               </thead>
@@ -548,7 +662,7 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                     </td>
                     <td className="px-2 py-2 font-medium">{event.event_type as string}</td>
                     <td className="px-2 py-2">{event.actor_type as string}</td>
-                    <td className="px-2 py-2">{(event.actor_id as string) ?? "（なし）"}</td>
+                    <td className="px-2 py-2">{userLabel(event.actor_id as string | null, "（なし）")}</td>
                     <td className="px-2 py-2">
                       <details>
                         <summary className="cursor-pointer">ペイロードを見る</summary>
@@ -574,10 +688,10 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
             {exceptionCases.map((row) => (
               <li key={row.id as string} className="rounded-md border border-slate-200 p-3">
                 <p>
-                  {row.kind as string}/{row.ref_id as string} | status: {row.status as string}
+                  {row.kind as string} | status: {row.status as string}
                 </p>
                 <p>
-                  owner: {(row.owner_user_id as string) ?? "unassigned"} | due:{" "}
+                  owner: {userLabel(row.owner_user_id as string | null, "未割当")} | due:{" "}
                   {row.due_at ? new Date(row.due_at as string).toLocaleString() : "（なし）"}
                 </p>
                 <p>
@@ -603,11 +717,11 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
                     <p>
                       {event.event_type as string} |{" "}
                       {related
-                        ? `${related.kind}/${related.refId}`
-                        : (event.exception_case_id as string)}
+                        ? `${related.kind}`
+                        : "関連ケース"}
                     </p>
                     <p>
-                      actor: {(event.actor_user_id as string) ?? "system"} | at:{" "}
+                      actor: {userLabel(event.actor_user_id as string | null, "system")} | at:{" "}
                       {new Date(event.created_at as string).toLocaleString()}
                     </p>
                     <details className="mt-2">

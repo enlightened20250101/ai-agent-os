@@ -47,3 +47,16 @@ export async function getLatestOpenIncident(args: { supabase: SupabaseClient; or
   return incidents[0] ?? null;
 }
 
+export async function assertNoOpenIncidentForMutation(args: {
+  supabase: SupabaseClient;
+  orgId: string;
+  operation: string;
+}) {
+  const latest = await getLatestOpenIncident({ supabase: args.supabase, orgId: args.orgId });
+  if (!latest) {
+    return;
+  }
+  throw new Error(
+    `インシデントモード中のため ${args.operation} は停止されています（severity=${latest.severity} reason=${latest.reason}）。`
+  );
+}

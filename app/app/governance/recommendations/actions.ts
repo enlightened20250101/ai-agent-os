@@ -11,16 +11,31 @@ import { resolveSlackRuntimeConfig } from "@/lib/connectors/runtime";
 import { postSlackMessage } from "@/lib/slack/client";
 import { runGovernanceRecommendationReview } from "@/lib/governance/review";
 
-function withMessage(kind: "ok" | "error", message: string) {
-  return `/app/governance/recommendations?${kind}=${encodeURIComponent(message)}`;
+function normalizeWindow(windowValue: string) {
+  if (windowValue === "24h" || windowValue === "30d") return windowValue;
+  return "7d";
 }
 
-function withRetryMessage(message: string, actionKind: string, recommendationId: string) {
+function withMessage(kind: "ok" | "error", message: string, windowValue: string) {
+  const params = new URLSearchParams();
+  params.set(kind, message);
+  params.set("window", normalizeWindow(windowValue));
+  return `/app/governance/recommendations?${params.toString()}`;
+}
+
+function withRetryMessage(message: string, actionKind: string, recommendationId: string, windowValue: string) {
   const params = new URLSearchParams();
   params.set("error", message);
   params.set("retry_action_kind", actionKind);
   params.set("retry_recommendation_id", recommendationId);
+  params.set("window", normalizeWindow(windowValue));
   return `/app/governance/recommendations?${params.toString()}`;
+}
+
+function windowHoursFromValue(windowValue: string) {
+  if (windowValue === "24h") return 24;
+  if (windowValue === "30d") return 24 * 30;
+  return 24 * 7;
 }
 
 function isMissingGovernanceTable(message: string) {
@@ -182,18 +197,23 @@ async function sendApprovalReminder(args: {
 export async function applyRecommendationAction(formData: FormData) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
-  const { summary: baseline } = await buildGovernanceRecommendations({ supabase, orgId });
+  const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
+  const { summary: baseline } = await buildGovernanceRecommendations({
+    supabase,
+    orgId,
+    windowHours: windowHoursFromValue(windowValue)
+  });
 
   const recommendationId = String(formData.get("recommendation_id") ?? "").trim();
   const actionKind = String(formData.get("action_kind") ?? "").trim();
   const confirmRisky = String(formData.get("confirm_risky") ?? "").trim();
   if (!recommendationId || !actionKind) {
-    redirect(withMessage("error", "recommendation_id/action_kind が不足しています。"));
+    redirect(withMessage("error", "recommendation_id/action_kind が不足しています。", windowValue));
   }
 
   if (actionKind === "disable_auto_execute") {
     if (confirmRisky !== "yes") {
-      redirect(withRetryMessage("危険操作を実行するには確認チェックが必要です。", actionKind, recommendationId));
+      redirect(withRetryMessage("危険操作を実行するには確認チェックが必要です。", actionKind, recommendationId, windowValue));
     }
     try {
       await disableAutoExecute({ orgId, userId, recommendationId, baseline });
@@ -215,13 +235,13 @@ export async function applyRecommendationAction(formData: FormData) {
         }
       });
       const message = error instanceof Error ? error.message : "改善提案アクションに失敗しました。";
-      redirect(withRetryMessage(message, actionKind, recommendationId));
+      redirect(withRetryMessage(message, actionKind, recommendationId, windowValue));
     }
     revalidatePath("/app/governance/autonomy");
     revalidatePath("/app/tasks");
     revalidatePath("/app");
     revalidatePath("/app/governance/recommendations");
-    redirect(withMessage("ok", "自動実行を一時停止しました。"));
+    redirect(withMessage("ok", "自動実行を一時停止しました。", windowValue));
   }
 
   if (actionKind === "send_approval_reminder") {
@@ -246,28 +266,29 @@ export async function applyRecommendationAction(formData: FormData) {
         }
       });
       const message = error instanceof Error ? error.message : "改善提案アクションに失敗しました。";
-      redirect(withRetryMessage(message, actionKind, recommendationId));
+      redirect(withRetryMessage(message, actionKind, recommendationId, windowValue));
     }
     revalidatePath("/app/approvals");
     revalidatePath("/app/governance/recommendations");
     if (!result || result.reminderCount === 0) {
-      redirect(withMessage("ok", "催促対象の承認はありませんでした。"));
+      redirect(withMessage("ok", "催促対象の承認はありませんでした。", windowValue));
     }
-    redirect(withMessage("ok", "Slackに承認催促メッセージを送信しました。"));
+    redirect(withMessage("ok", "Slackに承認催促メッセージを送信しました。", windowValue));
   }
 
-  redirect(withMessage("error", `未対応の action_kind です: ${actionKind}`));
+  redirect(withMessage("error", `未対応の action_kind です: ${actionKind}`, windowValue));
 }
 
-export async function runRecommendationsReviewNow() {
+export async function runRecommendationsReviewNow(formData: FormData) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
+  const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
 
   const result = await runGovernanceRecommendationReview({ supabase, orgId });
   if (!result.ok) {
-    redirect(withMessage("error", result.error ?? "改善提案レビュー実行に失敗しました。"));
+    redirect(withMessage("error", result.error ?? "改善提案レビュー実行に失敗しました。", windowValue));
   }
 
   revalidatePath("/app/governance/recommendations");
-  redirect(withMessage("ok", "改善提案の再評価を実行しました。"));
+  redirect(withMessage("ok", "改善提案の再評価を実行しました。", windowValue));
 }

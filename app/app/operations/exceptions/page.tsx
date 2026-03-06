@@ -10,6 +10,7 @@ import {
 } from "@/app/app/operations/exceptions/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -145,7 +146,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
     ? 6
     : Math.max(1, Math.min(168, pendingThresholdHoursRaw));
 
-  const [failedActionsRes, failedRunsRes, pendingApprovalsRes, policyCheckedRes, casesRes, membersRes, eventsRes] =
+  const [failedActionsRes, failedRunsRes, pendingApprovalsRes, policyCheckedRes, casesRes, membersRes, eventsRes, monitorRecoveryLogsRes] =
     await Promise.all([
     supabase
       .from("actions")
@@ -192,7 +193,16 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
       .select("id, exception_case_id, actor_user_id, event_type, payload_json, created_at")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
-      .limit(50)
+      .limit(50),
+    supabase
+      .from("ai_execution_logs")
+      .select("id, metadata_json, created_at")
+      .eq("org_id", orgId)
+      .eq("source", "chat")
+      .eq("intent_type", "monitor_recovery_run")
+      .eq("execution_status", "done")
+      .order("created_at", { ascending: false })
+      .limit(30)
   ]);
 
   if (failedActionsRes.error) {
@@ -215,6 +225,9 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
   }
   if (eventsRes.error && !isMissingTable(eventsRes.error.message, "exception_case_events")) {
     throw new Error(`Failed to load exception case events: ${eventsRes.error.message}`);
+  }
+  if (monitorRecoveryLogsRes.error && !isMissingTable(monitorRecoveryLogsRes.error.message, "ai_execution_logs")) {
+    throw new Error(`Failed to load monitor recovery logs: ${monitorRecoveryLogsRes.error.message}`);
   }
 
   const failedActions = (failedActionsRes.data ?? []) as Array<{
@@ -240,8 +253,58 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
   }>;
   const exceptionCases = (casesRes.data ?? []) as ExceptionCase[];
   const exceptionCaseEvents = (eventsRes.data ?? []) as ExceptionCaseEvent[];
+  const monitorRecoveryLogs = (monitorRecoveryLogsRes.data ?? []) as Array<{
+    id: string;
+    metadata_json: unknown;
+    created_at: string;
+  }>;
   const members = (membersRes.data ?? []) as Array<{ user_id: string; created_at: string }>;
   const ownerUsers = members.map((row) => row.user_id);
+  const profilesRes =
+    ownerUsers.length > 0
+      ? await supabase.from("user_profiles").select("user_id, display_name").eq("org_id", orgId).in("user_id", ownerUsers)
+      : { data: [], error: null };
+  if (profilesRes.error && !isMissingTable(profilesRes.error.message, "user_profiles")) {
+    throw new Error(`Failed to load user profiles: ${profilesRes.error.message}`);
+  }
+  const displayNameByUserId = new Map(
+    ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null }>)
+      .map((row) => [row.user_id, (row.display_name ?? "").trim()] as const)
+      .filter((row): row is [string, string] => Boolean(row[0]) && Boolean(row[1]))
+  );
+  const memberLabel = (userId: string | null | undefined, fallback = "未割当") => {
+    if (!userId) return fallback;
+    return displayNameByUserId.get(userId) ?? "表示名未設定メンバー";
+  };
+
+  const monitorManualWorkflowFailures: Array<{
+    workflowRunId: string;
+    reasonSummary: string;
+    createdAt: string;
+  }> = [];
+  const seenManualFailureRunIds = new Set<string>();
+  for (const row of monitorRecoveryLogs) {
+    const meta = asObject(row.metadata_json);
+    const result = asObject(meta?.result);
+    const workflowRetry = asObject(result?.workflow_retry);
+    const failedDetails = Array.isArray(workflowRetry?.failed_details) ? workflowRetry.failed_details : [];
+    for (const detailRow of failedDetails) {
+      const detail = asObject(detailRow);
+      if (!detail) continue;
+      if (detail.reason_class !== "manual") continue;
+      const workflowRunId = typeof detail.workflow_run_id === "string" ? detail.workflow_run_id : null;
+      if (!workflowRunId || seenManualFailureRunIds.has(workflowRunId)) continue;
+      seenManualFailureRunIds.add(workflowRunId);
+      monitorManualWorkflowFailures.push({
+        workflowRunId,
+        reasonSummary:
+          typeof detail.reason_summary === "string" && detail.reason_summary.length > 0
+            ? detail.reason_summary
+            : "詳細理由なし",
+        createdAt: row.created_at
+      });
+    }
+  }
 
   const stalePendingApprovals = pendingApprovals.filter((row) => hoursAgo(row.created_at) >= pendingThresholdHours);
 
@@ -301,6 +364,14 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
       return { row, task, score, tone: priorityTone(score) };
     })
     .sort((a, b) => b.score - a.score);
+
+  const workflowRunTaskTitleByRunId = new Map<string, string>();
+  for (const run of failedRuns) {
+    const task = taskMap.get(run.task_id);
+    if (task?.title) {
+      workflowRunTaskTitleByRunId.set(run.id, task.title);
+    }
+  }
 
   const failedRunsWithPriority = failedRuns
     .map((row) => {
@@ -422,6 +493,19 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
     if (selectedOwner === "unassigned") return row.owner === "unassigned";
     return row.owner === selectedOwner;
   });
+  const caseStatusLabel = (status: string) => {
+    if (status === "open") return "未着手";
+    if (status === "in_progress") return "対応中";
+    if (status === "resolved") return "解決";
+    return status;
+  };
+  const caseKindLabel = (kind: string) => {
+    if (kind === "failed_action") return "失敗アクション";
+    if (kind === "failed_workflow") return "失敗ワークフロー";
+    if (kind === "stale_approval") return "承認滞留";
+    if (kind === "policy_block") return "ポリシーブロック";
+    return kind;
+  };
 
   function dueTs(caseRow: ExceptionCase | null) {
     if (!caseRow?.due_at) return Number.POSITIVE_INFINITY;
@@ -535,7 +619,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
     };
   }
 
-  function renderGuidance(args: {
+function renderGuidance(args: {
     kind: ExceptionKind;
     owner: string | null;
     dueAt: string | null;
@@ -561,6 +645,65 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
     );
   }
 
+  function classifyManualWorkflowFailureReason(reasonSummary: string) {
+    const s = reasonSummary.toLowerCase();
+    if (s.includes("auth") || s.includes("token") || s.includes("unauthorized") || s.includes("forbidden")) {
+      return "auth";
+    }
+    if (s.includes("domain") || s.includes("policy") || s.includes("permission") || s.includes("not allowed")) {
+      return "policy";
+    }
+    if (s.includes("invalid") || s.includes("required") || s.includes("schema") || s.includes("parse")) {
+      return "input";
+    }
+    if (s.includes("connector") || s.includes("not configured") || s.includes("refresh_token")) {
+      return "connector";
+    }
+    return "unknown";
+  }
+
+  function manualFailureActionGuide(reasonSummary: string) {
+    const category = classifyManualWorkflowFailureReason(reasonSummary);
+    if (category === "auth") {
+      return {
+        label: "認証エラー",
+        tone: "border-rose-300 bg-rose-100 text-rose-900",
+        action: "Google/Slack連携の再接続を行い、資格情報の有効期限を確認してください。",
+        href: "/app/integrations/google"
+      };
+    }
+    if (category === "policy") {
+      return {
+        label: "ポリシー制約",
+        tone: "border-amber-300 bg-amber-100 text-amber-900",
+        action: "ポリシー条件・許可ドメイン・承認状態を確認し、入力値を修正してから再実行してください。",
+        href: "/app/governance"
+      };
+    }
+    if (category === "input") {
+      return {
+        label: "入力不整合",
+        tone: "border-sky-300 bg-sky-100 text-sky-900",
+        action: "対象タスクのドラフト内容（宛先・件名・本文）を見直し、必須項目を補って再実行してください。",
+        href: "/app/tasks"
+      };
+    }
+    if (category === "connector") {
+      return {
+        label: "コネクタ設定不足",
+        tone: "border-fuchsia-300 bg-fuchsia-100 text-fuchsia-900",
+        action: "コネクタ設定値を確認し、refresh token や送信元アカウントを更新してから再実行してください。",
+        href: "/app/integrations/google"
+      };
+    }
+    return {
+      label: "要手動調査",
+      tone: "border-slate-300 bg-slate-100 text-slate-800",
+      action: "workflow run詳細の失敗ステップを確認し、再試行前に前提データ/権限を点検してください。",
+      href: "/app/workflows/runs"
+    };
+  }
+
   function renderCaseControls(args: { kind: ExceptionKind; refId: string; taskId: string | null; existing: ExceptionCase | null }) {
     const existing = args.existing;
     return (
@@ -570,28 +713,28 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
         <input type="hidden" name="task_id" value={args.taskId ?? ""} />
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <label className="flex items-center gap-1">
-            <span className="text-slate-600">status</span>
+            <span className="text-slate-600">状態</span>
             <select
               name="status"
               defaultValue={existing?.status ?? "open"}
               className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="open">open</option>
-              <option value="in_progress">in_progress</option>
-              <option value="resolved">resolved</option>
+              <option value="open">未着手</option>
+              <option value="in_progress">対応中</option>
+              <option value="resolved">解決</option>
             </select>
           </label>
           <label className="flex items-center gap-1">
-            <span className="text-slate-600">owner</span>
+            <span className="text-slate-600">担当者</span>
             <select
               name="owner_user_id"
               defaultValue={existing?.owner_user_id ?? ""}
               className="max-w-[220px] rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="">unassigned</option>
+              <option value="">未割当</option>
               {ownerUsers.map((userId) => (
                 <option key={userId} value={userId}>
-                  {userId}
+                  {memberLabel(userId)}
                 </option>
               ))}
             </select>
@@ -604,7 +747,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             className="min-w-[180px] flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
           />
           <label className="flex items-center gap-1">
-            <span className="text-slate-600">due</span>
+            <span className="text-slate-600">期限</span>
             <input
               type="datetime-local"
               name="due_at"
@@ -623,7 +766,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-rose-900 p-6 text-white shadow-lg">
-        <p className="text-xs uppercase tracking-[0.18em] text-rose-200">Exception Queue</p>
+        <p className="text-xs uppercase tracking-[0.18em] text-rose-200">例外キュー</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">例外トリアージ</h1>
         <p className="mt-2 text-sm text-slate-200">失敗・滞留・ポリシーブロックを一箇所で確認し、優先対応できます。</p>
       </div>
@@ -635,44 +778,44 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           <input type="hidden" name="ok" value="" />
           <input type="hidden" name="error" value="" />
           <label className="text-xs text-slate-700">
-            owner
+            担当者
             <select
               name="owner"
               defaultValue={selectedOwner}
               className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="all">all</option>
-              <option value="unassigned">unassigned</option>
+              <option value="all">すべて</option>
+              <option value="unassigned">未割当</option>
               {ownerUsers.map((userId) => (
                 <option key={userId} value={userId}>
-                  {userId}
+                  {memberLabel(userId)}
                 </option>
               ))}
             </select>
           </label>
           <label className="text-xs text-slate-700">
-            status
+            ケース状態
             <select
               name="case_status"
               defaultValue={selectedCaseStatus}
               className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="all">all</option>
-              <option value="open">open</option>
-              <option value="in_progress">in_progress</option>
-              <option value="resolved">resolved</option>
+              <option value="all">すべて</option>
+              <option value="open">未着手</option>
+              <option value="in_progress">対応中</option>
+              <option value="resolved">解決</option>
             </select>
           </label>
           <label className="text-xs text-slate-700">
-            sort
+            並び順
             <select
               name="sort"
               defaultValue={selectedSort}
               className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="priority_desc">priority desc</option>
-              <option value="due_asc">due asc</option>
-              <option value="updated_desc">updated desc</option>
+              <option value="priority_desc">優先度順</option>
+              <option value="due_asc">期限が近い順</option>
+              <option value="updated_desc">更新が新しい順</option>
             </select>
           </label>
           <label className="flex items-center gap-2 pb-1 text-xs text-slate-700">
@@ -683,22 +826,22 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
               defaultChecked={overdueOnly}
               className="h-4 w-4 rounded border-slate-300"
             />
-            overdue only
+            期限超過のみ
           </label>
           <label className="text-xs text-slate-700">
-            view
+            表示プリセット
             <select
               name="view"
               defaultValue={selectedView}
               className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             >
-              <option value="all">all</option>
-              <option value="overdue_unassigned">overdue unassigned</option>
-              <option value="my_open">my open</option>
+              <option value="all">すべて</option>
+              <option value="overdue_unassigned">期限超過・未割当</option>
+              <option value="my_open">自分担当の未解決</option>
             </select>
           </label>
           <label className="text-xs text-slate-700">
-            export limit
+            出力件数
             <input
               type="number"
               name="export_limit"
@@ -709,7 +852,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             />
           </label>
           <label className="text-xs text-slate-700">
-            export offset
+            出力開始位置
             <input
               type="number"
               name="export_offset"
@@ -727,7 +870,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
               defaultChecked={includePayload}
               className="h-4 w-4 rounded border-slate-300"
             />
-            payload含める
+            詳細JSONを含める
           </label>
           <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium">
             フィルタ適用
@@ -736,13 +879,13 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             href={exportCsvHref}
             className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800"
           >
-            CSVエクスポート
+            CSV出力
           </a>
           <a
             href={exportJsonHref}
             className="rounded-md border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-800"
           >
-            JSONエクスポート
+            JSON出力
           </a>
         </div>
         <div className="mt-2 flex flex-wrap gap-2 text-xs">
@@ -750,19 +893,19 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             href={`/app/operations/exceptions?view=all&sort=priority_desc&export_limit=${selectedExportLimit}&export_offset=${selectedExportOffset}&include_payload=${includePayload ? "1" : "0"}`}
             className="rounded-full border border-slate-300 px-2 py-0.5"
           >
-            default
+            標準
           </Link>
           <Link
             href={`/app/operations/exceptions?view=overdue_unassigned&sort=due_asc&export_limit=${selectedExportLimit}&export_offset=${selectedExportOffset}&include_payload=${includePayload ? "1" : "0"}`}
             className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-rose-700"
           >
-            overdue/unassigned
+            期限超過/未割当
           </Link>
           <Link
             href={`/app/operations/exceptions?view=my_open&sort=updated_desc&export_limit=${selectedExportLimit}&export_offset=${selectedExportOffset}&include_payload=${includePayload ? "1" : "0"}`}
             className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-sky-700"
           >
-            my open
+            自分担当
           </Link>
         </div>
       </form>
@@ -778,12 +921,11 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
               >
                 <input type="checkbox" name="case_ids" value={row.id} className="mt-0.5 h-4 w-4 rounded border-slate-300" />
                 <span className="min-w-0">
-                  <span className="block truncate font-mono text-[10px] text-slate-500">{row.id}</span>
                   <span className="block text-slate-800">
-                    {row.kind}/{row.ref_id}
+                    {caseKindLabel(row.kind)}
                   </span>
                   <span className="block text-slate-600">
-                    {row.status} / {row.owner_user_id ?? "unassigned"}
+                    {caseStatusLabel(row.status)} / {memberLabel(row.owner_user_id)}
                   </span>
                 </span>
               </label>
@@ -796,27 +938,27 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           ) : null}
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs text-slate-700">
-              status
+              状態
               <select name="status" defaultValue="" className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs">
                 <option value="">(変更しない)</option>
-                <option value="open">open</option>
-                <option value="in_progress">in_progress</option>
-                <option value="resolved">resolved</option>
+                <option value="open">未着手</option>
+                <option value="in_progress">対応中</option>
+                <option value="resolved">解決</option>
               </select>
             </label>
             <label className="text-xs text-slate-700">
-              owner
+              担当者
               <select name="owner_user_id" defaultValue="" className="mt-1 block rounded border border-slate-300 bg-white px-2 py-1 text-xs">
-                <option value="">unassigned</option>
+                <option value="">未割当</option>
                 {ownerUsers.map((userId) => (
                   <option key={userId} value={userId}>
-                    {userId}
+                    {memberLabel(userId)}
                   </option>
                 ))}
               </select>
             </label>
             <label className="text-xs text-slate-700">
-              due
+              期限
               <input
                 type="datetime-local"
                 name="due_at"
@@ -825,7 +967,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             </label>
             <label className="flex items-center gap-2 pb-1 text-xs text-slate-700">
               <input type="checkbox" name="clear_due" value="1" className="h-4 w-4 rounded border-slate-300" />
-              dueをクリア
+              期限をクリア
             </label>
             <ConfirmSubmitButton
               label="選択ケースを一括更新"
@@ -837,26 +979,30 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
         </form>
       </section>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
-          <p className="text-xs text-rose-700">Total Exceptions</p>
+          <p className="text-xs text-rose-700">総例外件数</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{totalExceptions}</p>
         </div>
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
-          <p className="text-xs text-rose-700">Failed Actions</p>
+          <p className="text-xs text-rose-700">失敗アクション</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{filteredFailedActionsWithPriority.length}</p>
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <p className="text-xs text-amber-700">Failed Workflows</p>
+          <p className="text-xs text-amber-700">失敗ワークフロー</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{filteredFailedRunsWithPriority.length}</p>
         </div>
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
-          <p className="text-xs text-sky-700">Stale Approvals</p>
+          <p className="text-xs text-sky-700">承認滞留</p>
           <p className="mt-1 text-2xl font-semibold text-sky-900">{filteredStaleApprovalsWithPriority.length}</p>
         </div>
         <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 shadow-sm">
-          <p className="text-xs text-fuchsia-700">Policy Blocked Tasks</p>
+          <p className="text-xs text-fuchsia-700">ポリシーブロック</p>
           <p className="mt-1 text-2xl font-semibold text-fuchsia-900">{filteredBlockedTasksWithPriority.length}</p>
+        </div>
+        <div className="rounded-xl border border-rose-300 bg-rose-100 p-4 shadow-sm">
+          <p className="text-xs text-rose-700">手動対応失敗ラン</p>
+          <p className="mt-1 text-2xl font-semibold text-rose-900">{monitorManualWorkflowFailures.length}</p>
         </div>
       </div>
 
@@ -884,7 +1030,9 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             {filteredOwnerBacklogRows.slice(0, 12).map((row) => (
               <li key={row.owner} className="rounded-md border border-slate-200 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-mono text-xs text-slate-700">{row.owner}</p>
+                  <p className="text-xs font-medium text-slate-700">
+                    {row.owner === "unassigned" ? "未割当" : memberLabel(row.owner)}
+                  </p>
                   <span
                     className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
                       row.overdue > 0
@@ -892,17 +1040,57 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                         : "border-slate-300 bg-slate-100 text-slate-700"
                     }`}
                   >
-                    total {row.total}
+                    合計 {row.total}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">
-                  open {row.open} / in_progress {row.inProgress} / overdue {row.overdue}
+                  未着手 {row.open} / 対応中 {row.inProgress} / 期限超過 {row.overdue}
                 </p>
               </li>
             ))}
           </ul>
         ) : (
           <p className="mt-2 text-sm text-slate-600">未解決の例外ケースはありません。</p>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-slate-900">監視回収で手動対応判定された失敗</h2>
+          <Link href="/app/monitor" className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50">
+            監視履歴へ
+          </Link>
+        </div>
+        {monitorManualWorkflowFailures.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {monitorManualWorkflowFailures.slice(0, 10).map((row) => (
+              <li key={row.workflowRunId} className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm">
+                {(() => {
+                  const guide = manualFailureActionGuide(row.reasonSummary);
+                  return (
+                    <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Link href={`/app/workflows/runs/${row.workflowRunId}`} className="font-medium text-rose-900 underline">
+                    {workflowRunTaskTitleByRunId.get(row.workflowRunId) ?? "ワークフロー実行詳細"}
+                  </Link>
+                  <span className="text-xs text-rose-700">{new Date(row.createdAt).toLocaleString("ja-JP")}</span>
+                </div>
+                <p className="mt-1 text-xs text-rose-800">{row.reasonSummary}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${guide.tone}`}>{guide.label}</span>
+                  <Link href={guide.href} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50">
+                    推奨導線を開く
+                  </Link>
+                </div>
+                <p className="mt-1 text-xs text-slate-700">{guide.action}</p>
+                    </>
+                  );
+                })()}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">監視回収で手動判定されたワークフロー失敗はありません。</p>
         )}
       </section>
 
@@ -921,9 +1109,9 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             <form action={retryTopFailedWorkflowRuns} className="flex items-center gap-2">
               <input type="hidden" name="limit" value="3" />
               <ConfirmSubmitButton
-                label="失敗workflow上位3件を一括再試行"
+                label="失敗ワークフロー上位3件を一括再試行"
                 pendingLabel="再試行中..."
-                confirmMessage="失敗workflow runの上位3件を再試行します。実行しますか？"
+                confirmMessage="失敗ワークフロー実行の上位3件を再試行します。実行しますか？"
                 className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
               />
             </form>
@@ -933,21 +1121,21 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
           {[
             ...sortedFailedRunsWithPriority.slice(0, 2).map((item) => ({
               key: `run-${item.row.id}`,
-              label: `Workflow失敗: ${item.task?.title ?? item.row.task_id}`,
+              label: `ワークフロー失敗: ${item.task?.title ?? "関連タスク"}`,
               href: `/app/workflows/runs/${item.row.id}`,
               score: item.score,
               tone: item.tone
             })),
             ...sortedFailedActionsWithPriority.slice(0, 2).map((item) => ({
               key: `action-${item.row.id}`,
-              label: `Action失敗: ${item.task?.title ?? item.row.task_id}`,
+              label: `アクション失敗: ${item.task?.title ?? "関連タスク"}`,
               href: `/app/tasks/${item.row.task_id}`,
               score: item.score,
               tone: item.tone
             })),
             ...sortedStaleApprovalsWithPriority.slice(0, 1).map((item) => ({
               key: `approval-${item.row.id}`,
-              label: `承認滞留 ${item.pendingHours}h: ${item.task?.title ?? item.row.task_id}`,
+              label: `承認滞留 ${item.pendingHours}h: ${item.task?.title ?? "関連タスク"}`,
               href: `/app/tasks/${item.row.task_id}`,
               score: item.score,
               tone: item.tone
@@ -985,40 +1173,39 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                   key={row.id}
                   className={`rounded-md border p-3 text-sm ${isOverdue ? "border-rose-300 bg-rose-50/40" : "border-slate-200"}`}
                 >
-                  <p className="font-mono text-xs text-slate-500">{row.id}</p>
                   <p className="mt-1 text-slate-900">{row.provider}/{row.action_type}</p>
-                  <p className="text-xs text-slate-600">at: {new Date(row.created_at).toLocaleString()}</p>
+                  <p className="text-xs text-slate-600">発生: {new Date(row.created_at).toLocaleString("ja-JP")}</p>
                   <p className="text-xs text-slate-700">
-                    task: {task ? `${task.title} (${task.status})` : row.task_id}
+                    タスク: {task ? `${task.title} (${task.status})` : "関連タスク"}
                   </p>
                   <p className="mt-1">
                     <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${priorityClass(tone)}`}>
-                      priority P{score}
+                      優先度 P{score}
                     </span>
                     {exceptionCase ? (
                       <span className="ml-2 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700">
-                        {exceptionCase.status} / {exceptionCase.owner_user_id ?? "unassigned"}
+                        {caseStatusLabel(exceptionCase.status)} / {memberLabel(exceptionCase.owner_user_id)}
                       </span>
                     ) : null}
                     {exceptionCase?.due_at ? (
                       <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs ${isOverdue ? "border-rose-300 bg-rose-100 text-rose-700" : "border-slate-300 bg-white text-slate-700"}`}>
-                        due: {new Date(exceptionCase.due_at).toLocaleString()}
+                        期限: {new Date(exceptionCase.due_at).toLocaleString("ja-JP")}
                       </span>
                     ) : null}
                   </p>
-                  {error ? <p className="mt-1 text-xs text-rose-700">error: {error}</p> : null}
+                  {error ? <p className="mt-1 text-xs text-rose-700">エラー: {error}</p> : null}
                   {renderGuidance({
                     kind: "failed_action",
                     owner: exceptionCase?.owner_user_id ?? null,
                     dueAt: exceptionCase?.due_at ?? null,
-                    taskLabel: task?.title ?? row.task_id
+                    taskLabel: task?.title ?? "関連タスク"
                   })}
                   <div className="mt-2 flex gap-3 text-xs">
                     <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-sky-700 underline">
                       タスクを開く
                     </Link>
                     <Link href={`/app/tasks/${row.task_id}/evidence`} className="font-medium text-slate-700 underline">
-                      Evidence
+                      証跡
                     </Link>
                   </div>
                   {renderCaseControls({
@@ -1044,7 +1231,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
             <ConfirmSubmitButton
               label="上位5件を一括再試行"
               pendingLabel="再試行中..."
-              confirmMessage="失敗workflow runの上位5件を再試行します。実行しますか？"
+              confirmMessage="失敗ワークフロー実行の上位5件を再試行します。実行しますか？"
               className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
             />
           </form>
@@ -1062,26 +1249,25 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                   key={row.id}
                   className={`rounded-md border p-3 text-sm ${isOverdue ? "border-rose-300 bg-rose-50/40" : "border-slate-200"}`}
                 >
-                  <p className="font-mono text-xs text-slate-500">{row.id}</p>
-                  <p className="mt-1 text-slate-900">step: {row.current_step_key ?? "-"}</p>
+                  <p className="mt-1 text-slate-900">ステップ: {row.current_step_key ?? "-"}</p>
                   <p className="text-xs text-slate-600">
-                    finished: {row.finished_at ? new Date(row.finished_at).toLocaleString() : "-"}
+                    終了: {row.finished_at ? new Date(row.finished_at).toLocaleString("ja-JP") : "-"}
                   </p>
                   <p className="text-xs text-slate-700">
-                    task: {task ? `${task.title} (${task.status})` : row.task_id}
+                    タスク: {task ? `${task.title} (${task.status})` : "関連タスク"}
                   </p>
                   <p className="mt-1">
                     <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${priorityClass(tone)}`}>
-                      priority P{score}
+                      優先度 P{score}
                     </span>
                     {exceptionCase ? (
                       <span className="ml-2 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700">
-                        {exceptionCase.status} / {exceptionCase.owner_user_id ?? "unassigned"}
+                        {caseStatusLabel(exceptionCase.status)} / {memberLabel(exceptionCase.owner_user_id)}
                       </span>
                     ) : null}
                     {exceptionCase?.due_at ? (
                       <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs ${isOverdue ? "border-rose-300 bg-rose-100 text-rose-700" : "border-slate-300 bg-white text-slate-700"}`}>
-                        due: {new Date(exceptionCase.due_at).toLocaleString()}
+                        期限: {new Date(exceptionCase.due_at).toLocaleString("ja-JP")}
                       </span>
                     ) : null}
                   </p>
@@ -1094,7 +1280,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       <ConfirmSubmitButton
                         label="この場で再試行"
                         pendingLabel="再試行中..."
-                        confirmMessage="このworkflow runを再試行します。実行しますか？"
+                        confirmMessage="このワークフロー実行を再試行します。実行しますか？"
                         className="font-medium text-emerald-700 underline"
                       />
                     </form>
@@ -1103,7 +1289,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                     kind: "failed_workflow",
                     owner: exceptionCase?.owner_user_id ?? null,
                     dueAt: exceptionCase?.due_at ?? null,
-                    taskLabel: task?.title ?? row.task_id
+                    taskLabel: task?.title ?? "関連タスク"
                   })}
                   {renderCaseControls({
                     kind: "failed_workflow",
@@ -1137,23 +1323,22 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                   key={row.id}
                   className={`rounded-md border p-3 text-sm ${isOverdue ? "border-rose-300 bg-rose-50/40" : "border-slate-200"}`}
                 >
-                  <p className="font-mono text-xs text-slate-500">{row.id}</p>
-                  <p className="mt-1 text-slate-900">{task ? task.title : row.task_id}</p>
+                  <p className="mt-1 text-slate-900">{task ? task.title : "関連タスク"}</p>
                   <p className="text-xs text-slate-600">
-                    pending for {pendingHours}h / requested_by: {row.requested_by ?? "-"}
+                    滞留: {pendingHours}h / 依頼者: {memberLabel(row.requested_by, "未設定")}
                   </p>
                   <p className="mt-1">
                     <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${priorityClass(tone)}`}>
-                      priority P{score}
+                      優先度 P{score}
                     </span>
                     {exceptionCase ? (
                       <span className="ml-2 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700">
-                        {exceptionCase.status} / {exceptionCase.owner_user_id ?? "unassigned"}
+                        {caseStatusLabel(exceptionCase.status)} / {memberLabel(exceptionCase.owner_user_id)}
                       </span>
                     ) : null}
                     {exceptionCase?.due_at ? (
                       <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs ${isOverdue ? "border-rose-300 bg-rose-100 text-rose-700" : "border-slate-300 bg-white text-slate-700"}`}>
-                        due: {new Date(exceptionCase.due_at).toLocaleString()}
+                        期限: {new Date(exceptionCase.due_at).toLocaleString("ja-JP")}
                       </span>
                     ) : null}
                   </p>
@@ -1169,7 +1354,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                     kind: "stale_approval",
                     owner: exceptionCase?.owner_user_id ?? null,
                     dueAt: exceptionCase?.due_at ?? null,
-                    taskLabel: task?.title ?? row.task_id
+                    taskLabel: task?.title ?? "関連タスク"
                   })}
                   {renderCaseControls({
                     kind: "stale_approval",
@@ -1187,7 +1372,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Policy Blocked タスク（最新）</h2>
+        <h2 className="text-base font-semibold text-slate-900">ポリシーブロックタスク（最新）</h2>
         {sortedBlockedTasksWithPriority.length > 0 ? (
           <ul className="mt-3 space-y-2">
             {sortedBlockedTasksWithPriority.map(({ task, score, tone }) => {
@@ -1202,19 +1387,19 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                   className={`rounded-md border p-3 text-sm ${isOverdue ? "border-rose-300 bg-rose-50/40" : "border-slate-200"}`}
                 >
                   <p className="text-slate-900">{task.title}</p>
-                  <p className="text-xs text-slate-600">status: {task.status}</p>
+                  <p className="text-xs text-slate-600">状態: {task.status}</p>
                   <p className="mt-1">
                     <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${priorityClass(tone)}`}>
-                      priority P{score}
+                      優先度 P{score}
                     </span>
                     {exceptionCase ? (
                       <span className="ml-2 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700">
-                        {exceptionCase.status} / {exceptionCase.owner_user_id ?? "unassigned"}
+                        {caseStatusLabel(exceptionCase.status)} / {memberLabel(exceptionCase.owner_user_id)}
                       </span>
                     ) : null}
                     {exceptionCase?.due_at ? (
                       <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs ${isOverdue ? "border-rose-300 bg-rose-100 text-rose-700" : "border-slate-300 bg-white text-slate-700"}`}>
-                        due: {new Date(exceptionCase.due_at).toLocaleString()}
+                        期限: {new Date(exceptionCase.due_at).toLocaleString("ja-JP")}
                       </span>
                     ) : null}
                   </p>
@@ -1223,7 +1408,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
                       タスクを開く
                     </Link>
                     <Link href={`/app/tasks/${task.id}/evidence`} className="font-medium text-slate-700 underline">
-                      Evidence
+                      証跡
                     </Link>
                   </div>
                   {renderGuidance({
@@ -1248,7 +1433,7 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Exception Case Events（最新50件）</h2>
+        <h2 className="text-base font-semibold text-slate-900">例外ケースイベント（最新50件）</h2>
         {exceptionCaseEvents.length > 0 ? (
           <ul className="mt-3 space-y-2">
             {exceptionCaseEvents.map((event) => {
@@ -1257,30 +1442,29 @@ export default async function ExceptionsPage({ searchParams }: ExceptionsPagePro
               const isAutoAssigned = event.event_type === "CASE_AUTO_ASSIGNED";
               return (
                 <li key={event.id} className="rounded-md border border-slate-200 p-3 text-sm">
-                  <p className="font-mono text-xs text-slate-500">{event.id}</p>
                   <p className="mt-1 text-slate-900">
                     {event.event_type}
                     {isEscalated ? (
                       <span className="ml-2 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-xs text-rose-700">
-                        escalation
+                        エスカレーション
                       </span>
                     ) : null}
                     {isAutoAssigned ? (
                       <span className="ml-2 rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
-                        auto-assigned
+                        自動アサイン
                       </span>
                     ) : null}
                   </p>
                   <p className="text-xs text-slate-600">
-                    at: {new Date(event.created_at).toLocaleString()} / actor: {event.actor_user_id ?? "system"}
+                    時刻: {new Date(event.created_at).toLocaleString("ja-JP")} / 実行者: {memberLabel(event.actor_user_id, "システム")}
                   </p>
                   <p className="text-xs text-slate-700">
-                    case: {relatedCase ? `${relatedCase.kind}/${relatedCase.ref_id}` : event.exception_case_id}
+                    種別: {relatedCase ? relatedCase.kind : "不明"}
                   </p>
                   <details className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                    <summary className="cursor-pointer text-xs text-slate-700">payload JSON</summary>
+                    <summary className="cursor-pointer text-xs text-slate-700">ペイロードJSON</summary>
                     <pre className="mt-2 overflow-x-auto text-xs text-slate-700">
-                      {JSON.stringify(event.payload_json, null, 2)}
+                      {toRedactedJson(event.payload_json)}
                     </pre>
                   </details>
                 </li>

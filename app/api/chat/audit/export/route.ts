@@ -52,14 +52,28 @@ export async function GET(request: Request) {
     url.searchParams.get("status") === "failed" ||
     url.searchParams.get("status") === "pending" ||
     url.searchParams.get("status") === "running" ||
-    url.searchParams.get("status") === "done"
+    url.searchParams.get("status") === "done" ||
+    url.searchParams.get("status") === "declined" ||
+    url.searchParams.get("status") === "skipped"
       ? (url.searchParams.get("status") as string)
       : "all";
-  const scopeFilter = url.searchParams.get("scope") === "shared" || url.searchParams.get("scope") === "personal"
+  const scopeFilter =
+    url.searchParams.get("scope") === "shared" ||
+    url.searchParams.get("scope") === "personal" ||
+    url.searchParams.get("scope") === "channel"
     ? (url.searchParams.get("scope") as string)
     : "all";
   const intentFilter = url.searchParams.get("intent")?.trim() || "all";
   const skipReasonFilter = url.searchParams.get("skip_reason")?.trim() || "all";
+  const aiFilter = url.searchParams.get("ai") === "mentioned" || url.searchParams.get("ai") === "non_mentioned"
+    ? (url.searchParams.get("ai") as string)
+    : "all";
+  const windowFilter = url.searchParams.get("window") === "24h" || url.searchParams.get("window") === "30d"
+    ? (url.searchParams.get("window") as string)
+    : "7d";
+  const sessionIdFilter = url.searchParams.get("session_id")?.trim() ?? "";
+  const windowHours = windowFilter === "24h" ? 24 : windowFilter === "30d" ? 30 * 24 : 7 * 24;
+  const windowStartIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   const format = (url.searchParams.get("format") ?? "csv").toLowerCase();
   const limitRaw = Number.parseInt(String(url.searchParams.get("limit") ?? "5000"), 10);
   const offsetRaw = Number.parseInt(String(url.searchParams.get("offset") ?? "0"), 10);
@@ -76,6 +90,10 @@ export async function GET(request: Request) {
   if (statusFilter !== "all") {
     commandsQuery = commandsQuery.eq("execution_status", statusFilter);
   }
+  if (sessionIdFilter.length > 0) {
+    commandsQuery = commandsQuery.eq("session_id", sessionIdFilter);
+  }
+  commandsQuery = commandsQuery.gte("created_at", windowStartIso);
   const { data: commandsData, error: commandsError } = await commandsQuery;
   if (commandsError) {
     return NextResponse.json({ error: commandsError.message }, { status: 500 });
@@ -103,11 +121,11 @@ export async function GET(request: Request) {
     }
   }
 
-  const intentMap = new Map<string, { intentType: string; summary: string | null }>();
+  const intentMap = new Map<string, { intentType: string; summary: string | null; messageId: string | null }>();
   if (intentIds.length > 0) {
     const { data: intentsData, error: intentsError } = await supabase
       .from("chat_intents")
-      .select("id, intent_type, intent_json")
+      .select("id, intent_type, intent_json, message_id")
       .eq("org_id", orgId)
       .in("id", intentIds);
     if (intentsError) {
@@ -118,7 +136,36 @@ export async function GET(request: Request) {
         typeof row.intent_json === "object" && row.intent_json !== null ? (row.intent_json as Record<string, unknown>) : {};
       intentMap.set(row.id as string, {
         intentType: (row.intent_type as string) ?? "unknown",
-        summary: typeof intentJson.summary === "string" ? intentJson.summary : null
+        summary: typeof intentJson.summary === "string" ? intentJson.summary : null,
+        messageId: (row.message_id as string | null) ?? null
+      });
+    }
+  }
+
+  const messageIds = Array.from(
+    new Set(Array.from(intentMap.values()).map((row) => row.messageId).filter((v): v is string => Boolean(v)))
+  );
+  const messageMetaById = new Map<string, { aiMentioned: boolean; mentions: string[] }>();
+  if (messageIds.length > 0) {
+    const { data: messagesData, error: messagesError } = await supabase
+      .from("chat_messages")
+      .select("id, metadata_json")
+      .eq("org_id", orgId)
+      .in("id", messageIds);
+    if (messagesError) {
+      return NextResponse.json({ error: messagesError.message }, { status: 500 });
+    }
+    for (const row of messagesData ?? []) {
+      const metadata =
+        typeof row.metadata_json === "object" && row.metadata_json !== null
+          ? (row.metadata_json as Record<string, unknown>)
+          : null;
+      const mentions = Array.isArray(metadata?.mentions)
+        ? metadata.mentions.filter((item): item is string => typeof item === "string")
+        : [];
+      messageMetaById.set(row.id as string, {
+        aiMentioned: metadata?.ai_mentioned === true,
+        mentions
       });
     }
   }
@@ -126,6 +173,12 @@ export async function GET(request: Request) {
   let filtered = commands.filter((row) => {
     if (scopeFilter !== "all" && sessionMap.get(row.session_id)?.scope !== scopeFilter) return false;
     if (intentFilter !== "all" && intentMap.get(row.intent_id)?.intentType !== intentFilter) return false;
+    if (aiFilter !== "all") {
+      const messageId = intentMap.get(row.intent_id)?.messageId ?? null;
+      const aiMentioned = messageId ? (messageMetaById.get(messageId)?.aiMentioned ?? false) : false;
+      if (aiFilter === "mentioned" && !aiMentioned) return false;
+      if (aiFilter === "non_mentioned" && aiMentioned) return false;
+    }
     if (skipReasonFilter !== "all") {
       const result =
         row.result_json && typeof row.result_json === "object" ? (row.result_json as Record<string, unknown>) : null;
@@ -144,6 +197,7 @@ export async function GET(request: Request) {
   const rows = filtered.map((row) => {
     const session = sessionMap.get(row.session_id);
     const intent = intentMap.get(row.intent_id);
+    const messageMeta = intent?.messageId ? messageMetaById.get(intent.messageId) : null;
     const result =
       includeResult && row.result_json && typeof row.result_json === "object"
         ? JSON.stringify(row.result_json)
@@ -156,6 +210,8 @@ export async function GET(request: Request) {
       intent_id: row.intent_id,
       intent_type: intent?.intentType ?? "unknown",
       intent_summary: intent?.summary ?? null,
+      ai_mentioned: messageMeta?.aiMentioned ?? false,
+      mention_tokens: messageMeta?.mentions.join("|") ?? "",
       execution_status: row.execution_status,
       execution_ref_type: row.execution_ref_type,
       execution_ref_id: row.execution_ref_id,
@@ -173,6 +229,9 @@ export async function GET(request: Request) {
     filter_scope: scopeFilter,
     filter_intent: intentFilter,
     filter_skip_reason: skipReasonFilter,
+    filter_ai: aiFilter,
+    filter_window: windowFilter,
+    filter_session_id: sessionIdFilter || "all",
     filter_limit: limit,
     filter_offset: offset,
     filter_include_result: includeResult,
@@ -194,6 +253,8 @@ export async function GET(request: Request) {
     "intent_id",
     "intent_type",
     "intent_summary",
+    "ai_mentioned",
+    "mention_tokens",
     "execution_status",
     "execution_ref_type",
     "execution_ref_id",
@@ -209,6 +270,9 @@ export async function GET(request: Request) {
     `# filter_scope,${csvEscape(meta.filter_scope)}`,
     `# filter_intent,${csvEscape(meta.filter_intent)}`,
     `# filter_skip_reason,${csvEscape(meta.filter_skip_reason)}`,
+    `# filter_ai,${csvEscape(meta.filter_ai)}`,
+    `# filter_window,${csvEscape(meta.filter_window)}`,
+    `# filter_session_id,${csvEscape(meta.filter_session_id)}`,
     `# filter_limit,${csvEscape(String(meta.filter_limit))}`,
     `# filter_offset,${csvEscape(String(meta.filter_offset))}`,
     `# filter_include_result,${csvEscape(String(meta.filter_include_result))}`,
@@ -228,6 +292,8 @@ export async function GET(request: Request) {
         row.intent_id,
         row.intent_type,
         row.intent_summary ?? "",
+        row.ai_mentioned ? "1" : "0",
+        row.mention_tokens,
         row.execution_status,
         row.execution_ref_type ?? "",
         row.execution_ref_id ?? "",
@@ -243,7 +309,7 @@ export async function GET(request: Request) {
   const safeFilter = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32) || "all";
   const filename = `chat-audit-${orgId}-${safeFilter(statusFilter)}-${safeFilter(scopeFilter)}-${safeFilter(intentFilter)}-${safeFilter(
     skipReasonFilter
-  )}-${exportedAt.slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+  )}-${safeFilter(windowFilter)}-${exportedAt.slice(0, 19).replace(/[:T]/g, "-")}.csv`;
   return new NextResponse(lines.join("\n"), {
     headers: {
       "content-type": "text/csv; charset=utf-8",

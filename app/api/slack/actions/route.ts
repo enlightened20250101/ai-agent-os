@@ -91,7 +91,12 @@ export async function POST(request: Request) {
 
     const appBaseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
     const taskUrl = `${appBaseUrl}/app/tasks/${result.taskId}`;
-    const verb = result.approvalStatus === "approved" ? "承認しました" : "却下しました";
+    const verb =
+      result.approvalStatus === "approved"
+        ? result.taskStatus === "ready_for_approval"
+          ? "一次承認を記録しました（追加承認待ち）"
+          : "最終承認を完了しました"
+        : "却下しました";
 
     return NextResponse.json({
       response_type: "ephemeral",

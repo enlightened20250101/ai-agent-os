@@ -12,6 +12,17 @@ function withMessage(kind: "ok" | "error", message: string) {
   return `/app/operations/exceptions?${kind}=${encodeURIComponent(message)}`;
 }
 
+function safeReturnTo(raw: string) {
+  if (!raw.startsWith("/app")) return null;
+  return raw;
+}
+
+function withReturnMessage(returnTo: string | null, kind: "ok" | "error", message: string) {
+  if (!returnTo) return withMessage(kind, message);
+  const separator = returnTo.includes("?") ? "&" : "?";
+  return `${returnTo}${separator}${kind}=${encodeURIComponent(message)}`;
+}
+
 export async function retryWorkflowRunFromExceptions(formData: FormData) {
   const workflowRunId = String(formData.get("workflow_run_id") ?? "").trim();
   if (!workflowRunId) {
@@ -42,6 +53,7 @@ export async function retryWorkflowRunFromExceptions(formData: FormData) {
 export async function retryTopFailedWorkflowRuns(formData: FormData) {
   const limitRaw = Number.parseInt(String(formData.get("limit") ?? "3"), 10);
   const limit = Number.isNaN(limitRaw) ? 3 : Math.max(1, Math.min(20, limitRaw));
+  const returnTo = safeReturnTo(String(formData.get("return_to") ?? "").trim());
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -55,12 +67,12 @@ export async function retryTopFailedWorkflowRuns(formData: FormData) {
     .limit(limit);
 
   if (runsError) {
-    redirect(withMessage("error", `失敗run取得に失敗しました: ${runsError.message}`));
+    redirect(withReturnMessage(returnTo, "error", `失敗run取得に失敗しました: ${runsError.message}`));
   }
 
   const targets = (runs ?? []).map((row) => row.id as string).filter(Boolean);
   if (targets.length === 0) {
-    redirect(withMessage("ok", "再試行対象の失敗workflow runはありません。"));
+    redirect(withReturnMessage(returnTo, "ok", "再試行対象の失敗workflow runはありません。"));
   }
 
   let successCount = 0;
@@ -81,7 +93,13 @@ export async function retryTopFailedWorkflowRuns(formData: FormData) {
 
   revalidatePath("/app/operations/exceptions");
   revalidatePath("/app/workflows/runs");
-  redirect(withMessage("ok", `一括再試行: success=${successCount}, failed=${failCount}`));
+  if (returnTo?.startsWith("/app/workflows")) {
+    revalidatePath("/app/workflows");
+  }
+  if (returnTo === "/app" || returnTo?.startsWith("/app?")) {
+    revalidatePath("/app");
+  }
+  redirect(withReturnMessage(returnTo, "ok", `一括再試行: success=${successCount}, failed=${failCount}`));
 }
 
 function isMissingTableError(message: string, tableName: string) {

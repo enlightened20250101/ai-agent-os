@@ -71,6 +71,12 @@ export type ParsedChatIntent =
       plan: { summary: string; maxProposals: number };
     }
   | {
+      intentType: "monitor_recovery_run";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; maxItems: number };
+    }
+  | {
       intentType: "run_workflow";
       confidence: number;
       requiresConfirmation: true;
@@ -442,6 +448,22 @@ export function parseChatIntent(message: string): ParsedChatIntent {
     };
   }
 
+  const monitorRecoveryLike =
+    /(監視回収|monitor recovery|回収実行|詰まり解消|stuck recovery)/i.test(text) ||
+    (/(承認催促|失敗ワークフロー|滞留案件)/i.test(text) && /(まとめて|一括|同時|全部)/i.test(text));
+  if (monitorRecoveryLike) {
+    const maxItems = parsedCount ?? 3;
+    return {
+      intentType: "monitor_recovery_run",
+      confidence: 0.79,
+      requiresConfirmation: true,
+      plan: {
+        summary: `監視回収を実行します（承認催促 + 失敗workflow再試行 + 滞留案件割当、最大${maxItems}件）。`,
+        maxItems
+      }
+    };
+  }
+
   const workflowLike =
     /(ワークフロー|workflow)/i.test(text) &&
     /(実行|開始|start|run|進め|起動)/i.test(text);
@@ -495,7 +517,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         "3) 承認処理: 承認待ちを3件まとめて承認して\n" +
         "4) 実行: 「E2E Task」を実行して\n" +
         "5) 案件更新: 「請求書A」をblockedにして / 「請求書A」を自分に割り当てて / 「請求書A」の期限を2026-03-10にして\n" +
-        "6) 自律系: プランナーを実行して / 失敗ワークフローを3件再試行して"
+        "6) 自律系: プランナーを実行して / 失敗ワークフローを3件再試行して / 監視回収を実行して"
     }
   };
 }

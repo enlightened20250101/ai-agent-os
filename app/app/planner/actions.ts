@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { assertNoOpenIncidentForMutation } from "@/lib/governance/incidents";
 import { runPlanner } from "@/lib/planner/runPlanner";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -16,6 +17,11 @@ export async function runPlannerNow() {
 
   let created = 0;
   try {
+    await assertNoOpenIncidentForMutation({
+      supabase,
+      orgId,
+      operation: "planner run"
+    });
     const result = await runPlanner({
       supabase,
       orgId,

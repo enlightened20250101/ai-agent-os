@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
+import {
+  evaluateApprovalGuardrail,
+  evaluateHourlyBudgetGuardrail
+} from "@/lib/governance/guardrails";
 
 export type AutonomyLevel = "L0" | "L1" | "L2" | "L3" | "L4";
 
@@ -41,6 +45,13 @@ export type GovernanceEvaluation = {
     externality: "internal" | "customer_facing";
     reversibility: "reversible" | "hard_to_reverse";
     past_reliability: "low" | "medium" | "high";
+  };
+  guardrails: {
+    requiredApprovals: number;
+    distinctApproverCount: number | null;
+    hourlyLimit: number;
+    hourlyUsed: number;
+    hourlyRemaining: number;
   };
 };
 
@@ -358,9 +369,35 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
     actionType: args.actionType,
     defaultLimit: settings.dailySendEmailLimit
   });
+  const hourlyGuardrail = await evaluateHourlyBudgetGuardrail({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    provider: args.provider,
+    actionType: args.actionType
+  });
 
   const reasons: string[] = [];
   let decision: GovernanceDecision = "require_approval";
+  let requiredApprovals = 1;
+  let distinctApproverCount: number | null = null;
+
+  if (args.taskId) {
+    const approvalGuardrail = await evaluateApprovalGuardrail({
+      supabase: args.supabase,
+      orgId: args.orgId,
+      taskId: args.taskId,
+      riskScore: risk.score
+    });
+    requiredApprovals = approvalGuardrail.requiredApprovals;
+    distinctApproverCount = approvalGuardrail.distinctApproverCount;
+    if (distinctApproverCount < requiredApprovals) {
+      reasons.push(
+        `承認者数が不足しています（必要=${requiredApprovals}, 現在=${distinctApproverCount}）。`
+      );
+    }
+  } else {
+    requiredApprovals = risk.score >= 70 ? 2 : 0;
+  }
 
   if (latestOpenIncident) {
     decision = "block";
@@ -395,6 +432,11 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
   if (remainingBudget <= 0) {
     reasons.push("当日実行予算が上限に達しています。");
   }
+  if (hourlyGuardrail.remainingLastHour <= 0) {
+    reasons.push(
+      `1時間あたり実行上限に達しています（limit=${hourlyGuardrail.hourlyLimit}）。`
+    );
+  }
 
   if (
     decision !== "block" &&
@@ -402,7 +444,9 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
     (settings.autonomyLevel === "L3" || settings.autonomyLevel === "L4") &&
     risk.score <= settings.maxAutoExecuteRiskScore &&
     trustScore >= settings.minTrustScore &&
-    remainingBudget > 0
+    remainingBudget > 0 &&
+    hourlyGuardrail.remainingLastHour > 0 &&
+    (distinctApproverCount === null || distinctApproverCount >= requiredApprovals)
   ) {
     decision = "allow_auto_execute";
   }
@@ -427,7 +471,10 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
       metadata: {
         policy_status: args.policyStatus,
         trust_score: trustScore,
-        remaining_budget: remainingBudget
+        remaining_budget: remainingBudget,
+        hourly_remaining: hourlyGuardrail.remainingLastHour,
+        required_approvals: requiredApprovals,
+        distinct_approvers: distinctApproverCount
       }
     });
   }
@@ -439,7 +486,14 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
     trustScore,
     remainingBudget,
     settings,
-    dimensions: risk.dimensions
+    dimensions: risk.dimensions,
+    guardrails: {
+      requiredApprovals,
+      distinctApproverCount,
+      hourlyLimit: hourlyGuardrail.hourlyLimit,
+      hourlyUsed: hourlyGuardrail.usedLastHour,
+      hourlyRemaining: hourlyGuardrail.remainingLastHour
+    }
   };
 }
 

@@ -1,9 +1,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getOpsRuntimeSettings } from "@/lib/governance/opsRuntimeSettings";
 import type { DraftOutput } from "@/lib/llm/openai";
 import { checkDraftPolicy } from "@/lib/policy/check";
 
 type PlannerSignal = {
-  kind: "stale_tasks" | "recent_action_failures" | "stale_pending_approvals" | "policy_warn_block" | "stale_open_cases";
+  kind:
+    | "stale_tasks"
+    | "recent_action_failures"
+    | "stale_pending_approvals"
+    | "policy_warn_block"
+    | "stale_open_cases"
+    | "new_inbound_events";
   title: string;
   details: string;
   count: number;
@@ -31,6 +38,11 @@ type ProposalFeedbackStats = {
   rejectionRate: number;
   topRejectReasons: Array<{ reason: string; count: number }>;
   effectiveMaxProposals: number;
+};
+
+type ExternalTemplateFeedback = {
+  rankedTemplateKeys: string[];
+  acceptanceRateByTemplate: Record<string, number>;
 };
 
 type RunPlannerArgs = {
@@ -148,6 +160,52 @@ async function buildProposalFeedback(args: {
   };
 }
 
+async function buildExternalTemplateFeedback(args: {
+  supabase: SupabaseClient;
+  orgId: string;
+}): Promise<ExternalTemplateFeedback> {
+  const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await args.supabase
+    .from("task_proposals")
+    .select("source, status, created_at")
+    .eq("org_id", args.orgId)
+    .gte("created_at", sinceIso)
+    .in("status", ["accepted", "rejected"])
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    throw new Error(`external template feedback query failed: ${error.message}`);
+  }
+
+  const counters = new Map<string, { accepted: number; decided: number }>();
+  for (const row of data ?? []) {
+    const source = String(row.source ?? "");
+    if (!source.startsWith("planner_seed_external_event_")) continue;
+    const key = source.replace("planner_seed_external_event_", "");
+    const current = counters.get(key) ?? { accepted: 0, decided: 0 };
+    current.decided += 1;
+    if (row.status === "accepted") current.accepted += 1;
+    counters.set(key, current);
+  }
+
+  const entries = Array.from(counters.entries()).map(([key, value]) => ({
+    key,
+    accepted: value.accepted,
+    decided: value.decided,
+    rate: value.decided > 0 ? Math.round((value.accepted / value.decided) * 100) : 0
+  }));
+  entries.sort((a, b) => {
+    if (b.rate !== a.rate) return b.rate - a.rate;
+    return b.decided - a.decided;
+  });
+
+  return {
+    rankedTemplateKeys: entries.map((entry) => entry.key),
+    acceptanceRateByTemplate: Object.fromEntries(entries.map((entry) => [entry.key, entry.rate]))
+  };
+}
+
 function normalizePlannerProposals(raw: unknown): PlannerProposal[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -198,9 +256,9 @@ function normalizePlannerProposals(raw: unknown): PlannerProposal[] {
     .filter((v): v is PlannerProposal => v !== null);
 }
 
-async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): Promise<PlannerSignal[]> {
+async function buildSignals(args: { supabase: SupabaseClient; orgId: string; staleHours: number }): Promise<PlannerSignal[]> {
   const { supabase, orgId } = args;
-  const staleHours = Number(process.env.PLANNER_STALE_HOURS ?? "6");
+  const staleHours = Math.max(1, Math.min(168, args.staleHours));
   const staleCutoff = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
   const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -209,7 +267,8 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     failedEventsRes,
     staleApprovalsRes,
     policyEventsRes,
-    staleCasesRes
+    staleCasesRes,
+    inboundEventsRes
   ] = await Promise.all([
     supabase
       .from("tasks")
@@ -250,6 +309,14 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
       .eq("status", "open")
       .lt("updated_at", staleCutoff)
       .order("updated_at", { ascending: true })
+      .limit(20),
+    supabase
+      .from("external_events")
+      .select("id, provider, event_type, summary_text, created_at")
+      .eq("org_id", orgId)
+      .eq("status", "new")
+      .gte("created_at", last24h)
+      .order("created_at", { ascending: false })
       .limit(20)
   ]);
 
@@ -262,6 +329,9 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     throw new Error(`policy_checked query failed: ${policyEventsRes.error.message}`);
   if (staleCasesRes.error && !isMissingTableError(staleCasesRes.error.message, "business_cases")) {
     throw new Error(`stale_cases query failed: ${staleCasesRes.error.message}`);
+  }
+  if (inboundEventsRes.error && !isMissingTableError(inboundEventsRes.error.message, "external_events")) {
+    throw new Error(`inbound_events query failed: ${inboundEventsRes.error.message}`);
   }
 
   const signals: PlannerSignal[] = [];
@@ -327,6 +397,23 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
     });
   }
 
+  const inboundEvents = inboundEventsRes.error ? [] : (inboundEventsRes.data ?? []);
+  if (inboundEvents.length > 0) {
+    signals.push({
+      kind: "new_inbound_events",
+      title: "New inbound events",
+      details: `${inboundEvents.length} new inbound events arrived in the last 24h.`,
+      count: inboundEvents.length,
+      meta: {
+        sample_events: inboundEvents.slice(0, 5).map((row) => ({
+          provider: row.provider,
+          event_type: row.event_type,
+          summary: row.summary_text
+        }))
+      }
+    });
+  }
+
   return signals;
 }
 
@@ -360,13 +447,143 @@ function pickSampleCaseTitles(signal: PlannerSignal | undefined): string[] {
   return raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0).slice(0, 3);
 }
 
-function makeSeedProposals(args: { signals: PlannerSignal[]; maxProposals: number }): PlannerProposal[] {
+function pickSampleInboundEvents(signal: PlannerSignal | undefined): Array<{
+  provider: string;
+  event_type: string;
+  summary: string;
+}> {
+  const raw = signal?.meta?.sample_events;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (typeof item !== "object" || item === null) return null;
+      const row = item as Record<string, unknown>;
+      return {
+        provider: typeof row.provider === "string" ? row.provider : "external",
+        event_type: typeof row.event_type === "string" ? row.event_type : "EVENT",
+        summary: typeof row.summary === "string" ? row.summary : ""
+      };
+    })
+    .filter((v): v is { provider: string; event_type: string; summary: string } => v !== null)
+    .slice(0, 5);
+}
+
+function includesAny(text: string, keywords: string[]) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function externalEventTemplate(args: {
+  provider: string;
+  eventType: string;
+  summary: string;
+  domain: string;
+}) {
+  const provider = args.provider.toLowerCase();
+  const eventType = args.eventType.toLowerCase();
+  const summary = args.summary.toLowerCase();
+  const merged = `${eventType} ${summary}`;
+
+  if (includesAny(merged, ["invoice", "payment", "purchase", "approval"])) {
+    return {
+      key: "finance",
+      title: `経理確認: ${args.eventType}`,
+      subject: `【経理対応】${args.eventType} の確認依頼`,
+      body: `経理系の外部イベントを受信しました。一次確認をお願いします。\n\nprovider: ${args.provider}\nevent_type: ${args.eventType}\nsummary: ${args.summary || "要約なし"}\n\n必要に応じて承認・支払フローへ連携してください。`,
+      risks: ["金額・取引先・承認経路を確認してから送信してください。"]
+    };
+  }
+  if (includesAny(merged, ["incident", "security", "unauthorized", "breach", "fraud", "failed", "error"])) {
+    return {
+      key: "incident",
+      title: `障害対応: ${args.eventType}`,
+      subject: `【要緊急確認】${args.eventType} 検知`,
+      body: `障害/セキュリティ系シグナルを受信しました。優先確認をお願いします。\n\nprovider: ${args.provider}\nevent_type: ${args.eventType}\nsummary: ${args.summary || "要約なし"}\n\n必要ならインシデントを起票し、関連実行を一時停止してください。`,
+      risks: ["誤検知の可能性があるため、根拠ログを確認してからエスカレーションしてください。"]
+    };
+  }
+  if (provider === "slack" && includesAny(merged, ["@ai", "mention", "request"])) {
+    return {
+      key: "chatops",
+      title: `チャット依頼整理: ${args.eventType}`,
+      subject: `【チャット依頼】${args.eventType} の一次整理`,
+      body: `Slack由来の依頼シグナルを受信しました。\n\nprovider: ${args.provider}\nevent_type: ${args.eventType}\nsummary: ${args.summary || "要約なし"}\n\n依頼内容を確認し、必要なタスク化と担当割当を行ってください。`,
+      risks: ["同一依頼の重複タスク化を避けるため既存タスクを確認してください。"]
+    };
+  }
+
+  return {
+    key: "general",
+    title: `外部イベント対応: ${args.eventType}`,
+    subject: `【外部イベント対応】${args.eventType} の確認依頼`,
+    body: `外部イベントを受信しました。一次確認をお願いします。\n\nprovider: ${args.provider}\nevent_type: ${args.eventType}\nsummary: ${args.summary || "要約なし"}\n\n必要であればタスク化して対応してください。`,
+    risks: ["外部イベントの一次情報が不十分な場合は送信前に内容を補完してください。"]
+  };
+}
+
+function makeSeedProposals(args: {
+  signals: PlannerSignal[];
+  maxProposals: number;
+  externalTemplateFeedback?: ExternalTemplateFeedback;
+}): PlannerProposal[] {
   const domain = getAllowedDomainForProposal();
+  const inboundSignal = args.signals.find((signal) => signal.kind === "new_inbound_events");
+  const inboundSamples = pickSampleInboundEvents(inboundSignal);
   const staleCaseSignal = args.signals.find((signal) => signal.kind === "stale_open_cases");
   const staleCaseTitles = pickSampleCaseTitles(staleCaseSignal);
   const proposals: PlannerProposal[] = [];
 
+  const inboundCandidates: PlannerProposal[] = [];
+  for (const sample of inboundSamples) {
+    const summaryLine = sample.summary.trim() || "要約なし";
+    const template = externalEventTemplate({
+      provider: sample.provider,
+      eventType: sample.event_type,
+      summary: summaryLine,
+      domain
+    });
+    inboundCandidates.push({
+      source: `planner_seed_external_event_${template.key}`,
+      title: template.title,
+      rationale: `${sample.provider} から受信したイベント（${sample.event_type}）を起点に、イベント種別に応じた一次対応を先行します。`,
+      summary: `${sample.event_type} の一次対応案`,
+      proposed_actions: [
+        {
+          provider: "google",
+          action_type: "send_email",
+          to: `ops@${domain}`,
+          subject: template.subject,
+          body_text: template.body
+        }
+      ],
+      risks: template.risks
+    });
+  }
+  const feedbackOrder = args.externalTemplateFeedback?.rankedTemplateKeys ?? [];
+  const feedbackRateMap = args.externalTemplateFeedback?.acceptanceRateByTemplate ?? {};
+  inboundCandidates.sort((a, b) => {
+    const keyA = a.source.replace("planner_seed_external_event_", "");
+    const keyB = b.source.replace("planner_seed_external_event_", "");
+    const idxA = feedbackOrder.indexOf(keyA);
+    const idxB = feedbackOrder.indexOf(keyB);
+    if (idxA >= 0 || idxB >= 0) {
+      if (idxA < 0) return 1;
+      if (idxB < 0) return -1;
+      if (idxA !== idxB) return idxA - idxB;
+    }
+    const rateA = feedbackRateMap[keyA] ?? 0;
+    const rateB = feedbackRateMap[keyB] ?? 0;
+    if (rateB !== rateA) return rateB - rateA;
+    return 0;
+  });
+  for (const candidate of inboundCandidates) {
+    if (proposals.length >= args.maxProposals) break;
+    proposals.push(candidate);
+  }
+
   if (staleCaseSignal && staleCaseSignal.count > 0) {
+    if (proposals.length >= args.maxProposals) {
+      return proposals.slice(0, args.maxProposals);
+    }
     proposals.push({
       source: "planner_seed_case_stale",
       title: "滞留案件の情報回収を実施",
@@ -402,6 +619,43 @@ function proposalFingerprint(proposal: PlannerProposal) {
   return `${proposal.title}|${action?.to ?? ""}|${action?.subject ?? ""}`;
 }
 
+function normalizeForKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function plannerProposalKey(proposal: {
+  title: string;
+  proposed_actions: Array<{ to: string; subject: string; body_text: string }>;
+}) {
+  const first = proposal.proposed_actions[0];
+  return [
+    normalizeForKey(proposal.title),
+    normalizeForKey(first?.to ?? ""),
+    normalizeForKey(first?.subject ?? ""),
+    normalizeForKey(first?.body_text ?? "")
+  ].join("|");
+}
+
+function extractExistingProposalKey(row: { title?: string | null; proposed_actions_json?: unknown }) {
+  const title = typeof row.title === "string" ? row.title : "";
+  const proposedRaw = Array.isArray(row.proposed_actions_json) ? row.proposed_actions_json : [];
+  const first = proposedRaw[0];
+  if (typeof first !== "object" || first === null) {
+    return plannerProposalKey({ title, proposed_actions: [] });
+  }
+  const firstObj = first as Record<string, unknown>;
+  return plannerProposalKey({
+    title,
+    proposed_actions: [
+      {
+        to: typeof firstObj.to === "string" ? firstObj.to : "",
+        subject: typeof firstObj.subject === "string" ? firstObj.subject : "",
+        body_text: typeof firstObj.body_text === "string" ? firstObj.body_text : ""
+      }
+    ]
+  });
+}
+
 function mergeProposals(seed: PlannerProposal[], generated: PlannerProposal[], maxProposals: number) {
   const merged: PlannerProposal[] = [];
   const seen = new Set<string>();
@@ -431,7 +685,8 @@ function calculatePriorityScore(args: {
     recent_action_failures: 8,
     stale_pending_approvals: 6,
     policy_warn_block: 5,
-    stale_open_cases: 7
+    stale_open_cases: 7,
+    new_inbound_events: 3
   };
 
   const signalContribution = args.signals.reduce((sum, signal) => {
@@ -458,10 +713,12 @@ async function generateProposalsWithOpenAI(args: {
   signals: PlannerSignal[];
   maxProposals: number;
   feedback: ProposalFeedbackStats;
+  externalTemplateFeedback: ExternalTemplateFeedback;
 }): Promise<PlannerProposal[]> {
   const seedProposals = makeSeedProposals({
     signals: args.signals,
-    maxProposals: args.maxProposals
+    maxProposals: args.maxProposals,
+    externalTemplateFeedback: args.externalTemplateFeedback
   });
   if (seedProposals.length >= args.maxProposals) {
     return seedProposals.slice(0, args.maxProposals);
@@ -564,6 +821,7 @@ async function appendProposalEvent(args: {
 export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult> {
   const { supabase, orgId, actorUserId = null, maxProposals = 3 } = args;
   const startedAt = new Date().toISOString();
+  const runtime = await getOpsRuntimeSettings({ supabase, orgId });
 
   const { data: plannerRun, error: plannerRunError } = await supabase
     .from("planner_runs")
@@ -591,20 +849,78 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
   });
 
   try {
-    const signals = await buildSignals({ supabase, orgId });
+    const signals = await buildSignals({
+      supabase,
+      orgId,
+      staleHours: runtime.monitorStaleHours
+    });
     const feedback = await buildProposalFeedback({
       supabase,
       orgId,
       requestedMaxProposals: maxProposals
     });
+    const externalTemplateFeedback = await buildExternalTemplateFeedback({
+      supabase,
+      orgId
+    });
     const proposals = await generateProposalsWithOpenAI({
       signals,
       maxProposals: feedback.effectiveMaxProposals,
-      feedback
+      feedback,
+      externalTemplateFeedback
     });
 
+    const dedupeHours = runtime.plannerProposalDedupeHours;
+    const dedupeSinceIso = new Date(Date.now() - dedupeHours * 60 * 60 * 1000).toISOString();
+    const existingProposalKeySet = new Set<string>();
+    const { data: recentProposals, error: recentProposalsError } = await supabase
+      .from("task_proposals")
+      .select("id, title, proposed_actions_json, status, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", dedupeSinceIso)
+      .in("status", ["proposed", "accepted", "executed"])
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (recentProposalsError) {
+      throw new Error(`proposal dedupe query failed: ${recentProposalsError.message}`);
+    }
+    for (const row of recentProposals ?? []) {
+      existingProposalKeySet.add(
+        extractExistingProposalKey({
+          title: (row.title as string | null) ?? "",
+          proposed_actions_json: row.proposed_actions_json
+        })
+      );
+    }
+
     let createdCount = 0;
+    let duplicateSkippedCount = 0;
     for (const proposal of proposals) {
+      const proposalKey = plannerProposalKey({
+        title: proposal.title,
+        proposed_actions: proposal.proposed_actions.map((action) => ({
+          to: action.to,
+          subject: action.subject,
+          body_text: action.body_text
+        }))
+      });
+      if (existingProposalKeySet.has(proposalKey)) {
+        duplicateSkippedCount += 1;
+        await appendProposalEvent({
+          supabase,
+          orgId,
+          proposalId: null,
+          eventType: "PROPOSAL_SKIPPED_DUPLICATE",
+          payload: {
+            planner_run_id: plannerRunId,
+            dedupe_hours: dedupeHours,
+            source: proposal.source,
+            title: proposal.title
+          }
+        });
+        continue;
+      }
+
       const draftForPolicy: DraftOutput = {
         summary: proposal.summary,
         proposed_actions: proposal.proposed_actions,
@@ -674,6 +990,7 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
       }
 
       createdCount += 1;
+      existingProposalKeySet.add(proposalKey);
       await appendProposalEvent({
         supabase,
         orgId,
@@ -693,6 +1010,8 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
     const finishedAt = new Date().toISOString();
     const summaryJson = {
       created_proposals: createdCount,
+      duplicate_skipped: duplicateSkippedCount,
+      dedupe_hours: dedupeHours,
       requested_max_proposals: maxProposals,
       effective_max_proposals: feedback.effectiveMaxProposals,
       considered_signals: signals.length,
@@ -706,6 +1025,7 @@ export async function runPlanner(args: RunPlannerArgs): Promise<RunPlannerResult
         rejection_rate: feedback.rejectionRate,
         top_reject_reasons: feedback.topRejectReasons
       },
+      external_template_feedback: externalTemplateFeedback,
       signal_breakdown: signals.map((signal) => ({
         kind: signal.kind,
         count: signal.count

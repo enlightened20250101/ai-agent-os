@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toUserActionableError } from "@/lib/ui/actionableError";
 import { advanceWorkflowRun, retryFailedWorkflowRun, startWorkflowRun } from "@/lib/workflows/orchestrator";
 
 function toError(path: string, message: string) {
@@ -125,7 +126,8 @@ export async function startWorkflowRunFromTask(formData: FormData) {
       actorId: userId
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "workflow run 開始に失敗しました。";
+    const rawMessage = error instanceof Error ? error.message : "workflow run 開始に失敗しました。";
+    const message = toUserActionableError(rawMessage, "workflow_start");
     redirect(toError(`/app/tasks/${taskId}`, message));
   }
 
@@ -151,7 +153,8 @@ export async function advanceWorkflowRunAction(formData: FormData) {
       actorId: userId
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "workflow step 進行に失敗しました。";
+    const rawMessage = error instanceof Error ? error.message : "workflow step 進行に失敗しました。";
+    const message = toUserActionableError(rawMessage, "workflow_advance");
     redirect(toError(`/app/workflows/runs/${workflowRunId}`, message));
   }
 
@@ -177,7 +180,8 @@ export async function retryWorkflowRunAction(formData: FormData) {
       actorId: userId
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "workflow run 再試行に失敗しました。";
+    const rawMessage = error instanceof Error ? error.message : "workflow run 再試行に失敗しました。";
+    const message = toUserActionableError(rawMessage, "workflow_retry");
     redirect(toError(`/app/workflows/runs/${workflowRunId}`, message));
   }
 

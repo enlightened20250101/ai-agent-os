@@ -11,6 +11,12 @@ type AgentsPageProps = {
   }>;
 };
 
+function agentStatusLabel(status: string) {
+  if (status === "active") return "有効";
+  if (status === "disabled") return "無効";
+  return status;
+}
+
 export default async function AgentsPage({ searchParams }: AgentsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -45,7 +51,7 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
           <input
             type="text"
             name="role_key"
-            placeholder="role_key（例: support_writer）"
+            placeholder="役割キー（例: support_writer）"
             required
             className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
@@ -70,7 +76,7 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
                 <div>
                   <p className="font-medium text-slate-900">{agent.name}</p>
                   <p className="text-sm text-slate-600">
-                    role_key: {agent.role_key} | ステータス: {agent.status}
+                    役割キー: {agent.role_key} | ステータス: {agentStatusLabel(agent.status)}
                   </p>
                 </div>
                 <form action={toggleAgentStatus}>

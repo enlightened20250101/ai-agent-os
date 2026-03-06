@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { CopyFilterLinkButton } from "@/app/app/chat/audit/CopyFilterLinkButton";
 import { acceptProposal, bulkRejectProposals, rejectProposal } from "@/app/app/proposals/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +11,7 @@ type ProposalsPageProps = {
   searchParams?: Promise<{
     status?: string;
     policy_status?: string;
+    source?: string;
     min_priority?: string;
     decision_reason_prefix?: string;
     ok?: string;
@@ -34,10 +37,56 @@ function isMissingColumnError(message: string, columnName: string) {
   );
 }
 
+function isMissingTableError(message: string, tableName: string) {
+  return (
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`Could not find the table 'public.${tableName}'`)
+  );
+}
+
 function decisionReasonPrefix(value: unknown) {
   if (typeof value !== "string" || value.length === 0) return "unspecified";
   const idx = value.indexOf(":");
   return (idx >= 0 ? value.slice(0, idx) : value).trim() || "unspecified";
+}
+
+function policyStatusLabel(value: string) {
+  if (value === "pass") return "許可";
+  if (value === "warn") return "注意";
+  if (value === "block") return "ブロック";
+  return value;
+}
+
+function proposalStatusLabel(value: string) {
+  if (value === "proposed") return "提案中";
+  if (value === "accepted") return "受け入れ済み";
+  if (value === "rejected") return "却下済み";
+  if (value === "executed") return "実行済み";
+  return value;
+}
+
+function sourceLabel(value: string) {
+  if (value === "manual") return "手動";
+  if (value === "planner") return "プランナー";
+  if (value.startsWith("planner_seed_external_event_")) return "プランナー（外部イベント）";
+  if (value === "planner_seed_case_stale") return "プランナー（滞留案件）";
+  if (value === "planner_seed_action_failed") return "プランナー（実行失敗）";
+  if (value === "planner_seed_pending_approval") return "プランナー（承認滞留）";
+  if (value === "planner_seed_policy_warn") return "プランナー（ポリシー警告）";
+  return value;
+}
+
+function reasonCodeLabel(value: string) {
+  if (value === "accepted_low_risk") return "受け入れ（低リスク）";
+  if (value === "accepted_manual") return "受け入れ（手動判断）";
+  if (value === "accepted_after_review") return "受け入れ（レビュー後）";
+  if (value === "rejected_low_value") return "却下（優先度低）";
+  if (value === "rejected_policy") return "却下（ポリシー）";
+  if (value === "rejected_duplicate") return "却下（重複）";
+  if (value === "rejected_scope") return "却下（範囲外）";
+  if (value === "rejected_other") return "却下（その他）";
+  if (value === "unspecified") return "未指定";
+  return value;
 }
 
 export default async function ProposalsPage({ searchParams }: ProposalsPageProps) {
@@ -55,11 +104,33 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
     .order("created_at", { ascending: false })
     .limit(100);
 
+  const sourceFilter =
+    sp.source === "planner_seed_external_event" ||
+    sp.source === "planner_seed_external_event_finance" ||
+    sp.source === "planner_seed_external_event_incident" ||
+    sp.source === "planner_seed_external_event_chatops" ||
+    sp.source === "planner_seed_external_event_general" ||
+    sp.source === "planner_seed_case_stale" ||
+    sp.source === "planner_seed_action_failed" ||
+    sp.source === "planner_seed_pending_approval" ||
+    sp.source === "planner_seed_policy_warn" ||
+    sp.source === "planner_openai" ||
+    sp.source === "planner_stub"
+      ? sp.source
+      : "all";
+
   if (sp.status && sp.status !== "all") {
     query = query.eq("status", sp.status);
   }
   if (sp.policy_status && sp.policy_status !== "all") {
     query = query.eq("policy_status", sp.policy_status);
+  }
+  if (sourceFilter !== "all") {
+    if (sourceFilter === "planner_seed_external_event") {
+      query = query.like("source", "planner_seed_external_event_%");
+    } else {
+      query = query.eq("source", sourceFilter);
+    }
   }
   if (sp.min_priority && sp.min_priority !== "all") {
     const parsed = Number(sp.min_priority);
@@ -89,6 +160,13 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
     if (sp.policy_status && sp.policy_status !== "all") {
       fallbackQuery = fallbackQuery.eq("policy_status", sp.policy_status);
     }
+    if (sourceFilter !== "all") {
+      if (sourceFilter === "planner_seed_external_event") {
+        fallbackQuery = fallbackQuery.like("source", "planner_seed_external_event_%");
+      } else {
+        fallbackQuery = fallbackQuery.eq("source", sourceFilter);
+      }
+    }
     const fallback = await fallbackQuery;
     proposals = (fallback.data ?? []).map((row) => ({
       ...row,
@@ -103,11 +181,12 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
       (proposal) => decisionReasonPrefix(proposal.decision_reason) === sp.decision_reason_prefix
     );
   }
-  if (error) {
+  const missingCoreTable = error ? isMissingTableError(error.message, "task_proposals") : false;
+  if (error && !missingCoreTable) {
     throw new Error(`Failed to load proposals: ${error.message}`);
   }
 
-  const proposalRows = proposals ?? [];
+  const proposalRows = missingCoreTable ? [] : proposals ?? [];
   const statusCounts = new Map<string, number>();
   const reasonCounts = new Map<string, number>();
   const policyCounts = new Map<string, number>();
@@ -132,6 +211,28 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
     "rejected_other",
     "unspecified"
   ];
+  const hasActiveFilters =
+    (sp.status ?? "all") !== "all" ||
+    (sp.policy_status ?? "all") !== "all" ||
+    sourceFilter !== "all" ||
+    (sp.min_priority ?? "all") !== "all" ||
+    (sp.decision_reason_prefix ?? "all") !== "all";
+  const activeFilterSummary = [
+    (sp.status ?? "all") !== "all" ? `ステータス=${proposalStatusLabel(String(sp.status))}` : null,
+    (sp.policy_status ?? "all") !== "all" ? `ポリシー状態=${policyStatusLabel(String(sp.policy_status))}` : null,
+    sourceFilter !== "all" ? `提案ソース=${sourceLabel(sourceFilter)}` : null,
+    (sp.min_priority ?? "all") !== "all" ? `最低優先度=${String(sp.min_priority)}` : null,
+    (sp.decision_reason_prefix ?? "all") !== "all" ? `判断理由=${reasonCodeLabel(String(sp.decision_reason_prefix))}` : null
+  ]
+    .filter((v): v is string => Boolean(v))
+    .join(" / ");
+  const currentFilterParams = new URLSearchParams();
+  currentFilterParams.set("status", String(sp.status ?? "all"));
+  currentFilterParams.set("policy_status", String(sp.policy_status ?? "all"));
+  currentFilterParams.set("source", sourceFilter);
+  currentFilterParams.set("min_priority", String(sp.min_priority ?? "all"));
+  currentFilterParams.set("decision_reason_prefix", String(sp.decision_reason_prefix ?? "all"));
+  const currentFilterPath = `/app/proposals?${currentFilterParams.toString()}`;
 
   return (
     <section className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -157,6 +258,11 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
           {sp.error}
         </p>
       ) : null}
+      {missingCoreTable ? (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          `task_proposals` テーブルが未適用です。`supabase db push` で migration を適用してください。
+        </p>
+      ) : null}
 
       <form method="get" className="flex flex-wrap gap-3 rounded-md border border-slate-200 p-3 text-sm">
         <label className="flex items-center gap-2">
@@ -177,9 +283,30 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             className="rounded-md border border-slate-300 px-2 py-1"
           >
             <option value="all">すべて</option>
-            <option value="pass">pass</option>
-            <option value="warn">warn</option>
-            <option value="block">block</option>
+            <option value="pass">許可</option>
+            <option value="warn">注意</option>
+            <option value="block">ブロック</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          提案ソース
+          <select
+            name="source"
+            defaultValue={sourceFilter}
+            className="rounded-md border border-slate-300 px-2 py-1"
+          >
+            <option value="all">すべて</option>
+            <option value="planner_seed_external_event">外部イベント</option>
+            <option value="planner_seed_external_event_finance">外部イベント: 経理</option>
+            <option value="planner_seed_external_event_incident">外部イベント: 障害/セキュリティ</option>
+            <option value="planner_seed_external_event_chatops">外部イベント: チャット依頼</option>
+            <option value="planner_seed_external_event_general">外部イベント: 汎用</option>
+            <option value="planner_seed_case_stale">滞留案件</option>
+            <option value="planner_seed_action_failed">実行失敗</option>
+            <option value="planner_seed_pending_approval">承認滞留</option>
+            <option value="planner_seed_policy_warn">ポリシー警告</option>
+            <option value="planner_openai">OpenAI生成</option>
+            <option value="planner_stub">stub</option>
           </select>
         </label>
         <label className="flex items-center gap-2">
@@ -205,7 +332,7 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             <option value="all">すべて</option>
             {reasonOptions.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {reasonCodeLabel(option)}
               </option>
             ))}
           </select>
@@ -213,7 +340,12 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
         <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-white">
           適用
         </button>
+        <CopyFilterLinkButton path={currentFilterPath} />
+        {hasActiveFilters ? (
+          <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800">条件付き表示</span>
+        ) : null}
       </form>
+      {hasActiveFilters ? <p className="-mt-3 text-xs text-slate-600">{activeFilterSummary}</p> : null}
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
@@ -238,7 +370,7 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
               .slice(0, 8)
               .map(([reason, count]) => (
                 <span key={reason} className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs">
-                  {reason}: {count}
+                  {reasonCodeLabel(reason)}: {count}
                 </span>
               ))}
           </div>
@@ -246,7 +378,7 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
           <p className="mt-2 text-xs text-slate-500">まだ判断理由データがありません。</p>
         )}
         <p className="mt-2 text-xs text-slate-500">
-          policy pass/warn/block: {policyCounts.get("pass") ?? 0}/{policyCounts.get("warn") ?? 0}/
+          ポリシー内訳（許可/注意/ブロック）: {policyCounts.get("pass") ?? 0}/{policyCounts.get("warn") ?? 0}/
           {policyCounts.get("block") ?? 0}
         </p>
       </div>
@@ -260,11 +392,11 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             defaultValue="rejected_other"
             className="rounded-md border border-rose-300 px-2 py-1 text-xs"
           >
-            <option value="rejected_other">rejected_other</option>
-            <option value="rejected_policy">rejected_policy</option>
-            <option value="rejected_low_value">rejected_low_value</option>
-            <option value="rejected_duplicate">rejected_duplicate</option>
-            <option value="rejected_scope">rejected_scope</option>
+            <option value="rejected_other">{reasonCodeLabel("rejected_other")}</option>
+            <option value="rejected_policy">{reasonCodeLabel("rejected_policy")}</option>
+            <option value="rejected_low_value">{reasonCodeLabel("rejected_low_value")}</option>
+            <option value="rejected_duplicate">{reasonCodeLabel("rejected_duplicate")}</option>
+            <option value="rejected_scope">{reasonCodeLabel("rejected_scope")}</option>
           </select>
           <input
             type="text"
@@ -312,7 +444,8 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                 ) : null}
                 <p className="font-medium text-slate-900">{proposal.title as string}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  ソース: {source} | ステータス: {proposal.status as string} | ポリシー状態: {proposal.policy_status as string} |
+                  ソース: {sourceLabel(source)} | ステータス: {proposalStatusLabel(proposal.status as string)} | ポリシー状態:{" "}
+                  {policyStatusLabel(proposal.policy_status as string)} |
                   優先度: {priority}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -342,7 +475,7 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                   <details className="mt-2">
                     <summary className="cursor-pointer font-medium">提案アクション</summary>
                     <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
-                      {JSON.stringify(actions[0], null, 2)}
+                      {toRedactedJson(actions[0])}
                     </pre>
                   </details>
                 ) : null}
@@ -370,10 +503,15 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                 ) : null}
 
                 <p className="mt-2 text-xs text-slate-500">
-                  作成日時: {new Date(proposal.created_at as string).toLocaleString()}
+                  作成日時: {new Date(proposal.created_at as string).toLocaleString("ja-JP")}
                 </p>
                 {proposal.decision_reason ? (
-                  <p className="mt-1 text-xs text-slate-500">判断理由: {String(proposal.decision_reason)}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    判断理由: {reasonCodeLabel(decisionReasonPrefix(proposal.decision_reason))}
+                    {String(proposal.decision_reason).includes(":")
+                      ? `（${String(proposal.decision_reason).slice(String(proposal.decision_reason).indexOf(":") + 1)}）`
+                      : ""}
+                  </p>
                 ) : null}
 
                 {proposal.status === "proposed" ? (
@@ -399,9 +537,9 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                         className="rounded-md border border-slate-300 px-2 py-1 text-xs"
                         defaultValue="accepted_manual"
                       >
-                        <option value="accepted_manual">accepted_manual</option>
-                        <option value="accepted_after_review">accepted_after_review</option>
-                        <option value="accepted_low_risk">accepted_low_risk</option>
+                        <option value="accepted_manual">{reasonCodeLabel("accepted_manual")}</option>
+                        <option value="accepted_after_review">{reasonCodeLabel("accepted_after_review")}</option>
+                        <option value="accepted_low_risk">{reasonCodeLabel("accepted_low_risk")}</option>
                       </select>
                       <button
                         type="submit"
@@ -427,11 +565,11 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                         className="rounded-md border border-slate-300 px-2 py-1 text-xs"
                         defaultValue="rejected_other"
                       >
-                        <option value="rejected_other">rejected_other</option>
-                        <option value="rejected_policy">rejected_policy</option>
-                        <option value="rejected_low_value">rejected_low_value</option>
-                        <option value="rejected_duplicate">rejected_duplicate</option>
-                        <option value="rejected_scope">rejected_scope</option>
+                        <option value="rejected_other">{reasonCodeLabel("rejected_other")}</option>
+                        <option value="rejected_policy">{reasonCodeLabel("rejected_policy")}</option>
+                        <option value="rejected_low_value">{reasonCodeLabel("rejected_low_value")}</option>
+                        <option value="rejected_duplicate">{reasonCodeLabel("rejected_duplicate")}</option>
+                        <option value="rejected_scope">{reasonCodeLabel("rejected_scope")}</option>
                       </select>
                       <input
                         type="text"

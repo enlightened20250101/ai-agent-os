@@ -1,6 +1,7 @@
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 import { getGovernanceSettings } from "@/lib/governance/evaluate";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,19 @@ function parseOutcomeCount(rows: TrustRow[]) {
     }
   }
   return { success, failed };
+}
+
+function providerLabel(provider: string | null) {
+  if (!provider) return "全体";
+  if (provider === "google") return "Google";
+  if (provider === "slack") return "Slack";
+  return provider;
+}
+
+function actionTypeLabel(actionType: string | null) {
+  if (!actionType) return "全体";
+  if (actionType === "send_email") return "メール送信";
+  return actionType;
 }
 
 export default async function TrustGovernancePage({ searchParams }: TrustPageProps) {
@@ -131,9 +145,9 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
   return (
     <section className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <div>
-        <h1 className="text-xl font-semibold">Trust スコア</h1>
+        <h1 className="text-xl font-semibold">信頼スコア</h1>
         <p className="mt-2 text-sm text-slate-600">
-          実行成功/失敗と承認却下から更新される信頼スコアです。自律実行判定の `min_trust_score` に利用されます。
+          実行成功/失敗と承認却下から更新される信頼スコアです。自律実行判定の最小信頼スコアに利用されます。
         </p>
       </div>
 
@@ -151,7 +165,7 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
         </div>
         <div>
           <label htmlFor="role" className="mb-1 block text-sm font-medium text-slate-700">
-            role_key
+            エージェント役割
           </label>
           <select id="role" name="role" defaultValue={roleFilter} className="rounded-md border border-slate-300 px-3 py-2 text-sm">
             <option value="">すべて</option>
@@ -164,7 +178,7 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
         </div>
         <div>
           <label htmlFor="provider" className="mb-1 block text-sm font-medium text-slate-700">
-            provider
+            プロバイダ
           </label>
           <select
             id="provider"
@@ -175,14 +189,14 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
             <option value="">すべて</option>
             {availableProviders.map((provider) => (
               <option key={provider} value={provider}>
-                {provider}
+                {providerLabel(provider)}
               </option>
             ))}
           </select>
         </div>
         <div>
           <label htmlFor="action_type" className="mb-1 block text-sm font-medium text-slate-700">
-            action_type
+            アクション種別
           </label>
           <select
             id="action_type"
@@ -193,7 +207,7 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
             <option value="">すべて</option>
             {availableActionTypes.map((actionType) => (
               <option key={actionType} value={actionType}>
-                {actionType}
+                {actionTypeLabel(actionType)}
               </option>
             ))}
           </select>
@@ -209,7 +223,7 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
           <p className="mt-1 text-lg font-semibold text-slate-900">{rows.length}</p>
         </div>
         <div className="rounded-md border border-indigo-200 bg-indigo-50 p-3 text-sm">
-          <p className="text-indigo-700">min_trust_score</p>
+          <p className="text-indigo-700">最小信頼スコア</p>
           <p className="mt-1 text-lg font-semibold text-indigo-900">{settings.minTrustScore}</p>
         </div>
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
@@ -217,11 +231,11 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
           <p className="mt-1 text-lg font-semibold text-slate-900">{averageScore ?? "-"}</p>
         </div>
         <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm">
-          <p className="text-emerald-700">success</p>
+          <p className="text-emerald-700">成功</p>
           <p className="mt-1 text-lg font-semibold text-emerald-800">{outcomes.success}</p>
         </div>
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm">
-          <p className="text-rose-700">failed / rejected</p>
+          <p className="text-rose-700">失敗 / 却下</p>
           <p className="mt-1 text-lg font-semibold text-rose-800">{outcomes.failed}</p>
         </div>
       </div>
@@ -229,17 +243,17 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
       <div>
         <h2 className="text-base font-semibold">最新スナップショット</h2>
         {snapshots.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-600">まだ trust スコア履歴はありません。</p>
+          <p className="mt-2 text-sm text-slate-600">まだ信頼スコア履歴はありません。</p>
         ) : (
           <ul className="mt-3 space-y-2">
             {snapshots.map((row) => (
               <li key={row.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
                 <p>
-                  {row.provider ?? "any"}/{row.action_type ?? "any"} / role=
-                  <span className="font-mono">{row.agent_role_key ?? "any"}</span>
+                  {providerLabel(row.provider)}/{actionTypeLabel(row.action_type)} / 役割=
+                  <span className="font-mono">{row.agent_role_key ?? "全体"}</span>
                 </p>
                 <p className="mt-1">
-                  score: <span className="font-semibold text-slate-900">{row.score}</span> | sample_size:{" "}
+                  スコア: <span className="font-semibold text-slate-900">{row.score}</span> | サンプル数:{" "}
                   {row.sample_size}
                 </p>
                 <p className="mt-1 text-xs">
@@ -253,7 +267,7 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
                     {row.score - settings.minTrustScore}
                   </span>
                 </p>
-                <p className="mt-1 text-xs text-slate-500">updated_at: {new Date(row.updated_at).toLocaleString()}</p>
+                <p className="mt-1 text-xs text-slate-500">更新日時: {new Date(row.updated_at).toLocaleString("ja-JP")}</p>
               </li>
             ))}
           </ul>
@@ -269,13 +283,13 @@ export default async function TrustGovernancePage({ searchParams }: TrustPagePro
             {rows.map((row) => (
               <li key={row.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
                 <p>
-                  {row.provider ?? "any"}/{row.action_type ?? "any"} role={row.agent_role_key ?? "any"} | score{" "}
+                  {providerLabel(row.provider)}/{actionTypeLabel(row.action_type)} 役割={row.agent_role_key ?? "全体"} | スコア{" "}
                   {row.score}
                 </p>
                 <details className="mt-1">
-                  <summary className="cursor-pointer text-xs text-slate-600">metadata</summary>
+                  <summary className="cursor-pointer text-xs text-slate-600">メタデータ</summary>
                   <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs">
-                    {JSON.stringify(row.metadata_json, null, 2)}
+                    {toRedactedJson(row.metadata_json)}
                   </pre>
                 </details>
               </li>

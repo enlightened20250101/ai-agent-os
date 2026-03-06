@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { executeTaskDraftActionShared } from "@/lib/actions/executeDraft";
 import { appendCaseEventSafe, getCaseIdForTask } from "@/lib/cases/events";
+import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
 import { generateDraftWithOpenAI } from "@/lib/llm/openai";
@@ -88,6 +89,13 @@ export async function setTaskReadyForApproval(formData: FormData) {
         },
         source: "manual_status_update"
       }
+    });
+    await syncCaseStageForTask({
+      supabase,
+      orgId,
+      taskId,
+      actorUserId: userId,
+      source: "manual_status_update"
     });
   }
 
@@ -245,6 +253,13 @@ export async function requestApproval(formData: FormData) {
         source: "approval_request"
       }
     });
+    await syncCaseStageForTask({
+      supabase,
+      orgId,
+      taskId,
+      actorUserId: userId,
+      source: "approval_request"
+    });
   }
 
   const modelPayload = latestModelEvent.payload_json as { output?: { summary?: string } } | null;
@@ -399,6 +414,7 @@ export async function executeDraftAction(formData: FormData) {
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
+  let skippedMessage: string | null = null;
   try {
     const result = await executeTaskDraftActionShared({
       supabase,
@@ -408,11 +424,15 @@ export async function executeDraftAction(formData: FormData) {
       source: "manual_action_runner"
     });
     if (result.status === "skipped") {
-      redirect(errorPath(taskId, result.message));
+      skippedMessage = result.message;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "実行に失敗しました。";
     redirect(errorPath(taskId, message));
+  }
+
+  if (skippedMessage) {
+    redirect(errorPath(taskId, skippedMessage));
   }
 
   revalidatePath(taskPath(taskId));

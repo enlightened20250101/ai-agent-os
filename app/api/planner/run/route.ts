@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { runWithOpsRetry } from "@/lib/governance/jobRetry";
 import { runPlanner } from "@/lib/planner/runPlanner";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -40,11 +41,27 @@ export async function POST(request: Request) {
       created_proposals?: number;
       skipped_circuit?: boolean;
       skipped_dry_run?: boolean;
+      skipped_incident?: boolean;
+      incident_id?: string;
+      incident_severity?: string;
       paused_until?: string | null;
       error?: string;
     }> = [];
 
     for (const targetOrgId of targets) {
+      const openIncident = await getLatestOpenIncident({ supabase: admin, orgId: targetOrgId });
+      if (openIncident) {
+        results.push({
+          org_id: targetOrgId,
+          ok: true,
+          created_proposals: 0,
+          skipped_incident: true,
+          incident_id: openIncident.id,
+          incident_severity: openIncident.severity
+        });
+        continue;
+      }
+
       const retried = await runWithOpsRetry({
         supabase: admin,
         orgId: targetOrgId,
@@ -103,6 +120,17 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient();
+  const openIncident = await getLatestOpenIncident({ supabase: admin, orgId });
+  if (openIncident) {
+    return NextResponse.json({
+      ok: true,
+      skipped_incident: true,
+      incident_id: openIncident.id,
+      severity: openIncident.severity,
+      reason: openIncident.reason
+    });
+  }
+
   const retried = await runWithOpsRetry({
     supabase: admin,
     orgId,

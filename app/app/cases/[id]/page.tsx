@@ -5,6 +5,7 @@ import { StatusNotice } from "@/app/app/StatusNotice";
 import { updateCaseDue, updateCaseOwner, updateCaseStatus } from "@/app/app/cases/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ type CaseRow = {
   title: string;
   case_type: string;
   status: "open" | "blocked" | "closed";
+  stage: string | null;
   source: string;
   created_by_user_id: string;
   owner_user_id: string | null;
@@ -54,13 +56,23 @@ function isMissingColumnError(message: string, columnName: string) {
 }
 
 function pretty(value: unknown) {
-  return JSON.stringify(value ?? {}, null, 2);
+  return toRedactedJson(value ?? {});
 }
 
 function statusBadge(status: CaseRow["status"]) {
   if (status === "blocked") return "border-rose-300 bg-rose-50 text-rose-700";
   if (status === "closed") return "border-slate-300 bg-slate-100 text-slate-700";
   return "border-emerald-300 bg-emerald-50 text-emerald-700";
+}
+
+function stageBadge(stage: string | null) {
+  if (stage === "blocked") return "border-rose-300 bg-rose-50 text-rose-700";
+  if (stage === "exception") return "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700";
+  if (stage === "awaiting_approval") return "border-amber-300 bg-amber-50 text-amber-700";
+  if (stage === "executing") return "border-sky-300 bg-sky-50 text-sky-700";
+  if (stage === "approved") return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  if (stage === "completed") return "border-slate-300 bg-slate-100 text-slate-700";
+  return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
 export default async function CaseDetailPage({ params, searchParams }: CaseDetailPageProps) {
@@ -72,7 +84,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
   const [caseResRaw, tasksRes, caseEventsRes, approvalsRes, actionsRes, agentsRes, membersRes] = await Promise.all([
     supabase
       .from("business_cases")
-      .select("id, title, case_type, status, source, created_by_user_id, owner_user_id, due_at, created_at, updated_at")
+      .select("id, title, case_type, status, stage, source, created_by_user_id, owner_user_id, due_at, created_at, updated_at")
       .eq("org_id", orgId)
       .eq("id", id)
       .maybeSingle(),
@@ -113,14 +125,26 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
 
   let caseData = caseResRaw.data as Record<string, unknown> | null;
   let caseError = caseResRaw.error;
-  if (caseError && isMissingColumnError(caseError.message, "owner_user_id")) {
+  if (caseError && (isMissingColumnError(caseError.message, "owner_user_id") || isMissingColumnError(caseError.message, "stage"))) {
     const fallback = await supabase
       .from("business_cases")
       .select("id, title, case_type, status, source, created_by_user_id, created_at, updated_at")
       .eq("org_id", orgId)
       .eq("id", id)
       .maybeSingle();
-    caseData = fallback.data ? { ...fallback.data, owner_user_id: null, due_at: null } : null;
+    caseData = fallback.data
+      ? {
+          ...fallback.data,
+          owner_user_id: null,
+          due_at: null,
+          stage:
+            (fallback.data.status as string) === "closed"
+              ? "completed"
+              : (fallback.data.status as string) === "blocked"
+                ? "blocked"
+                : "intake"
+        }
+      : null;
     caseError = fallback.error;
   }
 
@@ -159,9 +183,6 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
 
   const taskRows = (tasksRes.data ?? []) as TaskRow[];
   const memberships = (membersRes.data ?? []) as Array<{ user_id: string; role: string }>;
-  const taskIds = new Set(taskRows.map((row) => row.id));
-  const taskById = new Map(taskRows.map((row) => [row.id, row]));
-
   const caseEvents =
     caseEventsRes.error && isMissingTableError(caseEventsRes.error.message, "case_events")
       ? []
@@ -169,6 +190,24 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
   if (caseEventsRes.error && !isMissingTableError(caseEventsRes.error.message, "case_events")) {
     throw new Error(`Failed to load case events: ${caseEventsRes.error.message}`);
   }
+  const memberUserIds = memberships.map((row) => row.user_id);
+  const caseEventActorIds = caseEvents.map((row) => row.actor_user_id).filter((v): v is string => Boolean(v));
+  const profileUserIds = Array.from(
+    new Set([...(caseRow.owner_user_id ? [caseRow.owner_user_id] : []), ...memberUserIds, ...caseEventActorIds])
+  );
+  let profileNameByUserId = new Map<string, string>();
+  if (profileUserIds.length > 0) {
+    const profilesRes = await supabase.from("user_profiles").select("user_id, display_name").eq("org_id", orgId).in("user_id", profileUserIds);
+    if (!profilesRes.error) {
+      profileNameByUserId = new Map(
+        (profilesRes.data ?? [])
+          .map((row) => [row.user_id as string, (row.display_name as string | null)?.trim() ?? ""])
+          .filter((row): row is [string, string] => Boolean(row[0]) && Boolean(row[1]))
+      );
+    }
+  }
+  const taskIds = new Set(taskRows.map((row) => row.id));
+  const taskById = new Map(taskRows.map((row) => [row.id, row]));
 
   const agentMap = new Map(
     ((agentsRes.data ?? []) as Array<{ id: string; name: string; role_key: string }>).map((agent) => [agent.id, agent])
@@ -209,10 +248,14 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
             <h1 className="mt-1 text-xl font-semibold text-slate-900">{caseRow.title}</h1>
             <p className="mt-1 text-sm text-slate-600">{caseRow.case_type}</p>
             <p className="mt-2 text-xs text-slate-500">
-              owner: {caseRow.owner_user_id ?? "未割当"} | due: {caseRow.due_at ? new Date(caseRow.due_at).toLocaleString() : "未設定"}
+              owner: {caseRow.owner_user_id ? (profileNameByUserId.get(caseRow.owner_user_id) ?? "担当者") : "未割当"} | due:{" "}
+              {caseRow.due_at ? new Date(caseRow.due_at).toLocaleString() : "未設定"}
             </p>
           </div>
-          <div className={`rounded-full border px-3 py-1 text-xs ${statusBadge(caseRow.status)}`}>{caseRow.status}</div>
+          <div className="flex items-center gap-2">
+            <div className={`rounded-full border px-3 py-1 text-xs ${statusBadge(caseRow.status)}`}>{caseRow.status}</div>
+            <div className={`rounded-full border px-3 py-1 text-xs ${stageBadge(caseRow.stage)}`}>{caseRow.stage ?? "intake"}</div>
+          </div>
         </div>
         <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
         <div className="mt-4 flex flex-wrap gap-2">
@@ -268,7 +311,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                 <option value="">未割当</option>
                 {memberships.map((member) => (
                   <option key={member.user_id} value={member.user_id}>
-                    {member.user_id} ({member.role})
+                    {(profileNameByUserId.get(member.user_id) ?? "メンバー")} ({member.role})
                   </option>
                 ))}
               </select>
@@ -327,7 +370,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                 {pendingApprovalRows.map((row) => (
                   <li key={row.id} className="rounded-md border border-amber-200 bg-white p-2 text-xs text-slate-700">
                     <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-slate-900 underline">
-                      {taskById.get(row.task_id)?.title ?? row.task_id}
+                      {taskById.get(row.task_id)?.title ?? "タスク"}
                     </Link>
                     <p className="mt-1 text-[11px] text-slate-500">requested: {new Date(row.created_at).toLocaleString()}</p>
                   </li>
@@ -344,7 +387,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                 {failedActionRows.map((row) => (
                   <li key={row.id} className="rounded-md border border-rose-200 bg-white p-2 text-xs text-slate-700">
                     <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-slate-900 underline">
-                      {taskById.get(row.task_id)?.title ?? row.task_id}
+                      {taskById.get(row.task_id)?.title ?? "タスク"}
                     </Link>
                     <p className="mt-1 text-[11px] text-slate-500">
                       {row.provider}/{row.action_type} | {new Date(row.created_at).toLocaleString()}
@@ -395,7 +438,8 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
               <li key={event.id} className="rounded-md border border-slate-200 p-3">
                 <p className="text-sm font-medium text-slate-900">{event.event_type}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  actor: {event.actor_user_id ?? "system"} | {new Date(event.created_at).toLocaleString()}
+                  actor: {event.actor_user_id ? (profileNameByUserId.get(event.actor_user_id) ?? "メンバー") : "system"} |{" "}
+                  {new Date(event.created_at).toLocaleString()}
                 </p>
                 <details className="mt-2">
                   <summary className="cursor-pointer text-xs text-slate-700">payload JSON</summary>
@@ -421,7 +465,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                     <p>
                       task:{" "}
                       <Link href={`/app/tasks/${approval.task_id}`} className="underline">
-                        {taskById.get(approval.task_id)?.title ?? approval.task_id}
+                        {taskById.get(approval.task_id)?.title ?? "タスク"}
                       </Link>
                     </p>
                     <p>status: {approval.status}</p>
@@ -442,7 +486,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                     <p>
                       task:{" "}
                       <Link href={`/app/tasks/${action.task_id}`} className="underline">
-                        {taskById.get(action.task_id)?.title ?? action.task_id}
+                        {taskById.get(action.task_id)?.title ?? "タスク"}
                       </Link>
                     </p>
                     <p>

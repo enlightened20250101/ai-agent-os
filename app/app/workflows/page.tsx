@@ -4,6 +4,7 @@ import { StatusNotice } from "@/app/app/StatusNotice";
 import { createWorkflowTemplate } from "@/app/app/workflows/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,12 @@ function isMissingTableError(message: string, tableName: string) {
     message.includes(`relation "${tableName}" does not exist`) ||
     message.includes(`Could not find the table 'public.${tableName}'`)
   );
+}
+
+function stepTypeLabel(stepType: string) {
+  if (stepType === "task_event") return "タスクイベント";
+  if (stepType === "execute_google_send_email") return "Googleメール送信";
+  return stepType;
 }
 
 export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps) {
@@ -47,7 +54,7 @@ export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps
         </p>
         <div className="mt-3">
           <Link href="/app/workflows/runs" className="text-sm underline">
-            workflow run 一覧へ
+            ワークフロー実行一覧へ
           </Link>
         </div>
 
@@ -70,7 +77,7 @@ export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
           <p className="text-xs text-slate-500">
-            type は `task_event` または `execute_google_send_email`。3列目は `true/false`（省略可）。
+            種別は `task_event` または `execute_google_send_email`。3列目は `true/false`（省略可）。
           </p>
           <ConfirmSubmitButton
             label="テンプレートを作成"
@@ -95,13 +102,21 @@ export default async function WorkflowsPage({ searchParams }: WorkflowsPageProps
                 <li key={String(template.id)} className="rounded-md border border-slate-200 p-3 text-sm">
                   <p className="font-medium text-slate-900">{String(template.name)}</p>
                   <p className="text-slate-600">
-                    version: {String(template.version)} | steps: {stepCount} | 作成日時:{" "}
-                    {new Date(String(template.created_at)).toLocaleString()}
+                    バージョン: {String(template.version)} | ステップ数: {stepCount} | 作成日時:{" "}
+                    {new Date(String(template.created_at)).toLocaleString("ja-JP")}
                   </p>
                   <details className="mt-2">
-                    <summary className="cursor-pointer">definition_json</summary>
+                    <summary className="cursor-pointer">定義JSON</summary>
                     <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
-                      {JSON.stringify(template.definition_json, null, 2)}
+                      {toRedactedJson({
+                        ...def,
+                        steps: Array.isArray(def.steps)
+                          ? def.steps.map((raw) => {
+                              const row = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+                              return { ...row, type_label: stepTypeLabel(String(row.type ?? "")) };
+                            })
+                          : []
+                      })}
                     </pre>
                   </details>
                 </li>

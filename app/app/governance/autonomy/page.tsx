@@ -75,7 +75,7 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="min_trust_score">
-              最低Trust score
+              最低信頼スコア
             </label>
             <input
               id="min_trust_score"
@@ -114,8 +114,8 @@ export default async function AutonomyPage({ searchParams }: AutonomyPageProps) 
         <p className="font-medium text-slate-900">MVPルール</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>policy が `block` の場合は常に停止します。</li>
-          <li>`L3/L4` かつ自動実行がONのときのみ、自動実行候補になります。</li>
-          <li>リスク/Trust/日次予算をすべて満たした場合だけ承認バイパスします。</li>
+          <li>`L3/L4` かつ自動実行が有効のときのみ、自動実行候補になります。</li>
+          <li>リスク/信頼スコア/日次予算をすべて満たした場合だけ承認バイパスします。</li>
         </ul>
       </div>
     </section>

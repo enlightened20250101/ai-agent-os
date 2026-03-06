@@ -45,6 +45,19 @@ Set these in `.env.local`:
 - `GOOGLE_REFRESH_TOKEN`
 - `GOOGLE_SENDER_EMAIL`
 - `PLANNER_RUN_TOKEN`
+- `MONITOR_RUN_TOKEN` (optional; if unset in cron workflow, uses `PLANNER_RUN_TOKEN`)
+- `EVENTS_INGEST_TOKEN` (optional in dev, required in non-dev for `/api/events/intake` token auth)
+- `EVENTS_AUTOMATION_TOKEN` (optional; `/api/events/auto-caseify` token, fallback to `PLANNER_RUN_TOKEN`)
+- `MONITOR_STALE_HOURS` (default `6`; monitor stale threshold, fallback to planner stale hours)
+- `MONITOR_CHAT_NUDGE_ENABLED` (`1` default; monitor signal detection posts system nudge to shared chat)
+- `MONITOR_RECOVERY_COOLDOWN_SECONDS` (default `90`; cooldown for `@AI 監視回収を実行` to avoid duplicate burst runs)
+- `MONITOR_RECOVERY_WORKFLOW_RETRY_PASSES` (default `1`; extra retry passes for workflow failures during monitor recovery)
+- `GOVERNANCE_HIGH_RISK_THRESHOLD` (default `70`; risk score threshold requiring two-person approval)
+- `GOVERNANCE_HOURLY_SEND_EMAIL_LIMIT` (default `10`; rolling 1-hour success cap for google/send_email)
+- `MONITOR_RECOVERY_EXCEPTION_AUTO_CREATE` (default `1`; auto upsert exception cases for manual workflow failures)
+- `MONITOR_RECOVERY_EXCEPTION_SLA_HOURS` (default `8`; due SLA hours for auto-created exception cases)
+- `WORKFLOW_FAILURE_EXCEPTION_AUTO_CREATE` (default `1`; auto upsert failed_workflow exception case on workflow run failure)
+- `WORKFLOW_FAILURE_EXCEPTION_SLA_HOURS` (default `8`; due SLA hours for workflow failure exception cases)
 - `GOV_RECOMMENDATIONS_TOKEN` (optional; if unset, endpoint uses `PLANNER_RUN_TOKEN`)
 - `WORKFLOW_TICK_TOKEN` (optional; if unset, endpoint uses `PLANNER_RUN_TOKEN`)
 - `INCIDENT_AUTOMATION_TOKEN` (optional; if unset, endpoint uses governance/planner token)
@@ -118,6 +131,48 @@ Set these in `.env.local`:
     - otherwise requires header `x-planner-token: ${PLANNER_RUN_TOKEN}`.
 - Future scheduler wiring:
   - Use GitHub Actions cron or external cron service to call `/api/planner/run` per org.
+
+## Monitor Tick (MVP)
+
+- UI:
+  - `/app/monitor` to run monitor tick manually and inspect recent monitor runs.
+- Trigger endpoint:
+  - `POST /api/monitor/run?org_id=<org_uuid>`
+  - `POST /api/monitor/run` (all orgs, optional `max_orgs` query; for cron/batch)
+  - optional `force_planner=1` query to run planner even with no detected signals
+  - Auth:
+    - `NODE_ENV=development` allows local testing.
+    - otherwise requires header `x-monitor-token: ${MONITOR_RUN_TOKEN}`.
+- Behavior:
+  - monitor detects stale tasks/approvals/cases and recent failures/warn-block policy events.
+  - planner runs only when signals exist (or force mode), and result is written to `monitor_runs`.
+  - when signals are detected, monitor posts a system nudge message to shared chat (can be disabled by env).
+
+## External Event Intake (MVP)
+
+- UI:
+  - `/app/events` で外部イベントの受信一覧確認と `pending/processed/ignored` 更新が可能。
+  - 未処理イベントへ `priority` 自動仕分け（urgent/high/normal/low）を実行可能。
+  - 各イベントを `Case化` して `/app/cases` の台帳へ直接起票可能（起票済みはケース詳細へリンク）。
+- API:
+  - `POST /api/events/intake`
+  - `GET /api/events/export` (CSV, current org + filters)
+  - `POST /api/events/auto-caseify?org_id=<org_uuid>` (high priority `new` events -> cases)
+  - Auth:
+    - `NODE_ENV=development` ではローカル検証を許可。
+    - それ以外は `x-events-token: ${EVENTS_INGEST_TOKEN}` が必須。
+- Request body (minimum):
+  - `org_id`: UUID
+  - `provider`: string (`slack` / `google` など)
+  - `event_type`: string
+  - `payload_json`: object
+  - `external_event_id`: string (provider側イベントID, 重複排除に使用)
+- Notes:
+  - `(org_id, provider, external_event_id)` の重複は idempotent に受理され、既存レコードを返す。
+  - provider が `google` で送られた場合は `gmail` に正規化される。
+  - `POST /api/events/auto-caseify` は ops retry/circuit breaker 対応（`skipped_circuit` / `skipped_dry_run` を返却）。
+  - monitor/planner は直近の未処理 inbound イベント件数をシグナルとして参照する。
+  - `priority=high/urgent` の未処理イベントは `/app/events` の操作または `/api/events/auto-caseify` で自動Case化できる。
 
 ## Governance (Phase 3 baseline)
 
@@ -199,7 +254,9 @@ Set these in `.env.local`:
 - Workflow: `.github/workflows/autonomy-cron.yml`
 - Runs every 30 minutes and can also be started manually (`workflow_dispatch`).
 - Calls:
+  - `/api/monitor/run?max_orgs=<N>`
   - `/api/planner/run?max_orgs=<N>`
+  - `/api/events/auto-caseify?max_orgs=<N>`
   - `/api/governance/recommendations/run?max_orgs=<N>`
   - `/api/workflows/tick?max_orgs=<N>&limit=<M>`
   - `/api/incidents/auto-open?max_orgs=<N>`
@@ -210,6 +267,8 @@ Set these in `.env.local`:
   - `APP_BASE_URL` (public reachable URL, e.g. prod URL)
   - `PLANNER_RUN_TOKEN`
 - Optional repository secrets:
+  - `MONITOR_RUN_TOKEN` (if omitted, planner token is reused)
+  - `EVENTS_AUTOMATION_TOKEN` (if omitted, planner token is reused)
   - `GOV_RECOMMENDATIONS_TOKEN` (if omitted, planner token is reused)
   - `WORKFLOW_TICK_TOKEN` (if omitted, planner token is reused)
   - `INCIDENT_AUTOMATION_TOKEN` (if omitted, governance/planner token is reused)

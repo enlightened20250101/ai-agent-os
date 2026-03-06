@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { appendCaseEventSafe, getCaseIdForTask } from "@/lib/cases/events";
+import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { evaluateApprovalGuardrail, inferTaskRiskScore } from "@/lib/governance/guardrails";
 import { recordTrustOutcome } from "@/lib/governance/trust";
 
 type Decision = "approved" | "rejected";
@@ -22,7 +24,7 @@ export type DecideApprovalResult = {
   orgId: string;
   taskId: string;
   approvalStatus: Decision;
-  taskStatus: "approved" | "draft";
+  taskStatus: "approved" | "ready_for_approval" | "draft";
 };
 
 function parseLatestDraftAction(payload: unknown): { provider: "google"; actionType: "send_email" } | null {
@@ -99,6 +101,44 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
     throw new Error(`Approval update failed: ${approvalUpdateError.message}`);
   }
 
+  const { data: task, error: taskError } = await supabase
+    .from("tasks")
+    .select("id, status")
+    .eq("id", taskId)
+    .eq("org_id", orgId)
+    .single();
+
+  if (taskError) {
+    throw new Error(`Task lookup failed: ${taskError.message}`);
+  }
+
+  let nextTaskStatus: "approved" | "ready_for_approval" | "draft" = decision === "approved" ? "approved" : "draft";
+  let approvalGuardrailMeta: { riskScore: number; requiredApprovals: number; approvedApprovals: number } | null = null;
+  if (decision === "approved") {
+    const riskScore = await inferTaskRiskScore({
+      supabase,
+      orgId,
+      taskId
+    });
+    const guardrail = await evaluateApprovalGuardrail({
+      supabase,
+      orgId,
+      taskId,
+      riskScore
+    });
+    approvalGuardrailMeta = {
+      riskScore,
+      requiredApprovals: guardrail.requiredApprovals,
+      approvedApprovals: guardrail.distinctApproverCount
+    };
+    if (guardrail.requiredApprovals > 0 && guardrail.distinctApproverCount < guardrail.requiredApprovals) {
+      nextTaskStatus = "ready_for_approval";
+    } else {
+      nextTaskStatus = "approved";
+    }
+  }
+  const approvalStage =
+    decision === "approved" ? (nextTaskStatus === "approved" ? "final" : "partial") : "rejected";
   const eventType = decision === "approved" ? "HUMAN_APPROVED" : "HUMAN_REJECTED";
   await appendTaskEvent({
     supabase,
@@ -111,22 +151,11 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
       approval_id: approvalId,
       reason: reason || null,
       source,
-      slack_user_id: slackUserId
+      slack_user_id: slackUserId,
+      approval_stage: approvalStage,
+      approval_guardrail: approvalGuardrailMeta
     }
   });
-
-  const { data: task, error: taskError } = await supabase
-    .from("tasks")
-    .select("id, status")
-    .eq("id", taskId)
-    .eq("org_id", orgId)
-    .single();
-
-  if (taskError) {
-    throw new Error(`Task lookup failed: ${taskError.message}`);
-  }
-
-  const nextTaskStatus = decision === "approved" ? "approved" : "draft";
   const { error: taskUpdateError } = await supabase
     .from("tasks")
     .update({ status: nextTaskStatus })
@@ -152,7 +181,9 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
         }
       },
       source: `approval_decision_${source}`,
-      approval_id: approvalId
+      approval_id: approvalId,
+      approval_stage: approvalStage,
+      approval_guardrail: approvalGuardrailMeta
     }
   });
 
@@ -186,6 +217,13 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
       },
       source: `approval_decision_${source}`
     }
+  });
+  await syncCaseStageForTask({
+    supabase,
+    orgId,
+    taskId,
+    actorUserId: actorType === "user" ? actorId : null,
+    source: `approval_decision_${source}`
   });
 
   if (decision === "rejected") {

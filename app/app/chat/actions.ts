@@ -2,20 +2,25 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { executeTaskDraftActionShared } from "@/lib/actions/executeDraft";
 import { decideApprovalShared } from "@/lib/approvals/decide";
+import { sendApprovalReminders } from "@/lib/approvals/reminders";
 import { appendCaseEventSafe } from "@/lib/cases/events";
+import { syncCaseStageForTask } from "@/lib/cases/stageSync";
 import { parseChatIntent } from "@/lib/chat/intents";
 import { expirePendingChatConfirmations } from "@/lib/chat/maintenance";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
 import { appendAiExecutionLog } from "@/lib/executions/logs";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
+import { appendExceptionCaseEvent } from "@/lib/governance/exceptionCaseEvents";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
 import { runPlanner } from "@/lib/planner/runPlanner";
 import { acceptProposalShared } from "@/lib/proposals/decide";
 import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
+import { toUserActionableError } from "@/lib/ui/actionableError";
 import { retryFailedWorkflowRun, startWorkflowRun } from "@/lib/workflows/orchestrator";
 
 function normalizeScope(raw: string): ChatScope {
@@ -45,8 +50,17 @@ function asObject(value: unknown): Record<string, unknown> {
 function candidateTaskExamples(rows: Array<{ id: string; title: string }>, actionLabel: string) {
   return rows
     .slice(0, 2)
-    .map((row) => `- 「${row.title}」を${actionLabel}（task_id: ${row.id}）`)
+    .map((row) => `- 「${row.title}」を${actionLabel}`)
     .join("\n");
+}
+
+function formatTitlePreviewList(rows: Array<{ title: string }>, emptyFallback: string) {
+  const lines = rows
+    .map((row) => String(row.title ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((title) => `- 「${title}」`);
+  return lines.length > 0 ? lines.join("\n") : `- ${emptyFallback}`;
 }
 
 function isBlockedByIncident(intentType: string) {
@@ -56,6 +70,7 @@ function isBlockedByIncident(intentType: string) {
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
     intentType === "run_planner" ||
+    intentType === "monitor_recovery_run" ||
     intentType === "run_workflow" ||
     intentType === "bulk_retry_failed_workflows"
   );
@@ -73,6 +88,7 @@ function isMutatingIntent(intentType: string) {
     intentType === "quick_top_action" ||
     intentType === "execute_action" ||
     intentType === "run_planner" ||
+    intentType === "monitor_recovery_run" ||
     intentType === "run_workflow" ||
     intentType === "update_case_status" ||
     intentType === "update_case_owner_self" ||
@@ -80,9 +96,48 @@ function isMutatingIntent(intentType: string) {
   );
 }
 
+function recoveryPathForIntent(intentType: string) {
+  if (intentType === "request_approval" || intentType === "decide_approval" || intentType === "bulk_decide_approvals") {
+    return "/app/approvals";
+  }
+  if (intentType === "execute_action" || intentType === "quick_top_action") {
+    return "/app/tasks";
+  }
+  if (intentType === "run_workflow" || intentType === "bulk_retry_failed_workflows") {
+    return "/app/workflows/runs";
+  }
+  if (intentType === "run_planner" || intentType === "accept_proposal") {
+    return "/app/planner";
+  }
+  if (intentType === "monitor_recovery_run") {
+    return "/app/monitor";
+  }
+  if (intentType === "update_case_status" || intentType === "update_case_owner_self" || intentType === "update_case_due") {
+    return "/app/cases";
+  }
+  return "/app/chat/audit";
+}
+
+function buildChatRecoveryMessage(args: { intentType: string; message: string }) {
+  const path = recoveryPathForIntent(args.intentType);
+  return `${args.message}\n次の確認先: ${path}`;
+}
+
 function extractMentions(text: string) {
   const matches = text.match(/@[^\s@]+/g) ?? [];
   return Array.from(new Set(matches.map((m) => m.slice(1))));
+}
+
+function sanitizeMentionToken(raw: string) {
+  return raw.replace(/^@+/, "").replace(/[.,!?、。:：;；]+$/g, "");
+}
+
+function normalizeMentionToken(raw: string) {
+  return sanitizeMentionToken(raw).normalize("NFKC").toLowerCase();
+}
+
+function isAiMentionToken(raw: string) {
+  return normalizeMentionToken(raw) === "ai";
 }
 
 async function resolveMentionedUserIds(args: {
@@ -113,11 +168,42 @@ async function resolveMentionedUserIds(args: {
 }
 
 function hasAiMention(text: string) {
-  return /(^|\s)@ai\b/i.test(text);
+  const mentions = extractMentions(text);
+  return mentions.some((mention) => isAiMentionToken(mention));
 }
 
 function stripAiMention(text: string) {
-  return text.replace(/(^|\s)@ai\b/gi, " ").replace(/\s+/g, " ").trim();
+  return text
+    .split(/\s+/)
+    .filter((token) => {
+      if (!token.startsWith("@")) return true;
+      return !isAiMentionToken(token.slice(1));
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function assertChannelMessageAccess(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  channelId: string;
+}) {
+  const { data, error } = await args.supabase
+    .from("chat_channel_members")
+    .select("id")
+    .eq("org_id", args.orgId)
+    .eq("channel_id", args.channelId)
+    .eq("user_id", args.userId)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`チャンネル権限の確認に失敗しました: ${error.message}`);
+  }
+  if (!data?.id) {
+    throw new Error("このチャンネルに投稿する権限がありません。");
+  }
 }
 
 async function addSystemMessage(args: {
@@ -292,10 +378,10 @@ async function findTaskForChat(args: {
   }
 
   if (!taskHint && rows.length > 1) {
-    const previews = rows
-      .slice(0, 3)
-      .map((row) => `- ${row.title as string} (${row.id as string})`)
-      .join("\n");
+    const previews = formatTitlePreviewList(
+      rows.map((row) => ({ title: row.title as string })),
+      "名称未設定タスク"
+    );
     const examples = candidateTaskExamples(
       rows.map((row) => ({ id: row.id as string, title: row.title as string })),
       "承認依頼して"
@@ -323,16 +409,16 @@ async function findTaskForChat(args: {
       };
     }
     if (rows.length > 1) {
-      const previews = rows
-        .slice(0, 3)
-        .map((row) => `- ${row.title as string} (${row.id as string})`)
-        .join("\n");
+      const previews = formatTitlePreviewList(
+        rows.map((row) => ({ title: row.title as string })),
+        "名称未設定タスク"
+      );
       const examples = candidateTaskExamples(
         rows.map((row) => ({ id: row.id as string, title: row.title as string })),
         "実行して"
       );
       throw new Error(
-        `候補が複数あります。task_id か完全なタスク名を指定してください:\n${previews}\n\n次のように指定できます:\n${examples}`
+        `候補が複数あります。完全なタスク名を指定してください:\n${previews}\n\n次のように指定できます:\n${examples}`
       );
     }
   }
@@ -397,11 +483,11 @@ async function findCaseForChat(args: {
       };
     }
     if (rows.length > 1) {
-      const previews = rows
-        .slice(0, 3)
-        .map((row) => `- ${row.title as string} (${row.id as string})`)
-        .join("\n");
-      throw new Error(`候補案件が複数あります。case_id か完全な案件名を指定してください:\n${previews}`);
+      const previews = formatTitlePreviewList(
+        rows.map((row) => ({ title: row.title as string })),
+        "名称未設定案件"
+      );
+      throw new Error(`候補案件が複数あります。完全な案件名を指定してください:\n${previews}`);
     }
   }
 
@@ -539,10 +625,12 @@ async function findPendingApprovalForChat(args: {
     const titleById = new Map((taskRows ?? []).map((row) => [row.id as string, row.title as string]));
     const previews = approvals
       .slice(0, 3)
-      .map((row) => `- ${titleById.get(row.task_id as string) ?? (row.task_id as string)} (${row.task_id as string})`)
-      .join("\n");
+      .map((row) => ({
+        title: titleById.get(row.task_id as string) ?? "名称未設定タスク"
+      }));
+    const previewText = formatTitlePreviewList(previews, "名称未設定タスク");
     throw new Error(
-      `承認待ちが複数あります。対象タスクを指定してください:\n${previews}\n\n例: 「対象タスク名」を承認して`
+      `承認待ちが複数あります。対象タスク名を指定してください:\n${previewText}\n\n例: 「対象タスク名」を承認して`
     );
   }
   const approval = approvals[0];
@@ -557,7 +645,7 @@ async function findPendingApprovalForChat(args: {
   return {
     approvalId: approval.id as string,
     taskId: approval.task_id as string,
-    taskTitle: ((taskRow?.title as string | undefined) ?? approval.task_id) as string
+    taskTitle: ((taskRow?.title as string | undefined) ?? "名称未設定タスク") as string
   };
 }
 
@@ -608,12 +696,12 @@ async function findProposalForChat(args: {
       };
     }
     if (rows.length > 1) {
-      const previews = rows
-        .slice(0, 3)
-        .map((row) => `- ${row.title as string} (${row.id as string})`)
-        .join("\n");
+      const previews = formatTitlePreviewList(
+        rows.map((row) => ({ title: row.title as string })),
+        "名称未設定提案"
+      );
       throw new Error(
-        `候補提案が複数あります。proposal_id か完全な提案名を指定してください:\n${previews}\n\n例: 「提案名」を受け入れて`
+        `候補提案が複数あります。完全な提案名を指定してください:\n${previews}\n\n例: 「提案名」を受け入れて`
       );
     }
   }
@@ -1019,6 +1107,13 @@ async function runRequestApprovalCommand(args: {
         source: "chat_request_approval",
         quick_ref: quickRef
       }
+    });
+    await syncCaseStageForTask({
+      supabase,
+      orgId,
+      taskId: task.id,
+      actorUserId: userId,
+      source: "chat_request_approval"
     });
   }
 
@@ -1801,11 +1896,359 @@ async function runBulkRetryFailedWorkflowsCommand(args: {
   };
 }
 
+async function runMonitorRecoveryCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  commandId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const classifyWorkflowRetryFailure = (message: string): "retryable" | "manual" => {
+    const m = message.toLowerCase();
+    if (
+      m.includes("timeout") ||
+      m.includes("temporarily") ||
+      m.includes("rate limit") ||
+      m.includes("lock") ||
+      m.includes("deadlock") ||
+      m.includes("network") ||
+      m.includes("connection")
+    ) {
+      return "retryable";
+    }
+    return "manual";
+  };
+  const monitorRecoveryCooldownRaw = Number.parseInt(process.env.MONITOR_RECOVERY_COOLDOWN_SECONDS ?? "90", 10);
+  const monitorRecoveryCooldownSec = Number.isNaN(monitorRecoveryCooldownRaw)
+    ? 90
+    : Math.max(10, Math.min(3600, monitorRecoveryCooldownRaw));
+
+  const { data: runningCommands, error: runningCommandsError } = await args.supabase
+    .from("chat_commands")
+    .select("id, intent_id")
+    .eq("org_id", args.orgId)
+    .eq("execution_status", "running")
+    .limit(50);
+  if (runningCommandsError) {
+    throw new Error(`監視回収ガードの実行中コマンド取得に失敗しました: ${runningCommandsError.message}`);
+  }
+
+  const otherRunningIntentIds = (runningCommands ?? [])
+    .filter((row) => (row.id as string) !== args.commandId)
+    .map((row) => row.intent_id as string)
+    .filter(Boolean);
+
+  if (otherRunningIntentIds.length > 0) {
+    const { data: runningIntents, error: runningIntentsError } = await args.supabase
+      .from("chat_intents")
+      .select("id")
+      .eq("org_id", args.orgId)
+      .eq("intent_type", "monitor_recovery_run")
+      .in("id", otherRunningIntentIds)
+      .limit(1);
+    if (runningIntentsError) {
+      throw new Error(`監視回収ガードのintent取得に失敗しました: ${runningIntentsError.message}`);
+    }
+
+    if ((runningIntents ?? []).length > 0) {
+      return {
+        executionRefType: "monitor_run",
+        executionRefId: null,
+        result: {
+          skipped: true,
+          reason: "already_running"
+        },
+        message: "監視回収はすでに実行中のためスキップしました。数十秒後に再実行してください。",
+        touchedTaskId: null
+      };
+    }
+  }
+
+  const { data: latestDoneLog, error: latestDoneLogError } = await args.supabase
+    .from("ai_execution_logs")
+    .select("finished_at")
+    .eq("org_id", args.orgId)
+    .eq("intent_type", "monitor_recovery_run")
+    .eq("execution_status", "done")
+    .eq("source", "chat")
+    .order("finished_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestDoneLogError) {
+    throw new Error(`監視回収ガードの履歴取得に失敗しました: ${latestDoneLogError.message}`);
+  }
+
+  const latestFinishedAtRaw = (latestDoneLog?.finished_at as string | null) ?? null;
+  if (latestFinishedAtRaw) {
+    const elapsedSec = Math.floor((Date.now() - new Date(latestFinishedAtRaw).getTime()) / 1000);
+    if (Number.isFinite(elapsedSec) && elapsedSec >= 0 && elapsedSec < monitorRecoveryCooldownSec) {
+      const remainingSec = monitorRecoveryCooldownSec - elapsedSec;
+      return {
+        executionRefType: "monitor_run",
+        executionRefId: null,
+        result: {
+          skipped: true,
+          reason: "cooldown_active",
+          cooldown_remaining_sec: remainingSec
+        },
+        message: `監視回収はクールダウン中のためスキップしました。あと約${remainingSec}秒で再実行できます。`,
+        touchedTaskId: null
+      };
+    }
+  }
+
+  const maxItemsRaw =
+    typeof args.intentJson.maxItems === "number"
+      ? args.intentJson.maxItems
+      : Number.parseInt(String(args.intentJson.maxItems ?? "3"), 10);
+  const maxItems = Number.isNaN(maxItemsRaw) ? 3 : Math.max(1, Math.min(10, maxItemsRaw));
+  const workflowRetryPassesRaw = Number.parseInt(process.env.MONITOR_RECOVERY_WORKFLOW_RETRY_PASSES ?? "1", 10);
+  const workflowRetryPasses = Number.isNaN(workflowRetryPassesRaw)
+    ? 1
+    : Math.max(0, Math.min(3, workflowRetryPassesRaw));
+  const staleHours = Number(process.env.CASE_STALE_HOURS ?? "48");
+  const staleCutoffIso = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
+
+  const reminderResult = await sendApprovalReminders({
+    supabase: args.supabase,
+    orgId: args.orgId,
+    actorUserId: args.userId,
+    source: "manual"
+  });
+
+  const { data: runs, error: runsError } = await args.supabase
+    .from("workflow_runs")
+    .select("id")
+    .eq("org_id", args.orgId)
+    .eq("status", "failed")
+    .order("finished_at", { ascending: false })
+    .limit(maxItems);
+  if (runsError) {
+    throw new Error(`失敗workflow run取得に失敗しました: ${runsError.message}`);
+  }
+  const workflowTargets = (runs ?? []).map((row) => row.id as string).filter(Boolean);
+  const remainingWorkflowRunIds = [...workflowTargets];
+  const retriedWorkflowRunIds = new Set<string>();
+  const failedWorkflowRunIds: string[] = [];
+  const failedWorkflowDetails: Array<{
+    workflow_run_id: string;
+    reason_class: "retryable" | "manual";
+    reason_summary: string;
+  }> = [];
+  let workflowRetrySuccess = 0;
+  let workflowRetryFailed = 0;
+  let workflowRetryRecoveredOnExtraPass = 0;
+  for (let pass = 0; pass <= workflowRetryPasses; pass += 1) {
+    if (remainingWorkflowRunIds.length === 0) break;
+    const passTargets = [...remainingWorkflowRunIds];
+    remainingWorkflowRunIds.length = 0;
+    for (const workflowRunId of passTargets) {
+      try {
+        await retryFailedWorkflowRun({
+          supabase: args.supabase,
+          orgId: args.orgId,
+          workflowRunId,
+          actorId: args.userId
+        });
+        retriedWorkflowRunIds.add(workflowRunId);
+        workflowRetrySuccess += 1;
+        if (pass > 0) {
+          workflowRetryRecoveredOnExtraPass += 1;
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "workflow retry failed";
+        if (pass < workflowRetryPasses) {
+          remainingWorkflowRunIds.push(workflowRunId);
+        } else {
+          workflowRetryFailed += 1;
+          failedWorkflowRunIds.push(workflowRunId);
+          failedWorkflowDetails.push({
+            workflow_run_id: workflowRunId,
+            reason_class: classifyWorkflowRetryFailure(message),
+            reason_summary: message.slice(0, 180)
+          });
+        }
+      }
+    }
+  }
+
+  const { data: staleCases, error: staleCasesError } = await args.supabase
+    .from("business_cases")
+    .select("id")
+    .eq("org_id", args.orgId)
+    .eq("status", "open")
+    .is("owner_user_id", null)
+    .lt("updated_at", staleCutoffIso)
+    .order("updated_at", { ascending: true })
+    .limit(maxItems);
+  if (staleCasesError) {
+    throw new Error(`滞留案件取得に失敗しました: ${staleCasesError.message}`);
+  }
+  const caseTargets = (staleCases ?? []).map((row) => row.id as string).filter(Boolean);
+  let caseAssigned = 0;
+  for (const caseId of caseTargets) {
+    const { error: updateError } = await args.supabase
+      .from("business_cases")
+      .update({ owner_user_id: args.userId, updated_at: new Date().toISOString() })
+      .eq("org_id", args.orgId)
+      .eq("id", caseId)
+      .is("owner_user_id", null);
+    if (updateError) continue;
+    caseAssigned += 1;
+    await appendCaseEventSafe({
+      supabase: args.supabase,
+      orgId: args.orgId,
+      caseId,
+      actorUserId: args.userId,
+      eventType: "CASE_OWNER_UPDATED",
+      payload: {
+        changed_fields: {
+          owner_user_id: {
+            from: null,
+            to: args.userId
+          }
+        },
+        source: "chat_monitor_recovery"
+      }
+    });
+  }
+
+  const enableExceptionAutoCreate = process.env.MONITOR_RECOVERY_EXCEPTION_AUTO_CREATE !== "0";
+  const exceptionSlaHoursRaw = Number.parseInt(process.env.MONITOR_RECOVERY_EXCEPTION_SLA_HOURS ?? "8", 10);
+  const exceptionSlaHours = Number.isNaN(exceptionSlaHoursRaw)
+    ? 8
+    : Math.max(1, Math.min(168, exceptionSlaHoursRaw));
+  const manualFailedWorkflowDetails = failedWorkflowDetails.filter((row) => row.reason_class === "manual");
+  let autoExceptionCreated = 0;
+  let autoExceptionUpdated = 0;
+  if (enableExceptionAutoCreate && manualFailedWorkflowDetails.length > 0) {
+    const manualRunIds = Array.from(new Set(manualFailedWorkflowDetails.map((row) => row.workflow_run_id)));
+    const [{ data: existingCases }, { data: workflowRows }] = await Promise.all([
+      args.supabase
+        .from("exception_cases")
+        .select("id, ref_id")
+        .eq("org_id", args.orgId)
+        .eq("kind", "failed_workflow")
+        .in("ref_id", manualRunIds),
+      args.supabase
+        .from("workflow_runs")
+        .select("id, task_id")
+        .eq("org_id", args.orgId)
+        .in("id", manualRunIds)
+    ]);
+
+    const existingByRefId = new Map<string, string>();
+    for (const row of existingCases ?? []) {
+      const refId = row.ref_id as string | null;
+      const caseId = row.id as string | null;
+      if (!refId || !caseId) continue;
+      existingByRefId.set(refId, caseId);
+    }
+
+    const taskIdByRunId = new Map<string, string | null>();
+    for (const row of workflowRows ?? []) {
+      const runId = row.id as string | null;
+      if (!runId) continue;
+      taskIdByRunId.set(runId, (row.task_id as string | null | undefined) ?? null);
+    }
+
+    const dueAtIso = new Date(Date.now() + exceptionSlaHours * 60 * 60 * 1000).toISOString();
+    for (const detail of manualFailedWorkflowDetails) {
+      const workflowRunId = detail.workflow_run_id;
+      const note = `[auto:chat_monitor_recovery] ${detail.reason_summary}`.slice(0, 500);
+      const taskId = taskIdByRunId.get(workflowRunId) ?? null;
+
+      const { data: upserted, error: upsertError } = await args.supabase
+        .from("exception_cases")
+        .upsert(
+          {
+            org_id: args.orgId,
+            kind: "failed_workflow",
+            ref_id: workflowRunId,
+            task_id: taskId,
+            status: "open",
+            note,
+            due_at: dueAtIso,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: "org_id,kind,ref_id" }
+        )
+        .select("id")
+        .maybeSingle();
+
+      if (upsertError) {
+        continue;
+      }
+
+      const existed = existingByRefId.has(workflowRunId);
+      if (existed) {
+        autoExceptionUpdated += 1;
+      } else {
+        autoExceptionCreated += 1;
+      }
+
+      const exceptionCaseId = (upserted?.id as string | undefined) ?? existingByRefId.get(workflowRunId);
+      if (!exceptionCaseId) continue;
+      await appendExceptionCaseEvent({
+        supabase: args.supabase,
+        orgId: args.orgId,
+        exceptionCaseId,
+        actorUserId: args.userId,
+        eventType: existed ? "CASE_UPDATED" : "CASE_CREATED",
+        payload: {
+          source: "chat_monitor_recovery",
+          reason_class: "manual",
+          reason_summary: detail.reason_summary,
+          workflow_run_id: workflowRunId
+        }
+      });
+    }
+  }
+
+  return {
+    executionRefType: "monitor_run",
+    executionRefId: null,
+    result: {
+      reminder: reminderResult,
+      workflow_retry: {
+        target_count: workflowTargets.length,
+        success: workflowRetrySuccess,
+        failed: workflowRetryFailed,
+        retry_passes: workflowRetryPasses,
+        recovered_on_extra_pass: workflowRetryRecoveredOnExtraPass,
+        retried_workflow_run_ids: Array.from(retriedWorkflowRunIds),
+        failed_workflow_run_ids: failedWorkflowRunIds,
+        failed_details: failedWorkflowDetails
+      },
+      case_assignment: {
+        target_count: caseTargets.length,
+        assigned: caseAssigned
+      },
+      exception_cases: {
+        auto_create_enabled: enableExceptionAutoCreate,
+        created: autoExceptionCreated,
+        updated: autoExceptionUpdated
+      }
+    },
+    message:
+      `監視回収を実行しました。承認催促(sent=${reminderResult.sentCount}/${reminderResult.targetCount}) ` +
+      `workflow再試行(success=${workflowRetrySuccess}, failed=${workflowRetryFailed}, extra_recovered=${workflowRetryRecoveredOnExtraPass}) ` +
+      `滞留案件割当(assigned=${caseAssigned}/${caseTargets.length}) ` +
+      `例外ケース(created=${autoExceptionCreated}, updated=${autoExceptionUpdated}) ` +
+      `(/app/monitor)`,
+    touchedTaskId: null
+  };
+}
+
 async function executeIntentCommand(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
   userId: string;
   sessionId: string;
+  commandId: string;
   intentType: string;
   intentJson: Record<string, unknown>;
 }) {
@@ -1836,6 +2279,9 @@ async function executeIntentCommand(args: {
   if (args.intentType === "run_planner") {
     return runPlannerFromChatCommand(args);
   }
+  if (args.intentType === "monitor_recovery_run") {
+    return runMonitorRecoveryCommand(args);
+  }
   if (args.intentType === "run_workflow") {
     return runWorkflowFromChatCommand(args);
   }
@@ -1851,7 +2297,17 @@ async function executeIntentCommand(args: {
   if (args.intentType === "bulk_retry_failed_workflows") {
     return runBulkRetryFailedWorkflowsCommand(args);
   }
-  throw new Error("この実行タイプは未対応です。");
+  return {
+    executionRefType: null,
+    executionRefId: null,
+    result: {
+      skipped: true,
+      skip_reason: "unsupported_intent_type",
+      intent_type: args.intentType
+    },
+    message: `この操作はまだ実行に対応していません（intent=${args.intentType}）。別の指示で試してください。`,
+    touchedTaskId: null
+  };
 }
 
 async function postMessage(scope: ChatScope, formData: FormData, channelId?: string | null) {
@@ -1862,9 +2318,28 @@ async function postMessage(scope: ChatScope, formData: FormData, channelId?: str
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
+
+  if (scope === "channel") {
+    if (!channelId) {
+      redirect(withError(scope, "channel_id が必要です。", channelId));
+    }
+    try {
+      await assertChannelMessageAccess({ supabase, orgId, userId, channelId });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "チャンネル権限の確認に失敗しました。";
+      redirect(withError(scope, message, channelId));
+    }
+  }
+
   const mentions = extractMentions(body);
   const aiMentioned = hasAiMention(body);
-  const mentionUserIds = await resolveMentionedUserIds({ supabase, orgId, mentions });
+  const humanMentionTokens = mentions.filter((mention) => !isAiMentionToken(mention));
+  const mentionUserIds = await resolveMentionedUserIds({
+    supabase,
+    orgId,
+    mentions: humanMentionTokens
+  });
 
   const session = await getOrCreateChatSession({
     supabase,
@@ -1885,6 +2360,7 @@ async function postMessage(scope: ChatScope, formData: FormData, channelId?: str
       metadata_json: {
         scope,
         mentions,
+        mention_human_tokens: humanMentionTokens,
         mention_user_ids: mentionUserIds,
         ai_mentioned: aiMentioned
       }
@@ -2592,11 +3068,12 @@ export async function confirmChatCommand(formData: FormData) {
 
   const latestOpenIncident = await getLatestOpenIncident({ supabase, orgId });
   if (latestOpenIncident && isBlockedByIncident(intent.intent_type as string)) {
+    const blockedAt = new Date().toISOString();
     await supabase
       .from("chat_confirmations")
       .update({
         status: "declined",
-        decided_at: new Date().toISOString(),
+        decided_at: blockedAt,
         decided_by: userId
       })
       .eq("id", confirmationId)
@@ -2615,7 +3092,29 @@ export async function confirmChatCommand(formData: FormData) {
       }
     });
 
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionId: confirmation.session_id as string,
+      sessionScope: scope,
+      channelId,
+      intentType: intent.intent_type as string,
+      executionStatus: "skipped",
+      source: "chat",
+      summaryText: `インシデントモードにより実行停止 (${latestOpenIncident.severity})`,
+      metadata: {
+        confirmation_id: confirmationId,
+        blocked_by_incident: true,
+        incident_id: latestOpenIncident.id,
+        incident_severity: latestOpenIncident.severity
+      },
+      createdAt: blockedAt,
+      finishedAt: blockedAt
+    });
+
     revalidatePath(pathForScope(scope, channelId));
+    revalidatePath("/app/executions");
     redirect(withError(scope, "インシデントモード中のため、この実行はブロックされました。", channelId));
   }
 
@@ -2724,6 +3223,7 @@ export async function confirmChatCommand(formData: FormData) {
       orgId,
       userId,
       sessionId: confirmation.session_id as string,
+      commandId: command.id as string,
       intentType: intent.intent_type as string,
       intentJson
     });
@@ -2791,30 +3291,44 @@ export async function confirmChatCommand(formData: FormData) {
     revalidatePath("/app/executions");
     redirect(withOk(scope, "実行が完了しました。", channelId));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "コマンド実行に失敗しました。";
+    if (isRedirectError(error)) {
+      throw error;
+    }
+
+    const rawMessage = error instanceof Error ? error.message : "コマンド実行に失敗しました。";
+    const message = toUserActionableError(rawMessage, "chat_execute");
+    const recoveryPath = recoveryPathForIntent(intent.intent_type as string);
 
     await supabase
       .from("chat_commands")
       .update({
         execution_status: "failed",
         result_json: {
-          error: message
+          error: message,
+          raw_error: rawMessage,
+          recovery_path: recoveryPath
         },
         finished_at: new Date().toISOString()
       })
       .eq("id", command.id as string)
       .eq("org_id", orgId);
 
+    const actionableMessage = buildChatRecoveryMessage({
+      intentType: intent.intent_type as string,
+      message
+    });
+
     await addSystemMessage({
       supabase,
       orgId,
       sessionId: confirmation.session_id as string,
-      bodyText: `実行に失敗しました: ${message}`,
+      bodyText: `実行に失敗しました: ${actionableMessage}`,
       metadata: {
         confirmation_id: confirmationId,
         intent_id: intent.id,
         command_id: command.id,
-        error: message
+        error: message,
+        recovery_path: recoveryPath
       }
     });
 
@@ -2829,7 +3343,12 @@ export async function confirmChatCommand(formData: FormData) {
       executionStatus: "failed",
       source: "chat",
       summaryText: `実行失敗: ${message}`,
-      metadata: { command_id: command.id, confirmation_id: confirmationId, error: message },
+      metadata: {
+        command_id: command.id,
+        confirmation_id: confirmationId,
+        error: message,
+        recovery_path: recoveryPath
+      },
       createdAt: nowIso,
       finishedAt: new Date().toISOString()
     });

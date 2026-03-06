@@ -17,6 +17,22 @@ function isMissingTableError(message: string, tableName: string) {
   );
 }
 
+function providerLabel(provider: string | null) {
+  if (provider === "google") return "Google";
+  if (provider === "slack") return "Slack";
+  return provider ?? "未設定";
+}
+
+function actionTypeLabel(actionType: string | null) {
+  if (actionType === "send_email") return "メール送信";
+  return actionType ?? "未設定";
+}
+
+function periodLabel(period: string | null) {
+  if (period === "daily") return "日次";
+  return period ?? "未設定";
+}
+
 export default async function BudgetsPage({ searchParams }: BudgetsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -91,7 +107,7 @@ export default async function BudgetsPage({ searchParams }: BudgetsPageProps) {
           <ul className="mt-3 space-y-2">
             {limits.map((limit) => (
               <li key={limit.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
-                {limit.provider}/{limit.action_type} ({limit.period}) 上限: {limit.limit_count}
+                {providerLabel(limit.provider)}/{actionTypeLabel(limit.action_type)}（{periodLabel(limit.period)}）上限: {limit.limit_count}
               </li>
             ))}
           </ul>
@@ -106,7 +122,7 @@ export default async function BudgetsPage({ searchParams }: BudgetsPageProps) {
           <ul className="mt-3 space-y-2">
             {usages.map((usage) => (
               <li key={usage.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
-                {usage.usage_date}: {usage.provider}/{usage.action_type} 使用数 {usage.used_count}
+                {usage.usage_date}: {providerLabel(usage.provider)}/{actionTypeLabel(usage.action_type)} 使用数 {usage.used_count}
               </li>
             ))}
           </ul>

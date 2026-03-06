@@ -1,8 +1,10 @@
 "use server";
 
+import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { APP_LOCALE_COOKIE } from "@/lib/i18n/locale";
+import { getAppBaseUrl } from "@/lib/app/baseUrl";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -32,6 +34,7 @@ export async function updateLocale(formData: FormData) {
 
 export async function updateProfile(formData: FormData) {
   const displayName = String(formData.get("display_name") ?? "").trim();
+  const jobTitle = String(formData.get("job_title") ?? "").trim();
   const avatarFile = formData.get("avatar_file");
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -72,6 +75,7 @@ export async function updateProfile(formData: FormData) {
       org_id: orgId,
       user_id: userId,
       display_name: displayName.length > 0 ? displayName : null,
+      job_title: jobTitle.length > 0 ? jobTitle : null,
       mention_handle: mentionHandle,
       avatar_url: avatarUrl,
       updated_at: new Date().toISOString()
@@ -83,4 +87,53 @@ export async function updateProfile(formData: FormData) {
     redirect(`/app/settings?error=${encodeURIComponent(`プロフィール更新に失敗しました: ${error.message}`)}`);
   }
   redirect("/app/settings?ok=profile_updated");
+}
+
+export async function createWorkspaceInviteLink(formData: FormData) {
+  let returnTo = "/app/settings";
+  const rawReturnTo = String(formData.get("return_to") ?? "").trim();
+  if (rawReturnTo.startsWith("/app/")) {
+    returnTo = rawReturnTo;
+  }
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const token = crypto.randomBytes(18).toString("base64url");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase.from("org_invite_links").insert({
+    org_id: orgId,
+    created_by_user_id: userId,
+    token,
+    expires_at: expiresAt,
+    max_uses: 20
+  });
+
+  if (error) {
+    redirect(`${returnTo}?error=${encodeURIComponent(`招待リンクの作成に失敗しました: ${error.message}`)}`);
+  }
+
+  const inviteUrl = `${getAppBaseUrl()}/invite/${encodeURIComponent(token)}`;
+  redirect(`${returnTo}?ok=invite_created&invite_url=${encodeURIComponent(inviteUrl)}`);
+}
+
+export async function revokeWorkspaceInviteLink(formData: FormData) {
+  const inviteId = String(formData.get("invite_id") ?? "").trim();
+  const rawReturnTo = String(formData.get("return_to") ?? "/app/settings").trim();
+  const returnTo = rawReturnTo.startsWith("/app/") ? rawReturnTo : "/app/settings";
+  if (!inviteId) {
+    redirect(`${returnTo}?error=${encodeURIComponent("招待リンクIDが不正です。")}`);
+  }
+  const { orgId } = await requireOrgContext();
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("org_invite_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", inviteId)
+    .eq("org_id", orgId)
+    .is("revoked_at", null);
+
+  if (error) {
+    redirect(`${returnTo}?error=${encodeURIComponent(`招待リンクの無効化に失敗しました: ${error.message}`)}`);
+  }
+  redirect(`${returnTo}?ok=invite_revoked`);
 }

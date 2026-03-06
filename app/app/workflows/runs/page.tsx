@@ -6,7 +6,15 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type WorkflowRunsPageProps = {
-  searchParams?: Promise<{ ok?: string; error?: string; status?: string }>;
+  searchParams?: Promise<{
+    ok?: string;
+    error?: string;
+    status?: string;
+    ref_job?: string;
+    ref_ts?: string;
+    ref_from?: string;
+    ref_intent?: string;
+  }>;
 };
 
 function isMissingTableError(message: string, tableName: string) {
@@ -16,11 +24,22 @@ function isMissingTableError(message: string, tableName: string) {
   );
 }
 
+function runStatusLabel(status: string) {
+  if (status === "running") return "実行中";
+  if (status === "failed") return "失敗";
+  if (status === "completed") return "完了";
+  return status;
+}
+
 export default async function WorkflowRunsPage({ searchParams }: WorkflowRunsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
   const statusFilter = sp.status === "running" || sp.status === "failed" || sp.status === "completed" ? sp.status : "all";
+  const refJob = typeof sp.ref_job === "string" ? sp.ref_job : "";
+  const refTs = typeof sp.ref_ts === "string" ? sp.ref_ts : "";
+  const refFrom = typeof sp.ref_from === "string" ? sp.ref_from : "";
+  const refIntent = typeof sp.ref_intent === "string" ? sp.ref_intent : "";
   const maxRetriesRaw = Number.parseInt(process.env.WORKFLOW_STEP_MAX_RETRIES ?? "3", 10);
   const maxRetries = Number.isNaN(maxRetriesRaw) ? 3 : Math.max(0, Math.min(20, maxRetriesRaw));
 
@@ -43,6 +62,17 @@ export default async function WorkflowRunsPage({ searchParams }: WorkflowRunsPag
   } else {
     runs = (runsRes.data ?? []) as Array<Record<string, unknown>>;
   }
+  const highlightedRunId = (() => {
+    if (refTs) {
+      const exact = runs.find((row) => String(row.created_at ?? "") === refTs);
+      if (exact?.id) return String(exact.id);
+    }
+    if (refJob === "workflow_tick") {
+      const candidate = runs.find((row) => String(row.status ?? "") === "failed");
+      if (candidate?.id) return String(candidate.id);
+    }
+    return null;
+  })();
 
   let failedCount = 0;
   let runningCount = 0;
@@ -80,27 +110,40 @@ export default async function WorkflowRunsPage({ searchParams }: WorkflowRunsPag
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Workflow Runs</h1>
+        <h1 className="text-xl font-semibold">ワークフロー実行履歴</h1>
         <Link href="/app/workflows" className="text-sm underline">
           テンプレートへ戻る
         </Link>
       </div>
 
       <StatusNotice ok={sp.ok} error={sp.error} className="mt-4" />
+      {refJob ? (
+        <div className="mt-3 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+          参照元: {refJob}
+          {refTs ? ` / ${new Date(refTs).toLocaleString("ja-JP")}` : ""}
+        </div>
+      ) : null}
+      {refFrom || refIntent ? (
+        <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+          参照コンテキスト: {refFrom || "unknown"}
+          {refIntent ? ` / ${refIntent}` : ""}
+          {refTs ? ` / ${new Date(refTs).toLocaleString("ja-JP")}` : ""}
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <Link
           href="/app/workflows/runs?status=running"
           className={`rounded-md border p-3 text-sm ${statusFilter === "running" ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}
         >
-          <p className="text-slate-600">running</p>
+          <p className="text-slate-600">実行中</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">{runningCount}</p>
         </Link>
         <Link
           href="/app/workflows/runs?status=failed"
           className={`rounded-md border p-3 text-sm ${statusFilter === "failed" ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
         >
-          <p className="text-slate-600">failed</p>
+          <p className="text-slate-600">失敗</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">{failedCount}</p>
         </Link>
         <Link
@@ -109,11 +152,11 @@ export default async function WorkflowRunsPage({ searchParams }: WorkflowRunsPag
             statusFilter === "completed" ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"
           }`}
         >
-          <p className="text-slate-600">completed</p>
+          <p className="text-slate-600">完了</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">{completedCount}</p>
         </Link>
         <Link href="/app/workflows/runs?status=failed" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-          <p className="text-amber-700">retry exhausted runs</p>
+          <p className="text-amber-700">再試行上限到達</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{retryExhaustedRunCount}</p>
         </Link>
       </div>
@@ -126,22 +169,26 @@ export default async function WorkflowRunsPage({ searchParams }: WorkflowRunsPag
 
       {runs.length > 0 ? (
         <ul className="mt-4 space-y-3">
-          {runs.map((run) => (
-            <li key={String(run.id)} className="rounded-md border border-slate-200 p-3 text-sm">
+          {runs.map((run) => {
+            const runId = String(run.id);
+            const isRef = highlightedRunId !== null && runId === highlightedRunId;
+            return (
+            <li key={runId} className={`rounded-md border p-3 text-sm ${isRef ? "border-indigo-300 bg-indigo-50/40" : "border-slate-200"}`}>
               <p className="font-medium text-slate-900">
                 <Link href={`/app/workflows/runs/${String(run.id)}`} className="underline">
-                  run {String(run.id)}
+                  実行詳細を開く
                 </Link>
               </p>
               <p className="text-slate-600">
-                task_id: {String(run.task_id)} | status: {String(run.status)} | current_step: {String(run.current_step_key ?? "-")}
+                状態: {runStatusLabel(String(run.status))} | 現在ステップ: {String(run.current_step_key ?? "-")}
               </p>
-              <p className="text-slate-500">started_at: {new Date(String(run.started_at)).toLocaleString()}</p>
+              <p className="text-slate-500">開始日時: {new Date(String(run.started_at)).toLocaleString("ja-JP")}</p>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : (
-        <p className="mt-4 text-sm text-slate-600">workflow run はまだありません。</p>
+        <p className="mt-4 text-sm text-slate-600">ワークフロー実行履歴はまだありません。</p>
       )}
     </section>
   );

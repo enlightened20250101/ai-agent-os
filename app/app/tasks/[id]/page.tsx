@@ -14,6 +14,7 @@ import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
 import { evaluateGovernance, type GovernanceEvaluation } from "@/lib/governance/evaluate";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
@@ -181,6 +182,13 @@ function sourceBadgeClass(source: TaskOrigin["source"]) {
   return "border-emerald-300 bg-emerald-50 text-emerald-700";
 }
 
+function sourceLabel(source: TaskOrigin["source"]) {
+  if (source === "slack") return "Slack起票";
+  if (source === "proposal") return "提案起票";
+  if (source === "system") return "システム起票";
+  return "手動起票";
+}
+
 export default async function TaskDetailsPage({ params, searchParams }: TaskDetailsPageProps) {
   const { id } = await params;
   const sp = searchParams ? await searchParams : {};
@@ -331,10 +339,23 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
   const actionHistory = (actions ?? []) as ActionRow[];
   const runningAction = actionHistory.find((action) => action.status === "running") ?? null;
+  const queuedAction = actionHistory.find((action) => action.status === "queued") ?? null;
   const existingSuccessForDraft =
     currentIdempotencyKey
       ? actionHistory.find(
           (action) => action.idempotency_key === currentIdempotencyKey && action.status === "success"
+        ) ?? null
+      : null;
+  const existingQueuedForDraft =
+    currentIdempotencyKey
+      ? actionHistory.find(
+          (action) => action.idempotency_key === currentIdempotencyKey && action.status === "queued"
+        ) ?? null
+      : null;
+  const existingRunningForDraft =
+    currentIdempotencyKey
+      ? actionHistory.find(
+          (action) => action.idempotency_key === currentIdempotencyKey && action.status === "running"
         ) ?? null
       : null;
 
@@ -368,6 +389,19 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
   const executeFinalReasons = [...executeBaseReasons];
   if (governanceEvaluation) {
+    if (
+      (governanceEvaluation.guardrails.distinctApproverCount ?? 0) <
+      governanceEvaluation.guardrails.requiredApprovals
+    ) {
+      executeFinalReasons.push(
+        `承認者数が不足しています（必要=${governanceEvaluation.guardrails.requiredApprovals}, 現在=${governanceEvaluation.guardrails.distinctApproverCount ?? 0}）。`
+      );
+    }
+    if (governanceEvaluation.guardrails.hourlyRemaining <= 0) {
+      executeFinalReasons.push(
+        `1時間あたり実行上限に達しています（limit=${governanceEvaluation.guardrails.hourlyLimit}）。`
+      );
+    }
     if (governanceEvaluation.decision === "block") {
       executeFinalReasons.push(
         `ガバナンス判定が block です。${governanceEvaluation.reasons.join(" ")}`
@@ -378,9 +412,52 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
   } else if ((task.status as string) !== "approved") {
     executeFinalReasons.push("タスクステータスが approved ではありません。");
   }
+  if (existingSuccessForDraft) {
+    executeFinalReasons.push("現在のドラフトアクションはすでに実行済みです。");
+  } else if (existingRunningForDraft || runningAction) {
+    executeFinalReasons.push("このタスクはすでに実行中です。");
+  } else if (existingQueuedForDraft || queuedAction) {
+    executeFinalReasons.push("このタスクはすでにキュー済みです。");
+  }
 
   const canExecuteEmailFinal = executeFinalReasons.length === 0;
   const latestAction = actionHistory[0] ?? null;
+  const approvalRows = (approvals ?? []) as Array<{
+    id: string;
+    status: string;
+    reason: string | null;
+    requested_by: string | null;
+    approver_user_id: string | null;
+    created_at: string;
+    decided_at: string | null;
+  }>;
+  const approvalUserIds = Array.from(
+    new Set(
+      approvalRows
+        .flatMap((row) => [row.requested_by, row.approver_user_id])
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  const profileRes =
+    approvalUserIds.length > 0
+      ? await supabase.from("user_profiles").select("user_id, display_name").eq("org_id", orgId).in("user_id", approvalUserIds)
+      : { data: [], error: null };
+  if (profileRes.error && !isMissingTableError(profileRes.error.message, "user_profiles")) {
+    throw new Error(`Failed to load user profiles: ${profileRes.error.message}`);
+  }
+  const userLabelById = new Map(
+    ((profileRes.data ?? []) as Array<{ user_id: string; display_name: string | null }>)
+      .map((row) => [row.user_id, (row.display_name ?? "").trim()] as const)
+      .filter((row): row is [string, string] => Boolean(row[0]) && Boolean(row[1]))
+  );
+  const userLabel = (userId: string | null | undefined, fallback: string) => {
+    if (!userId) return fallback;
+    return userLabelById.get(userId) ?? "表示名未設定メンバー";
+  };
+  const requiredApprovals = governanceEvaluation?.guardrails.requiredApprovals ?? 0;
+  const currentApprovals = governanceEvaluation?.guardrails.distinctApproverCount ?? 0;
+  const remainingApprovals = Math.max(0, requiredApprovals - currentApprovals);
+  const needsAdditionalApprovals = requiredApprovals > 0 && remainingApprovals > 0;
 
   return (
     <div className="space-y-6">
@@ -391,11 +468,11 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
               <p>ステータス: {task.status as string}</p>
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${sourceBadgeClass(taskOrigin.source)}`}>
-                source: {taskOrigin.source}
+                起票元: {sourceLabel(taskOrigin.source)}
               </span>
               {taskOrigin.proposalId ? (
                 <Link href={`/app/proposals`} className="text-[11px] underline">
-                  proposal_id: {taskOrigin.proposalId.slice(0, 8)}...
+                  提案由来タスク
                 </Link>
               ) : null}
             </div>
@@ -472,6 +549,25 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
             </p>
           )}
         </div>
+        {governanceEvaluation ? (
+          <div
+            className={`mt-3 rounded-md border px-3 py-2 text-sm ${
+              needsAdditionalApprovals
+                ? "border-rose-300 bg-rose-50 text-rose-900"
+                : "border-emerald-300 bg-emerald-50 text-emerald-900"
+            }`}
+          >
+            <p>
+              承認進捗: <span className="font-semibold">{currentApprovals}</span> /{" "}
+              <span className="font-semibold">{requiredApprovals}</span>
+              {needsAdditionalApprovals ? (
+                <span className="ml-2">（あと {remainingApprovals} 名の承認が必要）</span>
+              ) : (
+                <span className="ml-2">（承認要件を満たしています）</span>
+              )}
+            </p>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -513,10 +609,10 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
             {workflowRuns.map((run) => (
               <li key={run.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
                 <Link href={`/app/workflows/runs/${run.id}`} className="font-medium underline">
-                  run {run.id}
+                  実行詳細
                 </Link>{" "}
                 | status: {run.status} | current_step: {run.current_step_key ?? "-"} | template:{" "}
-                {templateNameById.get(run.template_id) ?? run.template_id}
+                {templateNameById.get(run.template_id) ?? "テンプレート"}
               </li>
             ))}
           </ul>
@@ -609,6 +705,14 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
               {governanceEvaluation.settings.autoExecuteGoogleSendEmail ? "on" : "off"}
             </p>
             <p>当日残予算: {governanceEvaluation.remainingBudget}</p>
+            <p>
+              承認ガード: required={governanceEvaluation.guardrails.requiredApprovals} / approved=
+              {governanceEvaluation.guardrails.distinctApproverCount ?? 0}
+            </p>
+            <p>
+              1時間実行ガード: {governanceEvaluation.guardrails.hourlyUsed}/
+              {governanceEvaluation.guardrails.hourlyLimit} (remaining={governanceEvaluation.guardrails.hourlyRemaining})
+            </p>
             {governanceEvaluation.reasons.length > 0 ? (
               <ul className="list-disc pl-5">
                 {governanceEvaluation.reasons.map((reason) => (
@@ -626,6 +730,17 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold">アクションランナー</h2>
+        {governanceEvaluation ? (
+          <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            <p>
+              実行ガード: 承認 {currentApprovals}/{requiredApprovals} / 1時間実行 {governanceEvaluation.guardrails.hourlyUsed}/
+              {governanceEvaluation.guardrails.hourlyLimit}
+            </p>
+            {needsAdditionalApprovals ? (
+              <p className="mt-1 text-rose-700">追加承認が必要です（あと {remainingApprovals} 名）。</p>
+            ) : null}
+          </div>
+        ) : null}
         {existingSuccessForDraft ? (
           <p className="mt-2 text-sm text-emerald-700">現在のドラフトアクションはすでに実行済みです。</p>
         ) : runningAction ? (
@@ -655,11 +770,13 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold">承認履歴</h2>
-        {approvals && approvals.length > 0 ? (
+        {approvalRows.length > 0 ? (
           <ul className="mt-4 space-y-2">
-            {approvals.map((approval) => (
+            {approvalRows.map((approval) => (
               <li key={approval.id} className="rounded-md border border-slate-200 p-3 text-sm text-slate-700">
                 ステータス: {approval.status as string}
+                {" | "}依頼者: {userLabel(approval.requested_by, "（なし）")}
+                {" | "}承認者: {userLabel(approval.approver_user_id, "（なし）")}
                 {approval.reason ? ` | 理由: ${approval.reason as string}` : ""}
               </li>
             ))}
@@ -673,17 +790,31 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
         <h2 className="text-lg font-semibold">イベントタイムライン</h2>
         {events && events.length > 0 ? (
           <ul className="mt-4 space-y-3">
-            {events.map((event) => (
-              <li key={event.id} className="rounded-md border border-slate-200 p-3 text-sm">
-                <p className="font-medium text-slate-900">{event.event_type as string}</p>
-                <p className="mt-1 text-slate-600">
-                  {new Date(event.created_at as string).toLocaleString()}
-                </p>
-                <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-700">
-                  {JSON.stringify(event.payload_json, null, 2)}
-                </pre>
-              </li>
-            ))}
+            {events.map((event) => {
+              const payload =
+                typeof event.payload_json === "object" && event.payload_json !== null
+                  ? (event.payload_json as Record<string, unknown>)
+                  : null;
+              const stageRaw = payload?.approval_stage;
+              const approvalStage =
+                stageRaw === "partial" || stageRaw === "final" || stageRaw === "rejected"
+                  ? stageRaw
+                  : null;
+              return (
+                <li key={event.id} className="rounded-md border border-slate-200 p-3 text-sm">
+                  <p className="font-medium text-slate-900">{event.event_type as string}</p>
+                  {approvalStage ? (
+                    <p className="mt-1 text-xs text-indigo-700">approval_stage: {approvalStage}</p>
+                  ) : null}
+                  <p className="mt-1 text-slate-600">
+                    {new Date(event.created_at as string).toLocaleString()}
+                  </p>
+                  <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-700">
+                    {toRedactedJson(event.payload_json)}
+                  </pre>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="mt-3 text-sm text-slate-600">イベントはまだ記録されていません。</p>

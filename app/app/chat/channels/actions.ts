@@ -73,7 +73,7 @@ export async function createDirectMessageChannel(formData: FormData) {
 
   if (dmKind === "internal") {
     if (!targetUserId || targetUserId === userId) {
-      redirect(toError("有効な社内ユーザーIDを指定してください。"));
+      redirect(toError("有効なユーザーを指定してください。"));
     }
     const { data: targetMembership } = await supabase
       .from("memberships")
@@ -85,12 +85,47 @@ export async function createDirectMessageChannel(formData: FormData) {
       redirect(toError("対象ユーザーは同じワークスペースに所属していません。"));
     }
 
+    const { data: myDmMemberships, error: myDmMembershipsError } = await supabase
+      .from("chat_channel_members")
+      .select("channel_id, chat_channels!inner(id, channel_type)")
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .eq("chat_channels.channel_type", "dm_internal");
+    if (myDmMembershipsError) {
+      redirect(toError(`既存DMの確認に失敗しました: ${myDmMembershipsError.message}`));
+    }
+
+    const candidateChannelIds = ((myDmMemberships ?? []) as Array<{ channel_id: string }>).map((row) => row.channel_id);
+    if (candidateChannelIds.length > 0) {
+      const { data: candidateMembers, error: candidateMembersError } = await supabase
+        .from("chat_channel_members")
+        .select("channel_id, user_id")
+        .eq("org_id", orgId)
+        .in("channel_id", candidateChannelIds);
+      if (candidateMembersError) {
+        redirect(toError(`既存DMの照合に失敗しました: ${candidateMembersError.message}`));
+      }
+
+      const memberSets = new Map<string, Set<string>>();
+      for (const row of (candidateMembers ?? []) as Array<{ channel_id: string; user_id: string }>) {
+        const existing = memberSets.get(row.channel_id) ?? new Set<string>();
+        existing.add(row.user_id);
+        memberSets.set(row.channel_id, existing);
+      }
+
+      for (const [channelId, members] of memberSets.entries()) {
+        if (members.size === 2 && members.has(userId) && members.has(targetUserId)) {
+          redirect(`/app/chat/channels/${channelId}?ok=${encodeURIComponent("既存のDMを開きました。")}`);
+        }
+      }
+    }
+
     const { data: channel, error } = await supabase
       .from("chat_channels")
       .insert({
         org_id: orgId,
         name: `dm-${userId.slice(0, 6)}-${targetUserId.slice(0, 6)}`,
-        description: "internal DM",
+        description: "direct message",
         created_by_user_id: userId,
         channel_type: "dm_internal"
       })
@@ -106,7 +141,7 @@ export async function createDirectMessageChannel(formData: FormData) {
     ]);
     await getOrCreateChatSession({ supabase, orgId, scope: "channel", userId, channelId });
     revalidatePath("/app/chat/channels");
-    redirect(`/app/chat/channels/${channelId}?ok=${encodeURIComponent("社内DMを作成しました。")}`);
+    redirect(`/app/chat/channels/${channelId}?ok=${encodeURIComponent("DMを作成しました。")}`);
   }
 
   if (!externalContactId) {

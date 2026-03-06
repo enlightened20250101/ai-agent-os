@@ -9,13 +9,16 @@ type AuthMode = "login" | "signup";
 
 type AuthFormProps = {
   mode: AuthMode;
+  inviteToken?: string | null;
+  defaultWorkspaceName?: string;
 };
 
-export function AuthForm({ mode }: AuthFormProps) {
+export function AuthForm({ mode, inviteToken, defaultWorkspaceName }: AuthFormProps) {
   const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [workspaceName, setWorkspaceName] = useState(defaultWorkspaceName ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -42,9 +45,35 @@ export function AuthForm({ mode }: AuthFormProps) {
       return;
     }
 
-    router.push("/app");
+    if (isLogin) {
+      if (inviteToken && inviteToken.trim().length > 0) {
+        router.push(`/app/onboarding?invite_token=${encodeURIComponent(inviteToken.trim())}`);
+      } else {
+        router.push("/app");
+      }
+    } else {
+      const params = new URLSearchParams();
+      if (workspaceName.trim().length > 0) {
+        params.set("workspace_name", workspaceName.trim());
+      }
+      if (inviteToken && inviteToken.trim().length > 0) {
+        params.set("invite_token", inviteToken.trim());
+      }
+      const suffix = params.toString();
+      router.push(suffix ? `/app/onboarding?${suffix}` : "/app/onboarding");
+    }
     router.refresh();
   }
+
+  const switchParams = new URLSearchParams();
+  if (inviteToken && inviteToken.trim().length > 0) {
+    switchParams.set("invite", inviteToken.trim());
+  }
+  if (!isLogin && workspaceName.trim().length > 0) {
+    switchParams.set("workspace_name", workspaceName.trim());
+  }
+  const switchHrefBase = isLogin ? "/signup" : "/login";
+  const switchHref = switchParams.toString() ? `${switchHrefBase}?${switchParams.toString()}` : switchHrefBase;
 
   return (
     <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -83,6 +112,25 @@ export function AuthForm({ mode }: AuthFormProps) {
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2"
           />
         </div>
+        {!isLogin ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="workspace_name">
+              ワークスペース名
+            </label>
+            <input
+              id="workspace_name"
+              type="text"
+              required={!inviteToken}
+              value={workspaceName}
+              onChange={(event) => setWorkspaceName(event.target.value)}
+              placeholder={inviteToken ? "招待参加時は任意" : "例: Finance Team"}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2"
+            />
+            {inviteToken ? (
+              <p className="mt-1 text-xs text-slate-500">招待リンク経由のため、既存ワークスペースへ参加します。</p>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
           <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -101,7 +149,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       <p className="mt-4 text-sm text-slate-600">
         {isLogin ? "アカウントをお持ちでないですか？" : "すでにアカウントをお持ちですか？"}{" "}
-        <Link className="font-medium" href={isLogin ? "/signup" : "/login"}>
+        <Link className="font-medium" href={switchHref}>
           {isLogin ? "新規登録" : "ログイン"}
         </Link>
       </p>

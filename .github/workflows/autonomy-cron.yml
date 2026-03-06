@@ -63,6 +63,88 @@ jobs:
             echo "$RESP"
           fi
 
+      - name: Run monitor tick batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          MONITOR_RUN_TOKEN: ${{ secrets.MONITOR_RUN_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${MONITOR_RUN_TOKEN:-${PLANNER_RUN_TOKEN}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "Monitor tick batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/monitor/run?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-monitor-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "Monitor tick batch failed after retry."
+              exit 1
+            fi
+            echo "Monitor tick batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Monitor summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tstatus=\(.status // "-")\tplanner=\(.plannerInvoked // false)\tcreated_proposals=\(.createdProposals // 0)"' || true
+          else
+            echo "$RESP"
+          fi
+
+      - name: Run external events auto-caseify batch
+        env:
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          EVENTS_AUTOMATION_TOKEN: ${{ secrets.EVENTS_AUTOMATION_TOKEN }}
+          PLANNER_RUN_TOKEN: ${{ secrets.PLANNER_RUN_TOKEN }}
+          MAX_ORGS_INPUT: ${{ github.event.inputs.max_orgs }}
+          AUTONOMY_API_RETRY_COUNT: ${{ vars.AUTONOMY_API_RETRY_COUNT }}
+          AUTONOMY_API_RETRY_WAIT_SECONDS: ${{ vars.AUTONOMY_API_RETRY_WAIT_SECONDS }}
+        run: |
+          set -euo pipefail
+          MAX_ORGS="${MAX_ORGS_INPUT:-20}"
+          TOKEN="${EVENTS_AUTOMATION_TOKEN:-${PLANNER_RUN_TOKEN}}"
+          RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
+          RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
+          echo "External events auto-caseify batch max_orgs=${MAX_ORGS}"
+          URL="${APP_BASE_URL}/api/events/auto-caseify?max_orgs=${MAX_ORGS}"
+          RESP=""
+          for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
+            if RESP="$(curl --fail --show-error --silent \
+              -X POST \
+              -H "x-events-automation-token: ${TOKEN}" \
+              "${URL}")"; then
+              break
+            fi
+            if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
+              echo "External events auto-caseify batch failed after retry."
+              exit 1
+            fi
+            echo "External events auto-caseify batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            sleep "${RETRY_WAIT}"
+          done
+          if command -v jq >/dev/null 2>&1; then
+            echo "$RESP" | jq .
+            echo "Auto-caseify summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tscanned=\(.scanned // 0)\tcreated=\(.created // 0)\tskipped=\(.skipped // 0)\tfailed=\(.failed // 0)\tskipped_circuit=\(.skipped_circuit // false)\tskipped_dry_run=\(.skipped_dry_run // false)"' || true
+            echo "Auto-caseify skipped by circuit:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Auto-caseify dry-run probes:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
+          else
+            echo "$RESP"
+          fi
+
       - name: Run governance recommendations review batch
         env:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}

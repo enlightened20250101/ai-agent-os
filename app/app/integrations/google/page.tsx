@@ -76,13 +76,13 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
           <p className="font-medium">接続済み送信元</p>
           <p className="text-slate-700">{senderEmail || "（なし）"}</p>
           <p className="mt-1 text-xs text-slate-500">
-            connected_at: {connector?.created_at ? new Date(connector.created_at).toLocaleString() : "（n/a）"}
+            接続日時: {connector?.created_at ? new Date(connector.created_at).toLocaleString("ja-JP") : "（なし）"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm md:col-span-2">
           <p className="font-medium">検出された APP_BASE_URL</p>
           <p className="text-slate-700 break-all">{appBaseUrl}</p>
-          <p className="mt-2 font-medium">計算された redirect_uri</p>
+          <p className="mt-2 font-medium">計算された リダイレクトURI</p>
           <div className="mt-1 flex items-center gap-2">
             <p className="text-slate-700 break-all">{redirectUri}</p>
             <CopyButton value={redirectUri} />
@@ -95,7 +95,7 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">旧envフォールバックトークン</p>
+          <p className="font-medium">旧Envフォールバック認証情報</p>
           <p className={envStatus.clientId && envStatus.clientSecret && envStatus.refreshToken && envStatus.senderEmail ? "text-emerald-700" : "text-amber-700"}>
             {envStatus.clientId && envStatus.clientSecret && envStatus.refreshToken && envStatus.senderEmail
               ? "設定完了"
@@ -127,7 +127,7 @@ export default async function GoogleIntegrationPage({ searchParams }: GoogleInte
         <p className="font-medium text-slate-900">OAuth設定</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>`APP_BASE_URL` を到達可能なURLに設定してください（ローカルHTTPS検証時はngrok URL）。</li>
-          <li>Google OAuth redirect URI は `{(process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "")}/api/google/callback` を設定してください。</li>
+          <li>Google OAuth リダイレクトURI は `{(process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "")}/api/google/callback` を設定してください。</li>
           <li>OAuthで取得した `refresh_token` と sender email は組織単位で `connector_accounts` に保存されます。</li>
           <li>MVPでは秘密情報はDBに平文JSONで保存します（`future`: 保存時暗号化）。</li>
         </ul>

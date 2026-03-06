@@ -5,14 +5,15 @@ import { applyRecommendationAction, runRecommendationsReviewNow } from "@/app/ap
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
+import { toRedactedJson } from "@/lib/ui/redactIds";
 
 export const dynamic = "force-dynamic";
 
 function priorityLabel(priority: "critical" | "high" | "medium" | "low") {
-  if (priority === "critical") return "critical";
-  if (priority === "high") return "high";
-  if (priority === "medium") return "medium";
-  return "low";
+  if (priority === "critical") return "最優先";
+  if (priority === "high") return "高";
+  if (priority === "medium") return "中";
+  return "低";
 }
 
 function priorityClasses(priority: "critical" | "high" | "medium" | "low") {
@@ -43,6 +44,7 @@ type RecommendationsPageProps = {
     retry_recommendation_id?: string;
     history_action_kind?: string;
     history_result?: string;
+    window?: string;
   }>;
 };
 
@@ -76,30 +78,83 @@ function deltaLabel(delta: number) {
 
 function impactBadge(args: { improved: number; worsened: number }) {
   if (args.improved > 0 && args.worsened === 0) {
-    return { label: "improved", className: "bg-emerald-100 text-emerald-700" };
+    return { label: "改善", className: "bg-emerald-100 text-emerald-700" };
   }
   if (args.worsened > 0 && args.improved === 0) {
-    return { label: "worsened", className: "bg-rose-100 text-rose-700" };
+    return { label: "悪化", className: "bg-rose-100 text-rose-700" };
   }
   if (args.worsened > 0 && args.improved > 0) {
-    return { label: "mixed", className: "bg-amber-100 text-amber-700" };
+    return { label: "混在", className: "bg-amber-100 text-amber-700" };
   }
-  return { label: "flat", className: "bg-slate-100 text-slate-700" };
+  return { label: "変化なし", className: "bg-slate-100 text-slate-700" };
+}
+
+function resolveWindowHours(windowValue: string) {
+  if (windowValue === "24h") return 24;
+  if (windowValue === "30d") return 24 * 30;
+  return 24 * 7;
+}
+
+function formatWindowLabel(windowValue: "24h" | "7d" | "30d") {
+  if (windowValue === "24h") return "24時間";
+  if (windowValue === "30d") return "30日";
+  return "7日";
+}
+
+function actionKindLabel(kind: string) {
+  if (kind === "disable_auto_execute") return "自動実行を一時停止";
+  if (kind === "send_approval_reminder") return "承認催促を送信";
+  return kind || "不明";
+}
+
+function actorTypeLabel(actorType: string | null) {
+  if (actorType === "user") return "ユーザー";
+  if (actorType === "agent") return "AIエージェント";
+  if (actorType === "system") return "システム";
+  return "システム";
+}
+
+function metricLabelJa(label: string) {
+  if (label === "open incidents") return "オープンインシデント";
+  if (label === "pending >72h") return "72時間超の承認待ち";
+  if (label === "pending >24h") return "24時間超の承認待ち";
+  if (label === "failed actions (7d)") return "失敗アクション(7日)";
+  if (label === "success rate (7d)") return "成功率(7日)";
+  if (label === "overdue chat confirmations") return "期限切れチャット確認";
+  if (label === "pending chat confirmations") return "保留中チャット確認";
+  if (label === "failed chat commands (7d)") return "失敗チャット実行(7日)";
+  if (label === "low trust rows (7d)") return "低信頼スコア件数(7日)";
+  if (label === "policy blocks (7d)") return "ポリシーブロック件数(7日)";
+  if (label === "daily remaining") return "日次予算残量";
+  if (label === "auto execute") return "自動実行状態";
+  if (label === "health") return "健全性";
+  return label;
+}
+
+function metricValueJa(metricLabel: string, metricValue: string) {
+  if (metricLabel === "auto execute" && metricValue === "enabled") return "有効";
+  if (metricLabel === "health" && metricValue === "stable") return "安定";
+  return metricValue;
 }
 
 export default async function GovernanceRecommendationsPage({ searchParams }: RecommendationsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
+  const windowFilter = sp.window === "24h" || sp.window === "30d" ? sp.window : "7d";
+  const windowHours = resolveWindowHours(windowFilter);
+  const windowLabel = formatWindowLabel(windowFilter);
+  const windowStartIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   const historyActionKind = String(sp.history_action_kind ?? "").trim();
   const historyResult = String(sp.history_result ?? "").trim();
   const [{ summary, recommendations }, recentActionsRes, latestReviewRes] = await Promise.all([
-    buildGovernanceRecommendations({ supabase, orgId }),
+    buildGovernanceRecommendations({ supabase, orgId, windowHours }),
     supabase
       .from("task_events")
       .select("id, created_at, event_type, actor_id, actor_type, payload_json")
       .eq("org_id", orgId)
       .in("event_type", ["GOVERNANCE_RECOMMENDATION_APPLIED", "GOVERNANCE_RECOMMENDATION_FAILED"])
+      .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(20),
     supabase
@@ -107,6 +162,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
       .select("id, created_at, payload_json")
       .eq("org_id", orgId)
       .eq("event_type", "GOVERNANCE_RECOMMENDATIONS_REVIEWED")
+      .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -165,15 +221,16 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-sky-900 p-6 text-white shadow-lg">
-        <p className="text-xs uppercase tracking-[0.18em] text-sky-200">Governance AI</p>
+        <p className="text-xs uppercase tracking-[0.18em] text-sky-200">ガバナンスAI</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">改善提案センター</h1>
         <p className="mt-3 text-sm text-slate-200">
           承認滞留・失敗率・Trust・予算・インシデントを横断評価し、優先度順に改善アクションを提示します。
         </p>
         <p className="mt-4 inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs">
-          組織コンテキスト: {orgId}
+          ワークスペース・ガバナンス
         </p>
         <form action={runRecommendationsReviewNow} className="mt-3">
+          <input type="hidden" name="window" value={windowFilter} />
           <ConfirmSubmitButton
             label="今すぐ再評価"
             pendingLabel="再評価中..."
@@ -184,14 +241,40 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
       </div>
 
       <StatusNotice ok={sp.ok} error={sp.error} />
+      <section className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <p className="text-xs text-slate-600">集計期間: {windowLabel}</p>
+        <div className="flex items-center gap-2">
+          {[
+            { value: "24h", label: "24時間" },
+            { value: "7d", label: "7日" },
+            { value: "30d", label: "30日" }
+          ].map((option) => {
+            const active = windowFilter === option.value;
+            const href = `/app/governance/recommendations?window=${option.value}`;
+            return (
+              <Link
+                key={option.value}
+                href={href}
+                className={`rounded-md border px-2 py-1 text-xs ${
+                  active
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {option.label}
+              </Link>
+            );
+          })}
+        </div>
+      </section>
       {sp.retry_action_kind && sp.retry_recommendation_id ? (
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <h2 className="text-sm font-semibold text-amber-900">失敗したアクションの再試行</h2>
           <p className="mt-1 text-sm text-amber-800">
-            action_kind: <span className="font-mono">{sp.retry_action_kind}</span> / recommendation_id:{" "}
-            <span className="font-mono">{sp.retry_recommendation_id}</span>
+            前回失敗した改善アクションを再試行します（{actionKindLabel(sp.retry_action_kind)}）。
           </p>
           <form action={applyRecommendationAction} className="mt-3 space-y-2">
+            <input type="hidden" name="window" value={windowFilter} />
             <input type="hidden" name="action_kind" value={sp.retry_action_kind} />
             <input type="hidden" name="recommendation_id" value={sp.retry_recommendation_id} />
             {sp.retry_action_kind === "disable_auto_execute" ? (
@@ -212,29 +295,29 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
-          <p className="text-xs text-rose-700">open incidents</p>
+          <p className="text-xs text-rose-700">オープンインシデント</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{summary.openIncidents}</p>
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <p className="text-xs text-amber-700">pending approvals &gt;24h</p>
+          <p className="text-xs text-amber-700">24時間超の承認待ち</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{summary.staleApprovals24h}</p>
         </div>
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
-          <p className="text-xs text-sky-700">failed actions (7d)</p>
+          <p className="text-xs text-sky-700">失敗アクション ({windowLabel})</p>
           <p className="mt-1 text-2xl font-semibold text-sky-900">{summary.failedActions7d}</p>
         </div>
         <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 shadow-sm">
-          <p className="text-xs text-fuchsia-700">failed chat commands (7d)</p>
+          <p className="text-xs text-fuchsia-700">失敗チャット実行 ({windowLabel})</p>
           <p className="mt-1 text-2xl font-semibold text-fuchsia-900">{summary.failedChatCommands7d}</p>
         </div>
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
-          <p className="text-xs text-indigo-700">success rate (7d)</p>
+          <p className="text-xs text-indigo-700">成功率 ({windowLabel})</p>
           <p className="mt-1 text-2xl font-semibold text-indigo-900">
             {summary.actionSuccessRate7d !== null ? `${summary.actionSuccessRate7d}%` : "-"}
           </p>
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs text-emerald-700">budget remaining</p>
+          <p className="text-xs text-emerald-700">予算残量</p>
           <p className="mt-1 text-2xl font-semibold text-emerald-900">
             {summary.budgetRemaining !== null ? `${summary.budgetRemaining}/${summary.budgetLimit}` : "-"}
           </p>
@@ -245,19 +328,19 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         <h2 className="text-base font-semibold text-slate-900">最新レビュー結果</h2>
         {latestReview ? (
           <div className="mt-3 space-y-2 text-sm text-slate-700">
-            <p>実行時刻: {new Date(latestReview.created_at).toLocaleString()}</p>
+            <p>実行時刻: {new Date(latestReview.created_at).toLocaleString("ja-JP")}</p>
             <div className="grid gap-2 sm:grid-cols-3">
-              <p className="rounded-md bg-rose-50 px-3 py-2 text-rose-800">critical: {latestCriticalCount ?? "-"}</p>
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">high: {latestHighCount ?? "-"}</p>
+              <p className="rounded-md bg-rose-50 px-3 py-2 text-rose-800">最優先: {latestCriticalCount ?? "-"}</p>
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">高優先: {latestHighCount ?? "-"}</p>
               <p className="rounded-md bg-sky-50 px-3 py-2 text-sky-800">
-                total recommendations: {latestRecommendationCount ?? "-"}
+                提案総数: {latestRecommendationCount ?? "-"}
               </p>
             </div>
             {latestReviewSummary ? (
               <details className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                <summary className="cursor-pointer text-xs font-medium text-slate-700">summary JSON</summary>
+                <summary className="cursor-pointer text-xs font-medium text-slate-700">サマリーJSON</summary>
                 <pre className="mt-2 overflow-x-auto text-xs text-slate-700">
-                  {JSON.stringify(latestReviewSummary, null, 2)}
+                  {toRedactedJson(latestReviewSummary)}
                 </pre>
               </details>
             ) : null}
@@ -303,7 +386,8 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   {priorityLabel(item.priority)}
                 </span>
                 <p className="text-xs text-slate-500">
-                  {item.metricLabel}: <span className="font-semibold text-slate-700">{item.metricValue}</span>
+                  {metricLabelJa(item.metricLabel)}:{" "}
+                  <span className="font-semibold text-slate-700">{metricValueJa(item.metricLabel, item.metricValue)}</span>
                 </p>
               </div>
               <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
@@ -316,6 +400,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               </Link>
               {item.automation ? (
                 <form action={applyRecommendationAction} className="mt-2">
+                  <input type="hidden" name="window" value={windowFilter} />
                   <input type="hidden" name="recommendation_id" value={item.id} />
                   <input type="hidden" name="action_kind" value={item.automation.kind} />
                   {item.automation.kind === "disable_auto_execute" ? (
@@ -327,7 +412,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   <ConfirmSubmitButton
                     label={item.automation.label}
                     pendingLabel="適用中..."
-                    confirmMessage={`改善アクション（${item.automation.kind}）を適用します。実行しますか？`}
+                    confirmMessage={`改善アクション（${actionKindLabel(item.automation.kind)}）を適用します。実行しますか？`}
                     className="inline-flex rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
                   />
                 </form>
@@ -339,11 +424,12 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">実行履歴</h2>
-        <p className="mt-1 text-sm text-slate-600">改善提案の適用履歴と、適用時点メトリクス（baseline）を表示します。</p>
+        <p className="mt-1 text-sm text-slate-600">改善提案の適用履歴と、適用時点メトリクス（基準値）を表示します。</p>
         <form method="get" className="mt-3 flex flex-wrap items-end gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+          <input type="hidden" name="window" value={windowFilter} />
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700" htmlFor="history_action_kind">
-              action_kind
+              アクション種別
             </label>
             <select
               id="history_action_kind"
@@ -354,14 +440,14 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               <option value="">すべて</option>
               {availableHistoryActionKinds.map((kind) => (
                 <option key={kind} value={kind}>
-                  {kind}
+                  {actionKindLabel(kind)}
                 </option>
               ))}
             </select>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-700" htmlFor="history_result">
-              result
+              結果
             </label>
             <select
               id="history_result"
@@ -370,27 +456,29 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
             >
               <option value="">すべて</option>
-              <option value="success">success</option>
-              <option value="failed">failed</option>
+              <option value="success">成功</option>
+              <option value="failed">失敗</option>
             </select>
           </div>
-          <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">
-            フィルタ適用
-          </button>
+            <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">
+              フィルタ適用
+            </button>
         </form>
         {filteredActions.length > 0 ? (
           <ul className="mt-4 space-y-3">
             {filteredActions.map((row) => {
               const payload = asObject(row.payload_json);
-              const actionKind = typeof payload?.action_kind === "string" ? payload.action_kind : "unknown";
+              const actionKind = typeof payload?.action_kind === "string" ? payload.action_kind : "不明";
               const result =
                 row.event_type === "GOVERNANCE_RECOMMENDATION_FAILED"
-                  ? "failed"
+                  ? "失敗"
                   : typeof payload?.result === "string"
-                    ? payload.result
-                    : "success";
-              const recommendationId =
-                typeof payload?.recommendation_id === "string" ? payload.recommendation_id : "(unknown)";
+                    ? payload.result === "success"
+                      ? "成功"
+                      : payload.result === "failed"
+                        ? "失敗"
+                        : payload.result
+                    : "成功";
               const baseline = asObject(payload?.baseline_summary);
               const followupHref = typeof payload?.followup_href === "string" ? payload.followup_href : null;
               const baselineFailed = numberFromUnknown(baseline?.failedActions7d);
@@ -412,24 +500,19 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               return (
                 <li key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                   <div className="flex items-center gap-2">
-                    <p className="font-medium text-slate-900">{actionKind}</p>
+                    <p className="font-medium text-slate-900">{actionKindLabel(actionKind)}</p>
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>{badge.label}</span>
                     <span
                       className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        result === "failed" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
+                        result === "失敗" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
                       }`}
                     >
                       {result}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-600">
-                    recommendation_id: <span className="font-mono">{recommendationId}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    actor: <span className="font-mono">{row.actor_id ?? "(system)"}</span>{" "}
-                    <span className="text-slate-500">({row.actor_type ?? "unknown"})</span>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-600">{new Date(row.created_at).toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-slate-600">対象: {followupHref ? "関連運用項目" : "改善項目"}</p>
+                  <p className="mt-1 text-xs text-slate-600">実行者: {actorTypeLabel(row.actor_type)}</p>
+                  <p className="mt-1 text-xs text-slate-600">{new Date(row.created_at).toLocaleString("ja-JP")}</p>
                   {followupHref ? (
                     <Link
                       href={followupHref}
@@ -441,20 +524,20 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   {baseline ? (
                     <div className="mt-2 grid gap-2 sm:grid-cols-3">
                       <p className="rounded-md bg-white px-2 py-1 text-xs text-slate-700">
-                        failed(7d): {baselineFailed ?? "-"} → {summary.failedActions7d}
+                        失敗アクション({windowLabel}): {baselineFailed ?? "-"} → {summary.failedActions7d}
                         {failedDelta !== null ? ` (${deltaLabel(failedDelta)})` : ""}
                       </p>
                       <p className="rounded-md bg-white px-2 py-1 text-xs text-slate-700">
-                        pending&gt;24h: {baselineStale ?? "-"} → {summary.staleApprovals24h}
+                        24時間超 保留承認: {baselineStale ?? "-"} → {summary.staleApprovals24h}
                         {staleDelta !== null ? ` (${deltaLabel(staleDelta)})` : ""}
                       </p>
                       <p className="rounded-md bg-white px-2 py-1 text-xs text-slate-700">
-                        incidents: {baselineIncidents ?? "-"} → {summary.openIncidents}
+                        インシデント: {baselineIncidents ?? "-"} → {summary.openIncidents}
                         {incidentDelta !== null ? ` (${deltaLabel(incidentDelta)})` : ""}
                       </p>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-slate-500">baseline metric なし</p>
+                    <p className="mt-2 text-xs text-slate-500">ベースライン指標なし</p>
                   )}
                 </li>
               );

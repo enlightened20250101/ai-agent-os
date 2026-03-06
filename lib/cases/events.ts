@@ -2,12 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type CaseEventType =
   | "CASE_CREATED"
+  | "CASE_CREATED_FROM_EXTERNAL_EVENT"
   | "CASE_STATUS_UPDATED"
   | "CASE_OWNER_UPDATED"
   | "CASE_DUE_UPDATED"
   | "CASE_TASK_LINKED"
   | "CASE_TASK_STATUS_SYNC"
-  | "CASE_APPROVAL_DECIDED";
+  | "CASE_APPROVAL_DECIDED"
+  | "CASE_STAGE_SYNCED";
 
 function isMissingSchemaError(message: string, target: string) {
   return (

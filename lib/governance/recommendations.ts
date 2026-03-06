@@ -52,12 +52,19 @@ function formatPercent(value: number | null) {
 export async function buildGovernanceRecommendations(args: {
   supabase: SupabaseClient;
   orgId: string;
+  windowHours?: number;
 }) {
   const { supabase, orgId } = args;
+  const windowHours =
+    typeof args.windowHours === "number" && Number.isFinite(args.windowHours)
+      ? Math.max(24, Math.min(24 * 30, Math.round(args.windowHours)))
+      : 24 * 7;
   const settings = await getGovernanceSettings({ supabase, orgId });
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
-  const since7d = new Date(now - 7 * dayMs).toISOString();
+  const sinceWindowIso = new Date(now - windowHours * 60 * 60 * 1000).toISOString();
+  const windowParam = windowHours <= 24 ? "24h" : windowHours >= 24 * 30 ? "30d" : "7d";
+  const withWindow = (href: string) => `${href}${href.includes("?") ? "&" : "?"}window=${windowParam}`;
   const before24h = new Date(now - dayMs).toISOString();
   const before72h = new Date(now - 3 * dayMs).toISOString();
 
@@ -95,7 +102,7 @@ export async function buildGovernanceRecommendations(args: {
         .from("actions")
         .select("status")
         .eq("org_id", orgId)
-        .gte("created_at", since7d)
+        .gte("created_at", sinceWindowIso)
         .in("status", ["success", "failed"])
         .limit(2000),
       supabase
@@ -103,14 +110,14 @@ export async function buildGovernanceRecommendations(args: {
         .select("id", { head: true, count: "exact" })
         .eq("org_id", orgId)
         .eq("event_type", "POLICY_CHECKED")
-        .gte("created_at", since7d)
+        .gte("created_at", sinceWindowIso)
         .filter("payload_json->>status", "eq", "block"),
       supabase
         .from("trust_scores")
         .select("score")
         .eq("org_id", orgId)
         .lt("score", settings.minTrustScore)
-        .gte("updated_at", since7d)
+        .gte("updated_at", sinceWindowIso)
         .limit(500),
       supabase
         .from("budget_usage")
@@ -125,7 +132,7 @@ export async function buildGovernanceRecommendations(args: {
         .select("id", { head: true, count: "exact" })
         .eq("org_id", orgId)
         .eq("execution_status", "failed")
-        .gte("created_at", since7d),
+        .gte("created_at", sinceWindowIso),
       supabase
         .from("chat_confirmations")
         .select("id", { head: true, count: "exact" })
@@ -221,7 +228,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "open incidents",
       metricValue: String(summary.openIncidents),
       actionLabel: "インシデント管理へ",
-      href: "/app/governance/incidents",
+      href: withWindow("/app/governance/incidents"),
       automation: null
     });
   }
@@ -236,7 +243,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "pending >72h",
       metricValue: String(summary.staleApprovals72h),
       actionLabel: "承認キューを確認",
-      href: "/app/approvals",
+      href: withWindow("/app/approvals"),
       automation: { kind: "send_approval_reminder", label: "Slackで承認催促を送信" }
     });
   } else if (summary.staleApprovals24h > 0) {
@@ -248,7 +255,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "pending >24h",
       metricValue: String(summary.staleApprovals24h),
       actionLabel: "承認キューを確認",
-      href: "/app/approvals",
+      href: withWindow("/app/approvals"),
       automation: { kind: "send_approval_reminder", label: "Slackで承認催促を送信" }
     });
   }
@@ -263,7 +270,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "failed actions (7d)",
       metricValue: String(summary.failedActions7d),
       actionLabel: "タスク実行ログを確認",
-      href: "/app/tasks",
+      href: withWindow("/app/tasks"),
       automation: summary.autoExecuteGoogleSendEmail
         ? { kind: "disable_auto_execute", label: "自動実行を一時停止" }
         : null
@@ -277,8 +284,8 @@ export async function buildGovernanceRecommendations(args: {
         "成功率が低下しています。失敗ログを分析し、テンプレートとガードレールを調整してください。",
       metricLabel: "success rate (7d)",
       metricValue: formatPercent(summary.actionSuccessRate7d),
-      actionLabel: "Evidenceを確認",
-      href: "/app/tasks",
+      actionLabel: "証跡を確認",
+      href: withWindow("/app/tasks"),
       automation: null
     });
   }
@@ -293,7 +300,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "overdue chat confirmations",
       metricValue: String(summary.overdueChatConfirmations),
       actionLabel: "チャット監査ログへ",
-      href: "/app/chat/audit?status=pending",
+      href: withWindow("/app/chat/audit?status=pending"),
       automation: null
     });
   } else if (summary.pendingChatConfirmations >= 10) {
@@ -306,7 +313,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "pending chat confirmations",
       metricValue: String(summary.pendingChatConfirmations),
       actionLabel: "チャット監査ログへ",
-      href: "/app/chat/audit?status=pending",
+      href: withWindow("/app/chat/audit?status=pending"),
       automation: null
     });
   }
@@ -321,7 +328,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "failed chat commands (7d)",
       metricValue: String(summary.failedChatCommands7d),
       actionLabel: "チャット監査ログへ",
-      href: "/app/chat/audit?status=failed",
+      href: withWindow("/app/chat/audit?status=failed"),
       automation: null
     });
   }
@@ -330,13 +337,13 @@ export async function buildGovernanceRecommendations(args: {
     recommendations.push({
       id: "trust-low",
       priority: "high",
-      title: "Trustスコア低下を修正",
+      title: "信頼スコア低下を修正",
       description:
-        "min_trust_score を下回る履歴があります。失敗要因を特定し、必要なら自律レベルと閾値を見直してください。",
+        "最小信頼スコアを下回る履歴があります。失敗要因を特定し、必要なら自律レベルと閾値を見直してください。",
       metricLabel: "low trust rows (7d)",
       metricValue: String(summary.lowTrustSnapshots),
-      actionLabel: "Trust分析へ",
-      href: "/app/governance/trust",
+      actionLabel: "信頼分析へ",
+      href: withWindow("/app/governance/trust"),
       automation: summary.autoExecuteGoogleSendEmail
         ? { kind: "disable_auto_execute", label: "自動実行を一時停止" }
         : null
@@ -347,13 +354,13 @@ export async function buildGovernanceRecommendations(args: {
     recommendations.push({
       id: "policy-blocks",
       priority: "medium",
-      title: "Policy block要因の事前除去",
+      title: "ポリシーブロック要因の事前除去",
       description:
-        "block判定が発生しています。宛先ドメイン許可リストや入力テンプレートを改善して再発を防いでください。",
+        "ブロック判定が発生しています。宛先ドメイン許可リストや入力テンプレートを改善して再発を防いでください。",
       metricLabel: "policy blocks (7d)",
       metricValue: String(summary.policyBlockEvents7d),
       actionLabel: "ポリシー影響タスクを見る",
-      href: "/app/tasks",
+      href: withWindow("/app/tasks"),
       automation: null
     });
   }
@@ -368,7 +375,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "daily remaining",
       metricValue: `${summary.budgetRemaining}/${summary.budgetLimit}`,
       actionLabel: "予算設定へ",
-      href: "/app/governance/budgets",
+      href: withWindow("/app/governance/budgets"),
       automation: null
     });
   }
@@ -383,7 +390,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "auto execute",
       metricValue: "enabled",
       actionLabel: "自律設定を確認",
-      href: "/app/governance/autonomy",
+      href: withWindow("/app/governance/autonomy"),
       automation: { kind: "disable_auto_execute", label: "自動実行を一時停止" }
     });
   }
@@ -398,7 +405,7 @@ export async function buildGovernanceRecommendations(args: {
       metricLabel: "health",
       metricValue: "stable",
       actionLabel: "プランナーへ",
-      href: "/app/planner",
+      href: withWindow("/app/planner"),
       automation: null
     });
   }

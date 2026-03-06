@@ -56,31 +56,31 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB bot_token</p>
+          <p className="font-medium">DB Botトークン</p>
           <p className={dbStatus.botToken ? "text-emerald-700" : "text-rose-700"}>
             {dbStatus.botToken ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB signing_secret</p>
+          <p className="font-medium">DB Signing Secret</p>
           <p className={dbStatus.signingSecret ? "text-emerald-700" : "text-rose-700"}>
             {dbStatus.signingSecret ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB approval_channel_id</p>
+          <p className="font-medium">DB 承認チャンネルID</p>
           <p className={dbStatus.approvalChannelId ? "text-emerald-700" : "text-rose-700"}>
             {dbStatus.approvalChannelId ? "設定済み" : "未設定"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB alert_channel_id</p>
+          <p className="font-medium">DB アラートチャンネルID</p>
           <p className={dbStatus.alertChannelId ? "text-emerald-700" : "text-amber-700"}>
             {dbStatus.alertChannelId ? "設定済み" : "未設定（approval_channel_idにフォールバック）"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">DB intake_channel_id</p>
+          <p className="font-medium">DB 取り込みチャンネルID</p>
           <p className={dbStatus.intakeChannelId ? "text-emerald-700" : "text-amber-700"}>
             {dbStatus.intakeChannelId ? "設定済み" : "未設定（approval_channel_idにフォールバック）"}
           </p>
@@ -100,13 +100,13 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Env alert channel</p>
+          <p className="font-medium">Env アラートチャンネル</p>
           <p className={envStatus.alertChannelId ? "text-emerald-700" : "text-amber-700"}>
             {envStatus.alertChannelId ? "設定済み" : "未設定（approval channelへフォールバック）"}
           </p>
         </div>
         <div className="rounded-md border border-slate-200 p-3 text-sm">
-          <p className="font-medium">Env intake channel</p>
+          <p className="font-medium">Env 取り込みチャンネル</p>
           <p className={envStatus.intakeChannelId ? "text-emerald-700" : "text-amber-700"}>
             {envStatus.intakeChannelId ? "設定済み" : "未設定（approval channelへフォールバック）"}
           </p>
@@ -118,7 +118,7 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
         <input
           type="text"
           name="workspace_id"
-          placeholder="workspace/team id（任意）"
+          placeholder="ワークスペース/チームID（任意）"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <input
@@ -137,7 +137,7 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
         <input
           type="password"
           name="signing_secret"
-          placeholder="Slack signing secret"
+          placeholder="Slack Signing Secret"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           required
         />
@@ -177,7 +177,7 @@ export default async function SlackIntegrationPage({ searchParams }: SlackIntegr
           <li>Event Subscriptionsを有効化し、Request URL を `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/events` に設定します。</li>
           <li>Request URL を `{process.env.APP_BASE_URL ?? "http://localhost:3000"}/api/slack/actions` に設定します。</li>
           <li>Bot scopes は最低 `chat:write`, `app_mentions:read`, `channels:history`, `groups:history`, `im:history` を付与します。</li>
-          <li>ワークスペースへアプリをインストールし、この画面で bot token/signing secret/channel を保存します。</li>
+          <li>ワークスペースへアプリをインストールし、この画面で Botトークン / Signing Secret / channel を保存します。</li>
           <li>`intake_channel_id` 未設定時は `approval_channel_id` を取り込み対象として扱います。</li>
           <li>DBコネクタ未設定時は env 変数をフォールバックとして使用します。</li>
         </ol>

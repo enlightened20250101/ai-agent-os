@@ -1197,3 +1197,549 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/executions` に集計カード（total/done/failed/success rate）と CSV エクスポート導線 (`/api/executions/export`) を追加した。
 - Why: 実行監査を一覧確認だけでなく、定量把握と二次分析に使える形へ拡張するため。
+
+- Decision: チャット経由の実行系E2Eシナリオは `@AI` 明示メンション必須に統一し、確認待ちUI (`実行確認待ち`) を `@AI` 投稿時のみ期待するようにした。
+- Why: 現行仕様（`@AI` 付きのみAI実行）とテストを一致させ、誤検知を防ぐため。
+
+- Decision: `/app/tasks/[id]` の `executeDraftAction` で `redirect()` を try ブロック内で直接呼ばない形に変更し、`NEXT_REDIRECT` がURLの `error` 表示に漏れる不具合を防止した。
+- Why: 既存の成功/スキップ導線を維持しつつ、ユーザーに内部例外名が見える不自然な挙動をなくすため。
+
+- Decision: `/app/chat/channels` は作成フォームを常時大表示せず、ヘッダー内のコンパクトな「+ 新規チャンネル」導線へ変更し、DMはメンバープロフィール一覧から直接作成するUIに統一した。
+- Why: Slackライクな導線に寄せ、チャンネル作成を主画面のノイズにせず、DM開始を「相手から始める」直感的な操作へ寄せるため。
+
+- Decision: チャンネル画面上では `社内/社外` のDM種別選択を廃止し、ユーザー向け文言は単に `DM` として扱う（外部連絡先向け特殊導線は既存機能として内部的に保持）。
+- Why: 日常利用での概念を単純化し、目的（誰と話すか）に集中できるUXを優先するため。
+
+- Decision: DM作成時は同一ユーザー組み合わせの既存 `dm_internal` チャンネルを先に検索し、存在する場合は新規作成せず既存DMへ遷移する。
+- Why: 1対1会話の重複チャンネル発生を防ぎ、Slackライクな「相手ごとに1DM」体験に寄せるため。
+
+- Decision: チャンネル一覧とDM候補一覧では raw user_id を表示せず、表示名ベースで表示する（未設定時は汎用ラベル）。
+- Why: ID表示は利用者価値が低く視認性を下げるため、実運用で意味のある名前中心のUIにするため。
+
+- Decision: 画面上の識別子表示ポリシーを「ID直表示しない」に統一し、`org_id / user_id / task_id / approval_id / proposal_id / run_id` などの表示は名称・状態・時刻中心へ置換した。
+- Why: 利用者にとってID文字列の意味は薄く可読性を下げるため。運用上必要な識別は内部キー/リンクで保持し、UIは意思決定に必要な情報だけを見せるため。
+
+- Decision: E2Eで必要な組織識別は画面文言ではなく非表示の `data-testid=\"org-context-id\"` から取得する方式へ変更した。
+- Why: ID非表示UX方針を保ちながら、テストの安定性を維持するため。
+
+- Decision: サインアップ時に `ワークスペース名` を入力できるようにし、signup 完了後は `/app/onboarding` へ値を引き継いで初期組織作成時の `orgs.name` に反映する。
+- Why: 初回体験で組織名を明示的に決められるようにし、後からの名称変更コストを下げるため。
+
+- Decision: `org_invite_links` テーブルを追加し、設定画面から同一ワークスペース向けの招待リンクを発行できるようにした。招待リンクは有効期限・利用回数を持ち、オンボーディング時に消費して membership を作成する。
+- Why: 「同じ所属への招待」を安全に実現し、メール招待未実装でもURL共有で最小導線を提供するため。
+
+- Decision: 監査/詳細UIに表示する JSON は `toRedactedJson` で ID・トークン類をマスクした表示へ統一した（内部保存データは変更しない）。
+- Why: 監査性を維持しつつ、UI上での識別子・秘密値の露出を減らし、可読性と安全性を両立するため。
+
+- Decision: 招待リンク参加フローは「未ログインなら `/signup?invite=...`、ログイン済みなら `/app/onboarding?invite_token=...`」へ分岐し、既存アカウントでも招待参加できるようにした。
+- Why: 実運用では「既存ユーザーが別ワークスペースに招待される」ケースが多く、再登録を強制しない方が自然なため。
+
+- Decision: 設定画面の招待リンク管理に `コピー` と `無効化` を追加し、発行後運用をUIで完結できるようにした。
+- Why: URL共有の実務導線を短縮し、誤発行時に即時停止できる安全運用を可能にするため。
+
+- Decision: Unified Business Ledger強化として `business_cases.stage`（`intake/drafting/awaiting_approval/approved/executing/exception/blocked/completed`）を追加し、案件の進捗をタスク群から導出する方式を採用した。
+- Why: `status(open/blocked/closed)` だけでは実務上の進行度が見えないため、案件単位の「今どこで詰まっているか」を可視化するため。
+
+- Decision: `/app/cases` に `syncCaseStagesNow` サーバーアクションを追加し、全案件のステージを再計算して `CASE_STAGE_SYNCED` を `case_events` に記録する運用にした。
+- Why: 既存タスク更新フローを大きく変えずに、段階的にCase中心運用へ移行できるようにするため。
+
+- Decision: 能動化の第一段として `monitor_runs` 台帳と `runMonitorTick` を追加し、滞留/失敗シグナルがある時のみ Planner を起動する構成にした（手動 `/app/monitor` + API `/api/monitor/run`）。
+- Why: 無駄な定期推論を抑えつつ、異常や滞留の検知時には自動で提案生成へつなぐため。
+
+- Decision: 監視APIの認可は `x-monitor-token` (`MONITOR_RUN_TOKEN`) とし、Cronでは未設定時に `PLANNER_RUN_TOKEN` をフォールバック利用する。
+- Why: 既存運用のトークン管理を壊さずに監視ジョブを追加できるようにするため。
+
+- Decision: `runMonitorTick` はシグナル検知時に共有チャットへ system nudge（回収推奨メッセージ）を自動投稿する。投稿可否は `MONITOR_CHAT_NUDGE_ENABLED` で制御する。
+- Why: 「止まらず回収して進める」を実運用に落とし込み、監視結果をそのまま人間の最短導線（チャット）へ接続するため。
+
+- Decision: `/app/monitor` に「即時回収アクション」を追加し、承認催促（guarded reminder）・失敗workflow再試行・滞留案件の自分割当をワンクリック実行できるようにした。
+- Why: 監視で異常を検知しても運用者が次アクションへ遷移する手間が残るため、回収オペレーションを同一画面で完結させるため。
+
+- Decision: 監視チャット通知は件数だけでなく `signal_samples`（滞留タスク名・滞留案件名・失敗タスクIDなど）を添えて投稿し、次に触る対象を即判断できる形にした。
+- Why: 「検知はしたが対象が分からない」状態をなくし、監視→回収のリードタイムを短縮するため。
+
+- Decision: チャット本文中の `https://...` と `/app/...` はクリック可能リンクとして描画し、監視通知の対象リンクから直接遷移できるようにした。
+- Why: 監視通知を読んだ後の遷移コストを下げ、回収アクションまでの時間を短縮するため。
+
+- Decision: Chat intent に `monitor_recovery_run` を追加し、`@AI 監視回収を実行` で「承認催促 + 失敗workflow再試行 + 滞留案件の自分割当」をまとめて実行できるようにした。
+- Why: 監視通知後の実行オペレーションを1コマンド化し、ヒューマンの操作負荷をさらに下げるため。
+
+- Decision: `/app/monitor` に `monitor_recovery_run` 実行履歴（承認催促/再試行/割当の件数サマリ）を追加し、監視→回収の実行結果を同一画面で監査できるようにした。
+- Why: 回収実行後に別ページへ遷移せず結果を確認できるようにし、運用ループを短縮するため。
+
+- Decision: `/app/monitor` に「次の推奨アクション」セクションを追加し、最新シグナルと直近失敗結果から優先度付きの対応先リンクを自動提示する。
+- Why: 失敗後に「次に何をすべきか」を即判断できるようにし、運用者の意思決定時間を短縮するため。
+
+- Decision: 推奨アクションカードには `根拠シグナル`（件数や失敗内訳）を `<details>` で表示し、提示理由をその場で監査できる形式にした。
+- Why: 推奨の妥当性を人間が即検証できるようにし、運用時の説明責任を担保するため。
+
+- Decision: 監視の共有チャット通知にも `next_actions` を短く埋め込み、シグナル値に応じた「次に開くべきページ」を本文内で提示する。
+- Why: チャットだけ見ている運用者でも、理由と次アクションを同時に把握して即遷移できるようにするため。
+
+- Decision: 監視の推奨判定ロジックは `lib/monitor/recommendations.ts` に共通化し、`/app/monitor` とチャット通知で同じ基準を使うようにした。
+- Why: 画面表示と通知本文で推奨内容がずれる運用リスクを避け、一貫した判断基準を維持するため。
+
+- Decision: `monitor_recovery_run` に org単位の安全ガード（同時実行スキップ + クールダウン）を追加し、`MONITOR_RECOVERY_COOLDOWN_SECONDS`（default 90s）で連打を抑制する。
+- Why: 監視回収を短時間で重複実行すると同じ催促/再試行/割当が連発され運用ノイズになるため、チャット実行レイヤーで先に抑止するため。
+
+- Decision: タスク状態遷移（承認依頼/承認決定/自動承認）時に `syncCaseStageForTask` を呼び出し、`business_cases.stage` を都度再計算して `CASE_STAGE_SYNCED` を記録する。
+- Why: 手動同期ボタン依存を減らし、ケース台帳をリアルタイムに近い状態で維持して監視・回収判断の精度を上げるため。
+
+- Decision: `monitor_recovery_run` の workflow再試行は単発失敗で終えず、`MONITOR_RECOVERY_WORKFLOW_RETRY_PASSES`（default 1）分だけ追加パスで再試行し、`recovered_on_extra_pass` と失敗IDを結果に残す。
+- Why: 一時的なロック/順序依存で初回失敗するケースを回収し、運用者の手動再実行を減らすため。
+
+- Decision: 監視ページの回収履歴サマリに `extra_recovered` を表示し、追加再試行の効果を可視化する。
+- Why: 自動リカバリ施策の有効性を運用者が一目で判断できるようにするため。
+
+- Decision: 監視回収の workflow 再試行失敗は `retryable/manual` に分類して結果へ保存し、monitor画面で分類件数を表示する方式にした。
+- Why: すぐ再試行すべき一時障害と、人手で原因確認すべき恒常障害を分離し、運用者の次アクション判断を速くするため。
+
+- Decision: `/app/operations/exceptions` に「監視回収で手動対応判定された失敗」セクションを追加し、`monitor_recovery_run` の `failed_details.reason_class=manual` を優先表示する。
+- Why: 監視回収後に再試行不能な失敗を埋もれさせず、例外トリアージ画面で即対応できるようにするため。
+
+- Decision: 監視回収の manual 失敗は `reason_summary` を軽量分類（auth/policy/input/connector/unknown）し、`/app/operations/exceptions` で理由別の推奨アクション導線を表示する。
+- Why: 手動対応時の初動（どの画面を開き何を確認するか）を標準化し、復旧までの時間を短縮するため。
+
+- Decision: `/app/monitor` に「手動対応が必要な失敗（優先3件）」を追加し、`monitor_recovery_run` の manual 判定から workflow詳細/例外キューへ直接遷移できるようにした。
+- Why: 監視画面だけ見ている運用者でも、再試行不能な失敗を即トリアージできるようにするため。
+
+- Decision: 自律実行ガードを強化し、`GOVERNANCE_HIGH_RISK_THRESHOLD` 以上は2名承認（タスク作成者除外）を必須化、さらに `GOVERNANCE_HOURLY_SEND_EMAIL_LIMIT` で rolling 1時間の実行上限を導入した。
+- Why: 高リスク操作の暴走を抑止し、短時間の連続実行による外部影響を制限するため。
+
+- Decision: `monitor_recovery_run` で manual 判定された workflow 失敗は `exception_cases(kind=failed_workflow)` を自動 upsert し、`MONITOR_RECOVERY_EXCEPTION_SLA_HOURS` を期限に設定する方式を導入した。
+- Why: 監視回収の失敗をその場で運用キューへ接続し、見落としなく担当/期限付きで追跡できるようにするため。
+
+- Decision: workflow orchestrator の失敗時に `exception_cases(kind=failed_workflow)` を自動 upsert し、`WORKFLOW_FAILURE_EXCEPTION_SLA_HOURS` で期限を設定するようにした。
+- Why: ワークフロー失敗が発生した瞬間に例外運用キューへ接続し、再試行・原因調査の責任追跡を自動化するため。
+
+- Decision: `/app/approvals` に `high_risk_only` フィルタを追加し、risk_assessments と最新イベントから高リスク推定した上で「必要承認数に未達」の pending 承認を専用キューとして表示する。
+- Why: 高リスク案件の承認不足を通常キューから即切り出し、二段承認の遅延を最小化するため。
+
+- Decision: `/app/approvals` に「高リスク承認不足を再通知」アクションを追加し、pending承認のうち required approvals 未達だけを抽出して Slack 再通知する運用を追加した。
+- Why: 高リスク案件の承認遅延をワンクリックで圧縮し、二段承認フローの処理速度を上げるため。
+
+- Decision: トップ `/app` に高リスク承認不足カードを追加し、件数表示とワンクリック再通知（Slack）を可能にした。
+- Why: ダッシュボード起点で高優先承認遅延へ即対応できるようにし、二段承認の滞留時間を縮めるため。
+
+- Decision: 承認カードに「追加承認候補」を表示し、承認不足時は表示名ベースで候補メンバーを提示する方式を追加した（IDは非表示）。
+- Why: 高リスク案件で「次に誰へ依頼すべきか」を即判断できるようにし、二段承認の回収速度を上げるため。
+
+- Decision: 承認判定ロジックを強化し、高リスク時は1件目の approved でもタスクを `ready_for_approval` 維持にして、必要承認数に達した時のみ `approved` へ遷移させる方式に変更した。
+- Why: 二段承認ルールを実行直前ではなく承認フロー本体で担保し、誤って早期に実行可能化されるリスクを減らすため。
+
+- Decision: `/app/tasks/[id]` に承認進捗カード（required/current/remaining）を追加し、実行可否の近くで二段承認の充足状態を明示するUIにした。
+- Why: 「なぜ実行できないか」を承認件数で即理解できるようにし、承認回収アクションへ素早く移れるようにするため。
+
+- Decision: Slack 承認アクションの応答文言を二段承認対応に変更し、未達時は「一次承認（追加承認待ち）」、充足時は「最終承認完了」を返すようにした。
+- Why: Slack上で承認者が現状ステータスを誤解しないようにし、追加承認の取りこぼしを減らすため。
+
+- Decision: 承認イベントの監査性向上として `HUMAN_APPROVED/HUMAN_REJECTED` と `TASK_UPDATED` payload に `approval_stage`（partial/final/rejected）と承認ガード情報を記録するようにした。
+- Why: 一次承認と最終承認の差分をイベント台帳だけで判別できるようにし、証跡・監査の解像度を上げるため。
+
+- Decision: Evidence Pack の承認セクションに `HUMAN_APPROVED/HUMAN_REJECTED` 由来の `approval_stage` 監査一覧を追加し、partial/final/rejected の遷移を時系列で表示するようにした。
+- Why: 承認テーブルの最終状態だけでは二段承認の進行が追えないため、監査レポート単体で承認段階の履歴を確認できるようにするため。
+
+- Decision: インシデント時の停止挙動を統一するため、Planner 実行（`/app/planner` サーバーアクションと `/api/planner/run`）にも open incident ガードを追加し、宣言中は実行をスキップする方式にした。
+- Why: チャット経由では `run_planner` が停止されるのに UI/API で動く不整合を解消し、危険時の運用ルールを全経路で一貫させるため。
+
+- Decision: `monitor` tick はインシデント中でもシグナル収集と監視記録は継続しつつ、Planner起動のみを自動スキップする方式にした（summary_json に `blocked_by_incident` と incident 情報を記録）。
+- Why: 異常時でも可観測性を維持しながら、自律提案の増幅だけを止めることで「見えるけど暴走しない」安全運用を実現するため。
+
+- Decision: 運用可視化として `/app/executions` に incident 起因ブロック（`metadata_json.blocked_by_incident`）の専用フィルタ/件数カード/行バッジを追加し、`/app/operations/jobs` にも monitor の incident スキップ件数カードを追加した。
+- Why: 「止まっている理由」を監査ページ横断で統一表示し、インシデント時の停止が期待通り機能しているかを運用者が即確認できるようにするため。
+
+- Decision: チャットの `@AI` 起動判定をメンショントークン正規化（`NFKC + lower`）で統一し、`@AI` は人間メンション解決対象から除外した。さらにチャンネル投稿時は投稿前に明示的な membership チェックを追加した。
+- Why: `@AI` がユーザーハンドル解決と衝突して誤通知/誤実行になるリスクを防ぎ、チャンネル権限不足時にRLSエラーではなく明確な業務エラーメッセージで安全に停止するため。
+
+- Decision: チャット監査 (`/app/chat/audit` + export API) に `ai` フィルタ（mentioned/non_mentioned）を追加し、`chat_intents.message_id` から `chat_messages.metadata_json` を参照して `@AI` 起点と mentions を可視化する方式にした。scope フィルタも `channel` を含めた。
+- Why: 「AIを呼んだ投稿か/通常会話か」を監査で即分離できるようにし、誤作動や運用逸脱のトリアージ時間を短縮するため。
+
+- Decision: インシデントモードで confirmation 実行を止めた場合でも `ai_execution_logs` に `execution_status=skipped` + `blocked_by_incident=true` を記録するようにした。
+- Why: 実行前ブロックが `chat_commands` に残らないケースでも、停止実績を実行台帳側で確実に監査できるようにするため。
+
+- Decision: `/app/chat/audit` の各行に `task` に加えて `evidence` / `channel` への直接リンクを追加し、failed 再実行フォームも channel scope を正しく引き継ぐようにした。
+- Why: チャット監査から証跡・会話文脈への遷移を1クリック化し、調査と再実行の往復コストを下げるため。
+
+- Decision: `/app/chat/audit` に `intent × skip_reason × incident_blocked` の集計マトリクスを追加し、上位 intent / skip reason の詰まり分布を可視化した（フィルタ適用後データで集計）。
+- Why: 単発ログの閲覧だけでなく「どこで詰まりが集中しているか」を一覧で把握し、改善対象の優先順位付けをしやすくするため。
+
+- Decision: マトリクスの各セル値をクリック可能にし、intent/skip_reason を引き継いだ監査フィルタへ直接遷移できるようにした（0件は非リンク）。
+- Why: 可視化で終わらせず、該当ログの掘り下げまで最短導線にして、調査フローを短縮するため。
+
+- Decision: `/app/chat/audit` に分析期間フィルタ `window`（24h/7d/30d）を追加し、skip集計・詰まりマトリクス・incident blocked件数・比率表示を同一期間で計算するように統一した。export API も同じ `window` で抽出するようにした。
+- Why: 短期障害（24h）と慢性的な詰まり（30d）を同じ画面で切り替えて比較できるようにし、対処優先度の判断精度を上げるため。
+
+- Decision: `/app/executions` にも監査プリセット期間 `window`（24h/7d/30d）を追加し、from/to の初期値と incident blocked 表示・CSV出力条件を同一 window で揃えた。
+- Why: 監査ページ間の操作感を統一し、都度日時入力せずに同じ時間軸で実行台帳を比較できるようにするため。
+
+- Decision: `/app/operations/jobs` も `window`（24h/7d/30d）を searchParams で受け取り、planner/review/alert/retry/incident/monitor の各クエリに `created_at >= windowStart` を適用した。フィルタUI・見出しにも window を表示する方式にした。
+- Why: ジョブ監査だけ別時間軸になる不整合を避け、`chat audit`・`executions` と同じ期間感で原因分析できるようにするため。
+
+- Decision: `/app/monitor` と `/app/approvals` にも `window`（24h/7d/30d）を追加し、monitor_runs / monitor_recovery_run / approvals週次集計 / reminderイベント / auto guard表示を同一 window で表示するようにした。
+- Why: 主要監視画面の時間軸を統一し、「どの画面でも同じ期間を見ている」状態で運用判断できるようにするため。
+
+- Decision: `monitor/approvals` の server actions 実行後リダイレクトでも `window` を保持するため、actions 側で `window` を受け取って query へ再付与する方式にした。対応フォームには hidden `window` を追加した。
+- Why: ボタン実行のたびに期間が `7d` に戻る挙動を防ぎ、調査中の時間軸を維持したまま運用アクションを繰り返せるようにするため。
+
+- Decision: ダッシュボード `/app` も `window`（24h/7d/30d）を正式対応し、主要メトリクス文言・チャット監査導線・クイックアクションの return 先・関連ページリンクに同一 `window` を引き回すように統一した。
+- Why: トップ画面だけ7日固定のままだと、他監査画面との比較で期間ズレが発生するため。期間を跨いだ運用判断ミスを防ぐためにも、ホームから遷移後まで同一時間軸を保持する。
+
+- Decision: `retryTopFailedWorkflowRuns` に `return_to` を追加し、`/app` など呼び出し元画面へ結果付きで戻せるようにした（`/app` 配下のみ許可）。
+- Why: ダッシュボードのクイックアクション実行後に文脈（期間フィルタ/画面）を維持して連続対応できるようにするため。open redirect を避けるため遷移先は `/app` 配下に限定する。
+
+- Decision: 組織コンテキストの可視性強化として `/app/workspace` を追加し、ワークスペース名・メンバー（表示名/ハンドル/ロール）・有効な招待リンクを一画面で確認できるようにした。ナビゲーションとホームにも導線を追加した。
+- Why: 「同じ所属で何を共有しているか」を常時明確にし、招待やメンバー把握を設定ページに埋もれさせず、協業運用を始めやすくするため。
+
+- Decision: `/app/proposals` と `/app/planner` は `task_proposals` / `planner_runs` 未適用時に即 throw せず、空配列表示 + migration案内バナーを出すフォールバックに変更した。
+- Why: 初期導入や環境差分で migration が一部未適用でも、対象ページだけ500で落ちる状態を避け、利用者が次に実行すべき復旧手順（`supabase db push`）を画面上で即把握できるようにするため。
+
+- Decision: `/app/governance/recommendations` とその actions を `window`（24h/7d/30d）対応にし、集計・履歴表示・改善提案の遷移先・実行後リダイレクトで同一期間を保持するようにした（`buildGovernanceRecommendations` に `windowHours` オプションを追加、未指定時は7日）。
+- Why: 改善提案だけ7日固定だと、他監視画面（approvals/executions/chat audit）との比較で時間軸がズレるため。対策の優先順位判断を期間一貫で行えるようにするため。
+
+- Decision: `/app/governance/recommendations` の表示ラベル（優先度、KPIカード、レビュー要約、履歴比較）を日本語中心に統一し、期間ラベルも `windowLabel`（24時間/7日/30日）で表示するようにした。
+- Why: 日本語運用を前提にした現場で英語ラベルが混在すると認知負荷が高く、監視・判断の速度が落ちるため。運用画面は即読性を優先する。
+
+- Decision: `/app/planner` の英語メトリクス/履歴ラベル（run completed, started_at, summary_json など）を日本語化し、プランナー監視画面の文言を日本語運用前提で統一した。
+- Why: プランナーは日常監視で頻繁に見るため、英語ラベル混在を減らして異常検知と判断のスピードを上げるため。
+
+- Decision: `/app/executions` のフィルタ/集計カード/行メタ情報の英語ラベルを日本語化し、状態・起点の表示もラベル変換（done→成功 など）で統一した。
+- Why: 実行監査は運用中に最も参照頻度が高く、英語混在や曖昧表現があると一次切り分けの速度を落とすため。表示名がない依頼元はID表示に戻さず「表示名未設定メンバー」で扱う方針を維持する。
+
+- Decision: `/app/operations/exceptions` でも担当者表示を `user_profiles.display_name` 優先にし、ID生表示（case id / owner user id / fallback task_id）を運用UIから減らす方針にした。英語ラベルも日本語化し、`Evidence` などは「証跡」へ統一した。
+- Why: 例外キューは現場オペレーションで最も人間が触る画面の一つであり、ID中心表示は判断速度を下げるため。表示名ベースに寄せて、必要な識別子は遷移先URL内部に留める。
+
+- Decision: `/app/tasks/[id]/evidence` でもユーザー識別は `display_name` 優先表示にし、タスクID/ケースID/approval_id/event_id などの生ID表示を監査閲覧UIから削減した（証跡JSON内の参照は維持）。
+- Why: 証跡パックは監査・運用レビューで人が読む文書であり、ID列挙よりも誰が何をしたかの可読性が重要なため。必要な機械識別子はデータ自体に残しつつ、画面表示は意味中心にする。
+
+- Decision: `/app/tasks/[id]` の承認履歴にも `user_profiles.display_name` を適用し、依頼者/承認者を表示名で表示するようにした。タスク起票元バッジも raw source 文字列ではなく日本語ラベルへ変換した。
+- Why: タスク詳細は日常運用の中核画面であり、「誰が承認したか」「どこ起点のタスクか」を即読できることが優先。内部値（source enum / user_id）をそのまま見せる必要はないため。
+
+- Decision: `ChatShell` のメンション候補は `mention_handle` が設定されたメンバーのみ表示し、`member` 固定値や user_id 由来フォールバックは廃止した。チャンネル一覧/詳細のメンバー名フォールバックも「表示名未設定メンバー」に統一した。
+- Why: 解決不能なメンション候補（`@member` など）を出すと誤投稿や通知漏れの原因になるため。ID由来フォールバックを避け、表示名中心の運用方針と整合させるため。
+
+- Decision: `/app/operations/jobs` の監視UIは、運用カード・フィルタ・履歴見出しを日本語へ統一し、`window` 表示は `24時間/7日/30日` の明示ラベルで示す方式にした。あわせて Planner/Governance/Ops Alert/Auto Incident の一覧から event/run の生ID表示を外し、状態は日本語ラベル（成功/失敗/実行中など）で表示する。
+- Why: 運用ジョブ画面は一次監視の入口であり、英語ラベルやID中心表示は判断速度を落とすため。可読性を優先しつつ、監査に必要な詳細は payload JSON と遷移先に残すのが実務上バランスがよい。
+
+- Decision: `/app/monitor` でも `window` 表示を `24時間/7日/30日` の明示ラベルへ統一し、実行ステータス（completed/failed/skipped/running）は日本語（成功/失敗/スキップ/実行中）で表示する方針にした。
+- Why: 監視運用ページ間で期間表記とステータス表記が揺れると一次対応時に見間違いが起きやすいため。`operations/jobs` と同じ語彙へ揃えることで判断負荷を下げる。
+
+- Decision: `/app/approvals` は期間ラベルを `24時間/7日/30日` に統一し、集計カード・Auto Guard・リマインド起点（manual/cron）を日本語表示へ変更した。承認更新confirm文も internal status 名（approved/rejected）を画面文言から排除した。
+- Why: 承認運用は現場担当の操作頻度が高く、英語混在や内部ステータス名の露出は誤操作リスクを上げるため。業務語彙に寄せることで判断コストを下げる。
+
+- Decision: `/app/governance/incidents` と `/app/governance/trust` の主要ラベル（severity/provider/action_type/score/updated_at 等）を日本語運用向けに統一し、日時表示は `ja-JP` フォーマットで揃えた。
+- Why: ガバナンス配下のページ間で表示語彙が揺れると、監視時の読み替えコストが発生するため。インシデントとTrustは意思決定直結画面なので即読性を優先する。
+
+- Decision: `/app/governance/autonomy` は `Trust score` 表記を「信頼スコア」に統一し、MVPルール文言も「ON」などUI由来語ではなく日本語中心（有効）へ寄せた。
+- Why: 自律設定は非エンジニアが直接触る画面のため、英語/実装語彙の混在を避け、誤読を減らすため。
+
+- Decision: `/app/governance/budgets` は `provider/action_type/period` の生値表示をラベル変換（Google/Slack、メール送信、日次）して表示する方針にした。
+- Why: 予算ページは運用担当の閲覧中心であり、内部enum値を直接表示するより業務語で示したほうが理解が速く、設定ミス防止につながるため。
+
+- Decision: `/app/governance/recommendations` は `action_kind` / `actor_type` / `metricLabel` などの内部値をそのまま表示せず、日本語ラベルへ変換する表示層（`actionKindLabel`, `actorTypeLabel`, `metricLabelJa`）を追加した。
+- Why: 改善提案画面は運用判断の中心であり、内部enumの生表示は理解速度を落とすため。監査上の原値はイベントpayloadに残しつつ、UIは業務語で統一する。
+
+- Decision: `/app/chat/audit` は監査UIの表示層で `status/scope/intent/skip_reason/ai` を日本語ラベルへ変換し、フィルタチップ・集計カード・マトリクス見出し・一覧行バッジまで同じ語彙で統一した。`command_id` の生表示は削除した。
+- Why: チャット監査は非エンジニア含む運用者が一次トリアージに使うため、内部enumやIDの生表示よりも意味ラベルを優先した方が対応速度と誤判定防止に有効なため。
+
+- Decision: `/app/workflows` / `/app/workflows/runs` / `/app/workflows/runs/[id]` は run status・step type・見出し文言を日本語化し、日時表示を `ja-JP` に統一した。
+- Why: ワークフロー障害対応時に英語と実装値の混在があると判断が遅れるため。業務視点のラベルで統一しつつ、必要な技術詳細はJSON詳細に残す方針とした。
+
+- Decision: `ChatShell`（共有/個人/チャンネル共通UI）の監査補助表示で、`skip_reason`・`quick`・`result_json`・`finished` などの英語ラベルを日本語へ統一した。確認ボタン文言も `Yes/No` を日本語化した。
+- Why: チャット実行の一次確認は本画面で行うため、英語混在があると承認判断のスピードが落ちる。監査詳細はJSONに残しつつ、操作面は日本語優先に寄せる。
+
+- Decision: `integrations/slack` / `integrations/google` はコネクタ状態カードと設定手順の表示語彙を日本語運用向けに統一し、`connected_at` などの時刻は `ja-JP` 表示に揃えた。
+- Why: 連携設定は導入初期に最も詰まりやすい画面のため、英語混在を減らして設定ミスと問い合わせコストを下げるため。
+
+- Decision: `settings` の招待リンク一覧でも `expires/uses` 表記を日本語化し、日時を `ja-JP` 表示に統一した。
+- Why: 招待運用は管理者の非エンジニア利用が多く、英語略語よりも日本語ラベルの方が状態把握が速いため。
+
+- Decision: 主要一覧ページ（`/app/tasks`, `/app/agents`, `/app/executions`）は内部enumの生表示を避け、表示ラベル関数で日本語化する方針を適用した（例: task status/source, agent status, execution scope/intent/ref）。
+- Why: 一覧画面は現場オペレーションで最も参照頻度が高く、内部値の露出は認知負荷と読み間違いを増やすため。監査上の原値はDBに保持しつつ、UIは業務語で統一する。
+
+- Decision: ダッシュボードのナビゲーション語彙も合わせて調整し、`Trust` は `信頼スコア` へ統一した。
+- Why: トップ画面の導線語彙は全画面の基準になるため、語彙ブレを早期に潰して学習コストを下げるため。
+
+- Decision: `/app` ダッシュボードの優先対応キューと改善提案セクションで重複表示を解消し、`auto/block/open/intent` などの英語混在を日本語運用語彙へ統一した。あわせて提案カードの `priority/metric` とタスク分布の `status` はラベル変換関数を必ず通す実装に固定した。
+- Why: ダッシュボードは現場が最初に見る画面であり、同義語の重複表示や英語混在があると一次判断が遅れるため。表示層でのラベル変換を必須化して、今後の機能追加時にも語彙ブレを抑える。
+
+- Decision: `/app/proposals` と `/app/workspace` でも内部値（`pass/warn/block`, reason code, source, role）の生表示を避け、表示ラベル関数で日本語化する方針を適用した。日時表示は `ja-JP` を統一し、招待リンク情報の `expires/uses` など英語語彙を排除した。
+- Why: 提案審査とワークスペース管理は非エンジニア運用者の利用頻度が高く、内部コード値の露出が判断遅延と誤読を招くため。UIを業務語彙へ寄せて運用負荷を下げる。
+
+- Decision: `/app/chat/channels` は「新規チャンネル」導線を折りたたみ化して主画面からの圧迫を減らし、参加中チャンネル/DM数の要約表示を追加した。`/app/executions` はチャンネル絞り込みを追加し、行表示の `channel_id` はチャンネル名へ解決して表示する。
+- Why: 日常利用で最も触るチャット画面は作成フォームの常時表示より閲覧性を優先した方が使いやすく、実行監査では「どのチャンネル発の実行か」を即時に追えることが運用上重要なため。
+
+- Decision: `ChatShell` と `/app/chat/channels/[id]` は、絵文字依存の話者アイコン（🤖/👤）を廃止して文字ベースアバター（AI/イニシャル）へ統一し、インシデント重大度とチャネル種別も日本語ラベル化した。日時表示は `ja-JP` を基本とする。
+- Why: 監査・業務UIで装飾的絵文字より識別性を優先し、表示語彙を業務日本語へ揃えることで読み取り負荷を下げるため。
+
+- Decision: `/app/governance/trust` は見出しを「信頼スコア」に統一し、`provider/action_type` の生値表示をラベル化（例: `send_email` → 「メール送信」）した。`ChatShell` のワークスペース名フォールバックは `org_id` 表示をやめ、名称未設定ラベルを表示する。
+- Why: 運用UIで内部キーやIDを直接見せると可読性が落ちるため。監査上の原値はDBに残しつつ、画面は意味ラベル中心で統一する。
+
+- Decision: `/app/chat/audit` の詰まりマトリクスは `other/none` の内部語彙を「その他/スキップなし」に変換し、意図サマリの未設定表示も日本語（要約なし）へ統一した。
+- Why: 監査画面は一次トリアージ用途のため、英語キーや実装都合の文字列を残さず、判断に直結する語彙で表示する方が実務上有効なため。
+
+- Decision: `ChatShell` と `/app/chat/audit` のクイックアクション表示は `request_approval` など内部キーの生表示を廃止し、日本語ラベル（承認依頼/アクション実行/ワークフロー実行等）へ変換して表示する。
+- Why: チャット運用時の「何を実行しようとしているか」を非エンジニアでも即読できるようにし、確認判断ミスを減らすため。
+
+- Decision: ガバナンス提案文言（`lib/governance/recommendations.ts`）の英語混在を整理し、`Trust/Policy/block/min_trust_score/Evidence` などの語彙は「信頼スコア/ポリシーブロック/最小信頼スコア/証跡」に統一した。`/app/governance/recommendations` の履歴説明も `baseline` ではなく「基準値」表現に変更した。
+- Why: 改善提案は運用意思決定の中心であり、実装用語が混在すると解釈ミスが起きやすいため。業務語彙へ統一して可読性を維持する。
+
+- Decision: `/app/operations/jobs` は運用監視カードと履歴ラベルの英語混在（Planner/Workflow Tick/payload JSON/trigger など）を日本語語彙へ統一し、ジョブサーキット状態の表示は `resumeStageLabel` で一元化した。`/app/workflows` 系も補助文言を日本語へ揃えた。
+- Why: 運用監視画面は一次障害対応の入口であり、英語混在や同義語の揺れがあると判断速度が落ちるため。表示語彙を統一してトリアージの負荷を下げる。
+
+- Decision: `/app/operations/exceptions` の運用操作文言（`workflow/manual/run/due` など）を日本語へ統一し、日時表示は `ja-JP` に寄せた。確認ダイアログ文言も「ワークフロー実行」表記に揃えた。
+- Why: 例外対応画面は即時オペレーションで使うため、英語混在や内部語彙が残ると誤読しやすい。表示語彙を統一し、一次対応速度を優先する。
+
+- Decision: `/app` トップに「主要導線」ショートカット帯（承認キュー/例外キュー/チャット監査/ジョブ監視）を追加し、運用起点画面へ1クリックで遷移できる構成にした。あわせて `Operations Console` や `Workspace` など残り英語ラベルと重複表示を解消した。
+- Why: ダッシュボードが情報密度の高い画面になっているため、運用者が「次に開く画面」を迷わない導線を明示する方が実務で有効なため。
+
+- Decision: `/app/operations/exceptions` のフィルタUIで `export/payload` 表現を「出力/詳細JSON」へ統一し、ケース一覧の `kind` 生値（`failed_action` など）は表示層で日本語ラベルへ変換する方針にした。
+- Why: 例外キューは非エンジニア運用者が直接触るため、内部キーや英語混在のままだと判断コストが上がるため。
+
+- Decision: 招待リンク運用は `/app/settings` だけでなく `/app/workspace` からも直接実行できるようにし、`createWorkspaceInviteLink` / `revokeWorkspaceInviteLink` は `return_to` を受け取って呼び出し元へ戻る仕様にした。
+- Why: ワークスペース管理の主画面で作成/無効化まで完結できた方が運用導線が短く、管理者の往復操作を減らせるため。
+
+- Decision: `/app/chat/channels/[id]` に「運用ショートカット」帯を追加し、チャンネル起点で `実行履歴/チャット監査/例外キュー/タスク一覧` へ即時遷移できるようにした。メンバー招待は候補ゼロ時に空フォームではなく説明メッセージを表示する。
+- Why: チャンネル運用中に監査・例外対応へ遷移する回数が多いため、1クリック導線を置く方が実運用で速い。空フォーム表示は誤操作を招くため回避する。
+
+- Decision: `/app/executions` は `channel` フィルタが有効なときに「チャンネル絞り込み中」コンテキストカードを表示し、`チャンネルへ戻る` と `絞り込み解除` の導線を明示する。CSV導線ラベルは `CSV出力` に統一した。
+- Why: 実行監査はチャンネル起点の調査往復が多く、現在どのチャンネル文脈で見ているかを明示しないとナビゲーションミスが起きやすいため。導線を上部に固定することで調査速度を上げる。
+
+- Decision: `ai_execution_logs` の監査性を高めるため、`/app/executions/[id]` を新設し、一覧から各実行の詳細（状態・起点・スコープ・参照先・メタデータ）を1件単位で追跡できる構成にした。
+- Why: 障害調査や監査対応では一覧だけでは根拠不足になりやすく、個別実行の証跡を即時に確認できる詳細画面が運用上必須なため。
+
+- Decision: `/app/chat/audit` に `session_id` 直指定フィルタを追加し、URL共有・CSV/JSON出力・フィルタ要約へも同値を反映する。`/app/executions/[id]` からは `session_id` 付きで監査ページへ遷移する。
+- Why: 実行詳細からチャット監査へ往復する際にセッション単位で絞れないと調査対象が広すぎるため。1セッション固定で追える導線を標準化してトリアージ時間を短縮する。
+
+- Decision: `/app/chat/audit` 内の状態チップ・意図別失敗率・詰まりマトリクス・skip理由リンクなど、`buildAuditFilterHref` を使う遷移はすべて `session_id` を保持する仕様に統一した。
+- Why: セッション固定で調査している途中にリンク遷移でセッション条件が外れると、再現確認と原因追跡の効率が落ちるため。
+
+- Decision: `/app/executions/[id]` の task参照導線は「タスク詳細」と「証跡パック」を分離表示し、実行監査から Evidence Pack へ直接遷移できる構成にした。
+- Why: 監査実務ではタスク画面を経由せず証跡を直接開く頻度が高く、導線分離の方が調査時間を短縮できるため。
+
+- Decision: `/app/executions` 一覧でも task参照行に「証跡」リンクを追加し、`session_id` を取得して「チャット監査」への直リンクを設置した。
+- Why: 実行一覧から詳細ページを挟まずに証跡・監査へ飛べる方が一次トリアージが速く、障害時の調査フローを短縮できるため。
+
+- Decision: `/app/tasks/[id]/evidence` は `execution_id` クエリを受け取り、指定がある場合のみ「実行履歴へ戻る」導線を表示する。実行一覧/詳細から証跡へ遷移するリンクには `execution_id` を付与する。
+- Why: 実行監査と証跡確認を往復するときに起点へ戻りやすくし、監査担当のナビゲーションコストを減らすため。
+
+- Decision: `/app/chat/audit` は `chat_commands.id` と `ai_execution_logs.metadata_json.command_id` を照合して、各行に「実行履歴詳細」リンクを表示する。照合クエリは `source=chat` と command一覧の最古時刻以降を取得してマッピングする実装にした。
+- Why: チャット監査から実行台帳へ1クリックで遷移できるようにしつつ、JSONパス条件のDB互換性差分を避けて安定動作させるため。
+
+- Decision: `/app/chat/audit` の状態フィルタ対象に `declined`（却下）と `skipped`（スキップ）を追加し、集計カードとバッジ表示も対応させた。
+- Why: 確認キャンセルやガードによる停止は失敗と性質が異なるため、専用ステータスで監査できるようにした方が運用判断が速くなるため。
+
+- Decision: `/app/executions` も `declined`/`skipped` の集計カードを独立表示し、一覧行の状態バッジ色を `chat/audit` と同系統に統一した。
+- Why: 実行台帳とチャット監査でステータスの見え方が揃っていないと、運用者が画面をまたいだ際に判断ミスしやすいため。
+
+- Decision: `/app/executions` に `session_id` 直指定フィルタを追加し、入力時はセッション固定表示のコンテキストを上部に出す仕様にした。
+- Why: 実行台帳単体でもチャットセッション起点の追跡を完結できるようにし、監査画面との往復を減らすため。
+
+- Decision: `/api/executions/export` は `session_id` を含む実行履歴フィルタ（`source/status/requester/scope/intent/channel/incident`）を受け取り、一覧画面と同条件でCSV出力する仕様にした。CSV列にも `session_id` を追加した。
+- Why: 画面表示とCSV出力の条件が一致しないと監査提出時に差分が発生するため。条件一致を仕様化して再現性を担保する。
+
+- Decision: `runMonitorTick` の planner 起動判定を `total_signals>0` の単純条件から、`signal_score >= MONITOR_MIN_SIGNAL_SCORE` かつ `MONITOR_PLANNER_COOLDOWN_MINUTES` を満たす方式に変更した。`force_planner=1` は従来通り優先して起動し、インシデント中は常に停止する。
+- Why: シグナルが少量でも毎ティック起動すると提案ノイズが増え、運用負荷が上がるため。スコア閾値とクールダウンで「必要時のみ起動」を実現する。
+
+- Decision: monitor の skip 時チャットナッジは `incident_open` のみ投稿し、`no_signals`・`below_score_threshold`・`planner_cooldown` は抑止する。
+- Why: クールダウンや軽微シグナル時に毎回通知すると共有チャットがノイズ化するため。重大停止のみ通知して運用集中を維持する。
+
+- Decision: `runPlanner` に提案デデュープを追加し、`PLANNER_PROPOSAL_DEDUPE_HOURS`（既定24h）内の `proposed/accepted/executed` 提案と同一キー（title + to + subject + body_text）を検知した場合は新規作成せず `PROPOSAL_SKIPPED_DUPLICATE` イベントだけ記録する。
+- Why: 監視ティックや手動実行が重なったときに同一提案が連続生成されると、承認キューがノイズ化するため。短時間の重複を抑えて運用負荷を下げる。
+
+- Decision: monitor/planner の運用閾値（`monitor_stale_hours`, `monitor_min_signal_score`, `monitor_planner_cooldown_minutes`, `planner_proposal_dedupe_hours`）を `org_autonomy_settings` に追加し、`/app/monitor` から保存可能にした。ランタイムはDB値を優先し、列未適用時はenvへフォールバックする。
+- Why: 組織ごとに運用負荷とシグナル密度が異なるため、コード変更なしで閾値調整できる状態が必要。RLS配下のorg設定へ寄せることでマルチテナント運用に適合する。
+
+- Decision: `/app/monitor` の閾値更新操作は `ai_execution_logs` に `intent_type=monitor_settings_update` で記録し、成功/失敗と変更差分（before/after）を監査可能にした。
+- Why: 自律起動条件の変更は運用影響が大きいため、誰がいつ何を変更したかを実行台帳で追跡できるようにする必要があるため。
+
+- Decision: `/app/monitor` に「設定変更監査」セクションを追加し、`monitor_settings_update` の直近ログ（実行結果・実行者・変更差分）を画面内で確認できるようにした。詳細追跡は `/app/executions` への絞り込みリンクで遷移可能とした。
+- Why: 閾値変更の確認で都度実行履歴ページへ移動する運用は手間が大きく、監視画面内で一次確認を完結できる方が実務上効率的なため。
+
+- Decision: `runMonitorTick` は提案台帳にも監査イベントを記録するため、`proposal_events` に `MONITOR_DECISION_RECORDED` / `MONITOR_TICK_FINISHED` を追加記録する方式にした。`/app/planner` で直近イベントを参照表示し、monitorとplannerの相互参照を可能にした。
+- Why: 監視トリガー判断と提案生成結果を別画面で追うだけだと因果関係が見えにくいため。提案台帳側にも判定ログを残すことで運用レビューの一貫性を上げる。
+
+- Decision: `/app/monitor` は `monitor_run_id` クエリで実行履歴を絞り込めるようにし、`/app/planner` の監視判定イベントから同ID付きリンクで遷移できる導線を追加した。
+- Why: planner側で気づいた監視判定を monitor側の詳細文脈へ即時に辿れるようにし、原因追跡の往復を減らすため。
+
+- Decision: `/app/monitor` の `planner_run_id` 表示は `/app/planner?planner_run_id=<id>` へ遷移する逆導線に変更し、`/app/planner` 側では同クエリ指定時に対象runを強調表示する仕様にした。
+- Why: monitorからplannerへ戻る際も同一run文脈を維持し、相互参照の往復で対象を見失わないようにするため。
+
+- Decision: 外部シグナル取込のMVPとして `external_events` 台帳と `/api/events/intake` を追加し、`/app/events` で受信イベントの確認・処理状態更新を行える構成にした。monitor/planner は直近24時間の `pending` inbound 件数を新シグナルとして取り込み、スコア計算と提案優先度に反映する。
+- Why: メール/Slack等の外部起点を「検知→提案→承認/実行」ループへ接続する最短導線が必要だったため。まずは汎用イベント台帳で入口を一本化し、後続の個別コネクタ拡張に繋げる。
+
+- Decision: `/api/events/intake` の認可は本番系で `x-events-token`（`EVENTS_INGEST_TOKEN`）必須、開発環境のみ緩和する方式にした。重複イベントは `(org_id, provider, external_event_id)` で冪等受理する。
+- Why: 外部連携の入口は公開APIになりやすく、誤投入・再送・リトライを前提に最小限の保護と冪等性を先に確保する必要があるため。
+
+- Decision: `/app/events` の運用UIに `source/期間/キーワード` フィルタと `/api/events/export`（CSV）を追加し、一覧表示と同じ条件で監査出力できる仕様にした。ステータス更新後もフィルタ条件を維持する。
+- Why: 外部イベントの確認と監査提出を同一導線で完結できるようにし、トリアージ中の再絞り込みコストを減らすため。
+
+- Decision: `/api/events/intake` は provider に `google` が来た場合 `gmail` へ正規化し、unique競合（同一 external_event_id 再送）発生時は既存IDを返して冪等成功扱いにする。
+- Why: 送信元実装の表記揺れや同時リトライを吸収し、取込側で不要なエラーを増やさないため。
+
+- Decision: planner の seed提案に `new_inbound_events` を組み込み、受信外部イベントのサンプルから `planner_seed_external_event` 提案を優先生成する方式にした。
+- Why: 受信イベントを単なる監視シグナルで終わらせず、最短で「提案→承認→実行」フローへ乗せることで自律処理率を上げるため。
+
+- Decision: `/app` ダッシュボードに外部イベント運用KPI（未処理件数、外部イベント提案の採用率、平均判断遅延）を追加し、閾値超過時は警告色で表示する。`/app/proposals` には提案ソースフィルタを追加して外部イベント由来の提案だけを追跡できるようにした。
+- Why: 自律化の進捗を運用者が定量で追える状態にし、外部イベント起点の詰まり（未処理増加・低採用・判断遅延）を早期に検知するため。
+
+- Decision: `external_events` に `priority/triage_note/triaged_at` を追加し、`/app/events` から未処理イベントの自動仕分け（ルールベース優先度判定）を実行できるようにした。CSV出力も `priority` フィルタを反映する。
+- Why: 外部イベントの件数増加時に手動仕分けだけでは初動が遅れるため。軽量ルールで優先度を付与し、運用者が先に処理すべきイベントを即判別できるようにするため。
+
+- Decision: planner の `planner_seed_external_event` 提案は一律文面ではなく、`event_type/summary/provider` からテンプレート分岐（経理系、障害・セキュリティ系、Slack依頼系、汎用）する方式にした。
+- Why: 外部イベント起点の提案精度を上げ、受け入れ率の改善と一次対応速度の向上を狙うため。
+
+- Decision: 外部イベントテンプレートは `planner_seed_external_event_<template_key>` の source で記録し、直近30日の accepted/rejected 実績から採用率の高いテンプレートを seed提案で優先する学習ループを追加した。
+- Why: 「提案を出す」だけでなく、実際に採用されやすい提案を先に出すことで人間レビュー負荷を下げるため。
+
+- Decision: `/app/events` から外部イベントを直接 `business_cases` に起票できる `Case化` 操作を追加し、`external_events.linked_case_id` で起票済みケースを追跡する方式にした。Case化時は `CASE_CREATED_FROM_EXTERNAL_EVENT` を `case_events` に記録し、イベント状態は `processed` へ更新する。
+- Why: 例外対応の入口をイベント画面で完結させ、未処理イベントからケース管理への移行を1クリック化して初動を短縮するため。
+
+- Decision: ナビゲーションをヘッダー中心から左サイドバー中心へ再編し、主要導線のみ常時表示・低頻度機能は折りたたみグループに集約した。ホーム画面も詳細ブロックを折りたたみ化して初期表示の情報量を削減した。
+- Why: 初見ユーザーが『次に何をすべきか』を即判断できる導線を優先し、運用密度が高い機能は必要時のみ展開するUXへ寄せるため。
+
+- Decision: PCのサイドバーは  で本体領域と独立スクロールにし、メニュー量が多い場合のみサイドバー内でスクロールする構成にした。
+- Why: 本文スクロール中も主要導線を固定表示し、ナビ再探索の手間を減らすため。
+
+- Decision:  のフィルタUIを初期折りたたみ（条件指定時のみ自動展開）へ変更し、通常利用時の情報密度を下げた。
+- Why: 一覧確認が主目的の画面で、毎回フィルタ群が視界を占有しないようにして初動判断を速くするため。
+
+- Decision: PCのサイドバーは `h-screen + sticky + overflow-y-auto` で本体領域と独立スクロールにし、メニュー量が多い場合のみサイドバー内でスクロールする構成にした。
+- Why: 本文スクロール中も主要導線を固定表示し、ナビ再探索の手間を減らすため。
+
+- Decision: `/app/events` のフィルタUIを初期折りたたみ（条件指定時のみ自動展開）へ変更し、通常利用時の情報密度を下げた。
+- Why: 一覧確認が主目的の画面で、毎回フィルタ群が視界を占有しないようにして初動判断を速くするため。
+
+- Decision: ログアウト導線は誤操作防止のため常時ボタン表示をやめ、PC/モバイル共通でプロフィールアイコンをクリックしたユーザーメニュー内に集約した。設定遷移も同メニューに統合した。
+- Why: 日常操作中の誤タップを減らし、アカウント操作を一箇所に集約してUIノイズを下げるため。
+
+- Decision: `user_profiles` に `job_title` を追加し、設定画面で表示名・役職・画像を管理できるようにした。サイドバーのユーザーメニューにも役職を表示する。
+- Why: 共有ワークスペース運用では「誰が何の立場か」の文脈が重要で、承認・相談先判断を速くするため。
+
+- Decision: ユーザーメニューに言語即時切替（日本語/English）を追加し、`/api/preferences/locale` で cookie 更新後に元ページへ戻す方式にした。
+- Why: 設定画面を開かずに表示言語を切り替えられる導線を提供し、日常操作の切替コストを下げるため。
+
+- Decision: ログアウトボタンを常時表示から撤去し、プロフィールメニュー内に集約した。モバイルでも右上アイコンから同様に操作可能とした。
+- Why: 誤操作防止とUIノイズ削減を同時に満たすため。
+
+- Decision: 高優先度（`priority=high/urgent`）の外部イベントは `runAutoCaseifyForOrg` で自動Case化できる共通処理を追加し、`/app/events` からの手動実行と `/api/events/auto-caseify` のバッチ実行で同一ロジックを利用する方式にした。
+- Why: 例外系の初動を手動オペレーションに依存させず、運用ジョブからも同じ品質でケース起票できるようにするため。
+
+- Decision: `.github/workflows/autonomy-cron.yml` に `/api/events/auto-caseify?max_orgs=<N>` の定期実行を追加し、`/app/operations/jobs` に外部イベント自動Case化のKPI・履歴・手動実行ボタンを追加した。トークンは `EVENTS_AUTOMATION_TOKEN` を優先し、未設定時は `PLANNER_RUN_TOKEN` へフォールバックする。
+- Why: 高優先度イベントのCase化をイベント画面の手動操作だけに依存すると初動が遅れるため。cron実行と運用画面可視化をセットにして、検知→Case化の自律ループを常時回しつつ監査可能にするため。
+
+- Decision: `/api/events/auto-caseify` を `runWithOpsRetry` へ統一し、`events_auto_caseify_batch` としてリトライ/サーキット制御、`skipped_circuit` / `skipped_dry_run` 返却、`OPS_JOB_*` 監査イベント記録に対応させた。
+- Why: auto-caseify だけガード未適用だと定期運用時の失敗耐性と監査粒度が他ジョブより弱くなるため。既存の運用基盤に揃えて安定運用と障害分析を容易にするため。
+
+- Decision: `/app/operations/jobs` にジョブSLOカード（Planner / Governance Review / Events Auto-Caseify / Workflow Tick）を追加し、直近ウィンドウ別に `成功率` と `MTTR`（失敗から次の成功まで平均時間）を表示する方式にした。
+- Why: 件数カードだけでは運用品質の比較が難しく、復旧効率を継続改善しづらいため。成功率とMTTRを同画面で可視化し、優先的に改善すべきジョブを即判断できるようにするため。
+
+- Decision: `/app` トップページにも運用SLO要約（Planner / Governance Review / Events Auto-Caseify / Workflow Tick）を追加し、`成功率` と `MTTR` をしきい値ベースで `安定/注意/要改善` 色分け表示する方式にした。
+- Why: 運用者の初動はトップページから始まるため、ジョブ監視ページへ遷移しなくても危険ジョブを一目で判別できる必要がある。色分けで優先順位判断を短縮するため。
+
+- Decision: トップのSLOカードは `要改善 -> 注意 -> 安定` の優先順で並べ、カードクリックで `failed_only=1` + `focus=<job>` 付きの `/app/operations/jobs` へ遷移する導線にした。`operations/jobs` 側は `focus` を受けてフォーカス中ジョブをバッジ表示する。
+- Why: 危険ジョブを先頭で提示し、次アクション（詳細監視）へ1クリックで繋げることで、障害初動の迷いを減らしMTTR短縮に寄与するため。
+
+- Decision: `/app/operations/jobs` は `focus` 指定時に、該当セクション（planner/review/caseify/workflow）へ飛べる案内パネルを上部表示し、対象セクションを `ring` で強調する方式にした（`id` アンカー付与）。
+- Why: SLOカード経由で遷移した後に、ページ内で目的セクションを探す時間を減らし、トリアージ導線をさらに短縮するため。
+
+- Decision: `/app/operations/jobs` は `focus` 指定時、非対象の主要セクション（planner/review/caseify/workflow）を `<details>` でデフォルト折りたたみ表示にした。必要時のみ展開し、対象セクションに視線を集中させる。
+- Why: フォーカス遷移後に情報量が多いと再び探索コストが発生するため。非対象を簡略化して「今見るべき箇所」を明確にするため。
+
+- Decision: `focus` 中の `planner/review/workflow` セクションでは、失敗行を先頭固定し、失敗行を淡い赤背景で強調、さらに「最新失敗」1行サマリーを見出し直下に表示する方式にした。
+- Why: フォーカスしても成功行が先に並ぶと障害初動が遅れるため。最新失敗を即認識できるUIにして一次トリアージ時間を短縮するため。
+
+- Decision: `focus` セクション内に即時実行ボタンを追加し、ページ遷移なしで `Planner実行 / Governance Review実行 / Workflow Tick実行 / 外部イベントAuto-Caseify実行` を開始できるようにした。実行は `ConfirmSubmitButton` で確認付き。
+- Why: 失敗特定後に別ページへ移動して実行する導線は初動を遅らせるため。監視画面から直接復旧アクションを起動して MTTR を下げるため。
+
+- Decision: `/app/operations/jobs` に「最後に押したアクション」固定カードを追加し、`OPS_JOB_MANUAL_RUN` イベントを基に最新手動実行（成功/失敗、実行ジョブ、メッセージ）を常時表示する方式にした。直近履歴（最大5件）も同カード内に展開可能とした。
+- Why: 手動復旧を連続実行すると直前結果を見失いやすいため。ページ再読み込み後も最後の実行結果を保持し、オペレーターの状況把握を安定化させるため。
+
+- Decision: 「最後に押したアクション」カードおよび直近履歴には、`job_name` と成否に応じた遷移先リンク（復旧先/関連ページ）を表示する仕様にした。失敗時は原則 `focus` 付き jobs や該当キューへ誘導する。
+- Why: 実行結果を確認した後の次アクションを明示しないと、オペレーターが画面遷移先を迷いやすいため。復旧導線を固定カード内に内包して初動を短縮するため。
+
+- Decision: 復旧先リンクには `ref_job` / `ref_ts` を付与し、`/app/operations/jobs` 側で参照元コンテキストを表示しつつ、該当時刻行をインディゴでハイライトする方式を追加した。
+- Why: 復旧導線で往復した際に「どの実行結果を見ているか」が失われると判断ミスが起きるため。参照コンテキストをURLで保持して追跡性を高めるため。
+
+- Decision: `ref_job` / `ref_ts` の参照コンテキスト表示と対象行ハイライトを `/app/events` と `/app/workflows/runs` にも拡張した。`workflow_tick` / `events_auto_caseify` では ref時刻一致がない場合でも最優先候補（failed run / high priority new event）をフォールバックで強調する。
+- Why: 復旧先ページ側で参照対象を見失うと次アクションが遅れるため。監視画面外でも文脈を維持し、オペレーターの探索コストを下げるため。
+
+- Decision: `ref_job` / `ref_ts` の参照コンテキスト表示と対象行ハイライトを `/app/cases` と `/app/chat/audit` にも拡張した。`events_auto_caseify` と `workflow_tick` の ref では時刻一致がない場合、各画面の復旧対象候補（ケース先頭/失敗コマンド）をフォールバック強調する。
+- Why: operations/jobs の手動実行カードから遷移した後も「何の復旧文脈で来たか」を見失わないようにし、ページ間でのトリアージ時間を短縮するため。
+
+- Decision: チャット実行で未対応 `intent_type` を例外で失敗扱いにせず、`skipped`（`skip_reason=unsupported_intent_type`）として安全に完了させるフォールバックを追加した。
+- Why: 意図パーサーの拡張途中で未知intentが混入しても運用フロー全体を失敗にせず、ユーザーへ再指示を促しつつ監査ログを残すため。
+
+- Decision: `/app/tasks/[id]` の「メール送信を実行」可否判定に、`同一idempotency_keyのsuccess/queued/running` と `task単位のrunning/queued` を反映し、サーバー側の `executeTaskDraftActionShared` のスキップ条件（既実行・実行中・キュー済み）とUI表示を一致させた。
+- Why: 実行できない状態で実行ボタンが表示されるとオペレーター判断を誤らせるため。フロントの可否表示を実行ロジックと同一の意味に揃え、運用の予測可能性を上げるため。
+
+- Decision: チャット実行失敗とワークフロー実行失敗のユーザー表示を `toUserActionableError` で正規化し、技術的エラー文をそのまま返さず「次に何をすべきか」が分かる文面に統一した。`chat_commands.result_json` には `error`（表示用）と `raw_error`（監査/デバッグ用）を分離記録する。
+- Why: 実運用では失敗時の初動が最重要であり、エラー文が技術寄りだと復旧行動が遅れるため。表示文を行動指向に統一しつつ、監査用には生エラーを保持するため。
+
+- Decision: チャットの曖昧解消メッセージ（task/case/proposal/approval）から `*_id` 表示を外し、候補提示を「表示名（タイトル）」ベースに統一した。再入力例も名称指定のみを案内する。
+- Why: 会話UIで内部IDを露出すると利用者の認知負荷が上がるため。業務文脈の名称で完結できる誘導を優先し、入力負担を下げるため。
+
+- Decision: チャット実行失敗時は `intent_type` ごとに復旧先ページ（approvals/tasks/workflows/planner/monitor/cases など）を自動付与し、システムメッセージに `次の確認先: /app/...` を表示する仕様にした。監査メタデータにも `recovery_path` を保存する。
+- Why: 失敗理由だけでは次アクションが曖昧になりやすいため。失敗直後に最短で復旧画面へ誘導し、運用の停滞を減らすため。
+
+- Decision: チャット実行失敗時の `recovery_path` を `chat_commands.result_json` と `ai_execution_logs.metadata_json` の両方に保存し、`/app/chat/audit` と `/app/executions` から「復旧先を開く」リンクを直接表示するようにした。
+- Why: 失敗時の再現性ある復旧導線を監査画面と実行履歴画面の両方で保証し、オペレーターの復旧時間を短縮するため。
+
+- Decision: 復旧リンクに `ref_from/ref_intent/ref_ts` を付与し、`/app/approvals`, `/app/tasks`, `/app/workflows/runs`, `/app/planner`, `/app/monitor`, `/app/cases` で参照コンテキストバナーを表示するようにした。
+- Why: 失敗ログから復旧画面へ遷移した際に、どの失敗文脈で来たかを明示して判断ミスを減らすため。
+
+- Decision: 参照コンテキスト遷移時の対象行ハイライトを `/app/approvals`, `/app/tasks`, `/app/planner`, `/app/monitor` に拡張した。`ref_ts` 一致を最優先し、未一致時は `ref_intent` ごとのフォールバック（先頭/失敗優先）で強調する。
+- Why: 復旧先で対象を目視探索する時間を削減し、失敗起点のトリアージを一手で始められるようにするため。
+
+- Decision: 復旧リンクには `#ref-target` アンカーを付与し、遷移先のハイライト対象行に `id=ref-target` を設定して自動スクロールさせる仕様にした。
+- Why: 復旧先で対象行までのスクロール探索を省き、失敗起点の一次対応をさらに短縮するため。
+
+- Decision: 復旧導線E2Eは安定性優先で `seed-recovery-context` テスト用APIを追加し、`ai_execution_logs` の失敗行と `planner_runs` を事前投入して `実行履歴 -> 復旧先リンク -> 参照コンテキスト表示 + #ref-targetハイライト` を検証する方式にした。
+- Why: 実運用の失敗発生をテスト内で再現すると非決定的になりやすいため。最小シードで導線品質だけを確実に担保するため。
+
+- Decision: `seed-recovery-context` に `includeChatAudit` フラグを追加し、必要時のみ `chat_sessions/messages/intents/commands` と `ai_execution_logs.metadata_json.command_id` を同時シードするようにした。これにより `chat audit -> 復旧先リンク` 導線も deterministic にE2E検証できる。
+- Why: 既存の実行履歴E2E互換を保ちつつ、チャット監査側の復旧リンク品質も同じ粒度で担保するため。
+
+- Decision: `/api/chat/audit/export` のフィルタを監査画面に合わせて拡張し、`status=declined/skipped` と `session_id` を正式サポートした。CSVメタにも `filter_session_id` を出力する。
+- Why: 画面で見ている条件とエクスポート結果の不一致を減らし、監査データの再現性を高めるため。
+
+- Decision: chat監査エクスポートの回帰防止として、Playwrightに `chat audit export respects session_id and status filters` を追加した。`seed-recovery-context` で chat監査データを作成し、`/api/chat/audit/export?format=json` の `meta` と `rows` がフィルタ条件に一致することを検証する。
+- Why: 監査用途では「UI条件どおりに抽出されること」が重要であり、APIの小さな条件漏れをE2Eで早期検知するため。
+
+- Decision: `seed-recovery-context` に `blockedByIncident` / `incidentSeverity` / `executionLogStatus` を追加し、`/api/executions/export` の `session_id + incident=blocked` 条件をPlaywrightで検証した（`executions export respects session_id and incident filters`）。
+- Why: 実行監査CSVはインシデント停止行の抽出が重要で、運用時に最も参照される条件の回帰を自動テストで固定するため。
+
+- Decision: `/app/executions` にも監査画面と同様の「条件リンクコピー」「条件付きエクスポート表示」「アクティブフィルタ要約」を追加した。URL共有は現在の絞り込み条件（window/from/to含む）をそのまま保持する。
+- Why: 実行監査での引き継ぎや監査再現を、chat監査と同じ操作感で行えるようにしてオペレーターの認知負荷を下げるため。
+
+- Decision: `CopyFilterLinkButton` を `/app/events` と `/app/operations/jobs` にも展開し、両ページで「条件付き表示/エクスポート」バッジとフィルタ要約を表示するようにした。`events` は status/provider/source/priority/from/to/q、`jobs` は failed_only/window/focus をURL化する。
+- Why: 監視・運用ページ間でフィルタ共有体験を統一し、運用引き継ぎ時の再現コストを下げるため。
+
+- Decision: 同じフィルタ共有UIを `/app/proposals` と `/app/monitor` にも追加した。`proposals` は status/policy_status/source/min_priority/decision_reason_prefix、`monitor` は window/monitor_run_id をリンク化し、条件付き表示バッジと要約を出す仕様にした。
+- Why: 提案評価画面と監視画面でも条件共有・再現手順を統一し、運用チーム間の引き継ぎ時間を短縮するため。
+
+- Decision: `/app/tasks` と `/app/approvals` にも `CopyFilterLinkButton` を追加し、条件付き表示バッジとフィルタ要約を表示するようにした。`tasks` は source/case_id、`approvals` は stale_only/high_risk_only/sort/window を共有URL化する。
+- Why: コア運用画面でのフィルタ共有体験を完全に揃え、障害対応やレビュー引き継ぎ時の「同じ条件を再現する」手間を減らすため。
+
+- Decision: `/app` トップの主要リンクで `window` 文脈の引き継ぎ漏れがあった `governance/recommendations` への導線2箇所を `withWindowParam(...)` に統一した。
+- Why: ホームから遷移した際に期間コンテキストが失われると、監視・改善判断の再現性が落ちるため。
+
+- Decision: `/app/chat/audit` のサーバーアクションフォーム（期限切れ整理、一括再実行確認、個別再実行確認）の `return_to` を固定 `/app/chat/audit` から `currentFilterPath` に変更した。
+- Why: 監査フィルタ適用中の操作後に条件が失われると再調査コストが増えるため。操作後も同一条件へ戻すことでトリアージ継続性を高めるため。
+
+- Decision: `/app/operations/jobs` の主要実行アクション（incident/caseify/workflow/alert/planner/review/guard/circuit解除）に `return_to` hidden を付与し、`actions.ts` 側で `return_to` を安全に解釈して成功/失敗メッセージ付きで元の `window/focus/failed_only` 条件へ戻すようにした。
+- Why: ジョブ実行後にフォーカス文脈が失われると連続オペレーションが中断されるため。操作後も同一コンテキストを維持してMTTR短縮につなげるため。
+
+- Decision: `lib/app/returnTo.ts` を追加し、`resolveSafeAppReturnTo` と `withMessageOnReturnTo` で `return_to` を `/app/` 配下に限定して扱う共通実装にした。`approvals/actions.ts` と `events/actions.ts` はこの共通関数を使って遷移先へ `ok/error` を付与する方式に統一した。
+- Why: 各画面のアクション実装ごとにリダイレクトURL組み立てを重複させると、条件保持漏れや安全性の揺れが起きやすいため。共通化で再現性と保守性を上げるため。
+
+- Decision: `/app/approvals` と `/app/events` のアクションフォームにも `return_to=currentFilterPath` を付与し、`stale_only/high_risk_only/sort/window` や `status/provider/source/priority/from/to/q` の文脈を操作後に維持するようにした。
+- Why: 承認・イベント運用は同条件で連続操作するケースが多く、操作後にフィルタがリセットされると再トリアージコストが高いため。
+
+- Decision: ESLint の Flat Config に Next.js 公式プラグイン（`@next/eslint-plugin-next`）を追加し、`recommended` + `core-web-vitals` ルールを標準適用した。
+- Why: `next build` 時の「Next.js plugin 未検出」警告を解消し、CI/ローカルで同一の品質ゲートを維持するため。
+
+- Decision: プロフィール/チャットのアバター表示は `<img>` から `next/image` に置換し、外部URL互換性を保つため `unoptimized` を付与した。
+- Why: Next ESLint の `@next/next/no-img-element` へ準拠しつつ、現行の外部アバターURL仕様（ドメイン固定なし）を壊さないため。
+
+- Decision: Playwright E2E はプレースホルダ文言や英語固定テキストへの依存を減らし、`name` 属性セレクタ・`href` セレクタ・日英両対応の状態ラベル正規表現で判定する方針に更新した。UI上で再実行ボタンが非表示になるケースは「非表示+実行済み文言」を成功条件として扱う。
+- Why: 日本語UI改善や文言変更でE2Eが連鎖的に不安定化するのを防ぎ、機能の本質（状態遷移・イベント記録）を検証対象として維持するため。
