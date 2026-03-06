@@ -7,6 +7,7 @@ type PlannerSignal = {
   title: string;
   details: string;
   count: number;
+  meta?: Record<string, unknown>;
 };
 
 type PlannerProposal = {
@@ -316,7 +317,13 @@ async function buildSignals(args: { supabase: SupabaseClient; orgId: string }): 
       kind: "stale_open_cases",
       title: "Stale open cases",
       details: `${staleCases.length} open cases are stale for more than ${staleHours}h.`,
-      count: staleCases.length
+      count: staleCases.length,
+      meta: {
+        sample_case_titles: staleCases
+          .map((row) => (typeof row.title === "string" ? row.title : ""))
+          .filter((v) => v.trim().length > 0)
+          .slice(0, 5)
+      }
     });
   }
 
@@ -345,6 +352,67 @@ function makeStubProposals(args: { signals: PlannerSignal[]; maxProposals: numbe
       risks: ["Verify recipient before sending proactive communications."]
     }
   ].slice(0, args.maxProposals);
+}
+
+function pickSampleCaseTitles(signal: PlannerSignal | undefined): string[] {
+  const raw = signal?.meta?.sample_case_titles;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0).slice(0, 3);
+}
+
+function makeSeedProposals(args: { signals: PlannerSignal[]; maxProposals: number }): PlannerProposal[] {
+  const domain = getAllowedDomainForProposal();
+  const staleCaseSignal = args.signals.find((signal) => signal.kind === "stale_open_cases");
+  const staleCaseTitles = pickSampleCaseTitles(staleCaseSignal);
+  const proposals: PlannerProposal[] = [];
+
+  if (staleCaseSignal && staleCaseSignal.count > 0) {
+    proposals.push({
+      source: "planner_seed_case_stale",
+      title: "滞留案件の情報回収を実施",
+      rationale: `${staleCaseSignal.count}件のopen案件が長時間更新されていないため、未回収情報と担当状況の確認を先行します。`,
+      summary: "滞留案件に対して不足情報の回収と次アクション期限の明確化を促す連絡案です。",
+      proposed_actions: [
+        {
+          provider: "google",
+          action_type: "send_email",
+          to: `ops@${domain}`,
+          subject: `【要対応】滞留案件の更新確認（${staleCaseSignal.count}件）`,
+          body_text: `以下の案件で更新が滞留しています。状況確認と次アクション予定日を返信してください。\n\n${staleCaseTitles.length > 0 ? staleCaseTitles.map((title, idx) => `${idx + 1}. ${title}`).join("\n") : "・案件一覧はAI Agent OSの案件台帳を参照"}\n\n回答期限: 本日中`
+        }
+      ],
+      risks: ["送信前に宛先グループが最新か確認してください。"]
+    });
+  }
+
+  if (proposals.length < args.maxProposals) {
+    proposals.push(
+      ...makeStubProposals({
+        signals: args.signals,
+        maxProposals: args.maxProposals - proposals.length
+      })
+    );
+  }
+
+  return proposals.slice(0, args.maxProposals);
+}
+
+function proposalFingerprint(proposal: PlannerProposal) {
+  const action = proposal.proposed_actions[0];
+  return `${proposal.title}|${action?.to ?? ""}|${action?.subject ?? ""}`;
+}
+
+function mergeProposals(seed: PlannerProposal[], generated: PlannerProposal[], maxProposals: number) {
+  const merged: PlannerProposal[] = [];
+  const seen = new Set<string>();
+  for (const row of [...seed, ...generated]) {
+    const key = proposalFingerprint(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+    if (merged.length >= maxProposals) break;
+  }
+  return merged;
 }
 
 function clampScore(value: number) {
@@ -391,17 +459,27 @@ async function generateProposalsWithOpenAI(args: {
   maxProposals: number;
   feedback: ProposalFeedbackStats;
 }): Promise<PlannerProposal[]> {
+  const seedProposals = makeSeedProposals({
+    signals: args.signals,
+    maxProposals: args.maxProposals
+  });
+  if (seedProposals.length >= args.maxProposals) {
+    return seedProposals.slice(0, args.maxProposals);
+  }
+
   if (process.env.E2E_MODE === "1") {
-    return makeStubProposals(args);
+    return seedProposals.slice(0, args.maxProposals);
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return makeStubProposals(args);
+    return seedProposals.slice(0, args.maxProposals);
   }
 
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const domain = getAllowedDomainForProposal();
+  const staleCaseSignal = args.signals.find((signal) => signal.kind === "stale_open_cases");
+  const staleCaseTitles = pickSampleCaseTitles(staleCaseSignal);
   const prompt = [
     "You are an autonomous workflow planner for an operations inbox.",
     "Return JSON only. No markdown.",
@@ -414,6 +492,7 @@ async function generateProposalsWithOpenAI(args: {
     `- Prefer recipient domain ${domain}.`,
     `max_proposals=${args.maxProposals}`,
     `signals=${JSON.stringify(args.signals)}`,
+    `stale_case_titles=${JSON.stringify(staleCaseTitles)}`,
     `feedback=${JSON.stringify({
       window_days: args.feedback.windowDays,
       acceptance_rate: args.feedback.acceptanceRate,
@@ -459,9 +538,9 @@ async function generateProposalsWithOpenAI(args: {
   const parsed = safeJsonParse(content);
   const normalized = normalizePlannerProposals(parsed);
   if (normalized.length === 0) {
-    return makeStubProposals(args);
+    return seedProposals.slice(0, args.maxProposals);
   }
-  return normalized.slice(0, args.maxProposals);
+  return mergeProposals(seedProposals, normalized, args.maxProposals);
 }
 
 async function appendProposalEvent(args: {

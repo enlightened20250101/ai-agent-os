@@ -1068,3 +1068,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Planner signal に `stale_open_cases`（`business_cases.status=open` かつ長時間未更新）を追加し、提案生成時の優先度計算に反映した。
 - Why: タスク滞留だけでなく案件滞留を自律提案の入力に含め、Case起点で未解消案件を前倒し処理できるようにするため。
+
+- Decision: Planner提案は `stale_open_cases` 検知時に専用シード提案（滞留案件の情報回収メール案）を優先生成し、OpenAI生成案と重複除去してマージする方式にした。
+- Why: LLM出力の揺らぎに依存せず、ケース滞留に対する最小有効アクションを常に提案できるようにして運用品質を安定化するため。
