@@ -1095,3 +1095,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Auto Guard セクションに「推奨閾値（現在の stale pending 件数から算出）」とワンクリック実行を追加し、手動実行フォームの初期値も推奨値にした。
 - Why: 運用者が閾値を都度考える負荷を減らし、状況に応じたガード実行をより短い操作で行えるようにするため。
+
+- Decision: Auto Guard の直近結果カードに「前回比(stale件数)」を追加し、直近2回の auto 実行ログから改善/悪化/横ばいを表示する。
+- Why: 再通知施策の効果を単発値ではなくトレンドで判断できるようにし、次アクションの優先度を決めやすくするため。

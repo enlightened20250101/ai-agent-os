@@ -137,6 +137,14 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const autoSkippedRuns = autoEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_SKIPPED").length;
   const latestAutoEvent = autoEvents[0] ?? null;
   const latestAutoPayload = parseObject(latestAutoEvent?.payload_json ?? null);
+  const previousAutoEvent = autoEvents[1] ?? null;
+  const previousAutoPayload = parseObject(previousAutoEvent?.payload_json ?? null);
+  const latestAutoStaleCount = Number(latestAutoPayload?.stale_pending_count ?? NaN);
+  const previousAutoStaleCount = Number(previousAutoPayload?.stale_pending_count ?? NaN);
+  const autoStaleDelta =
+    Number.isFinite(latestAutoStaleCount) && Number.isFinite(previousAutoStaleCount)
+      ? latestAutoStaleCount - previousAutoStaleCount
+      : null;
   const currentStalePendingCount = pendingApprovals.filter((approval) => {
     const ageHours = (Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000);
     return ageHours >= staleHours;
@@ -313,6 +321,18 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
             <p className="mt-1 text-slate-600">
               stale={String(latestAutoPayload?.stale_pending_count ?? "-")} threshold={String(latestAutoPayload?.threshold ?? autoMinStale)} reason=
               {String(latestAutoPayload?.reason ?? "-")} sent_count={String(latestAutoPayload?.sent_count ?? 0)}
+            </p>
+            <p className="mt-1 text-slate-600">
+              前回比(stale):{" "}
+              {autoStaleDelta === null ? (
+                "-"
+              ) : autoStaleDelta > 0 ? (
+                <span className="font-semibold text-rose-700">+{autoStaleDelta}（悪化）</span>
+              ) : autoStaleDelta < 0 ? (
+                <span className="font-semibold text-emerald-700">{autoStaleDelta}（改善）</span>
+              ) : (
+                <span className="font-semibold text-slate-700">0（横ばい）</span>
+              )}
             </p>
           </div>
         ) : (
