@@ -17,6 +17,10 @@ function isMissingTableError(message: string, tableName: string) {
   );
 }
 
+function isMissingColumnError(message: string, columnName: string) {
+  return message.includes(`column "${columnName}" does not exist`) || message.includes(`column ${columnName} does not exist`);
+}
+
 function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
@@ -113,43 +117,52 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
-  const [
-    { data: task, error: taskError },
-    { data: events, error: eventsError },
-    { data: approvals, error: approvalsError },
-    { data: actions, error: actionsError }
-  ] = await Promise.all([
-    supabase
-      .from("tasks")
-      .select("id, title, status, created_at, created_by_user_id, agent_id")
-      .eq("id", id)
-      .eq("org_id", orgId)
-      .maybeSingle(),
-    supabase
-      .from("task_events")
-      .select("id, created_at, event_type, actor_type, actor_id, payload_json")
-      .eq("org_id", orgId)
-      .eq("task_id", id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("approvals")
-      .select("id, status, reason, requested_by, approver_user_id, created_at, decided_at")
-      .eq("org_id", orgId)
-      .eq("task_id", id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("actions")
-      .select("id, provider, action_type, status, request_json, result_json, created_at")
-      .eq("org_id", orgId)
-      .eq("task_id", id)
-      .order("created_at", { ascending: false })
-  ]);
+  const taskWithCaseRes = await supabase
+    .from("tasks")
+    .select("id, title, status, created_at, created_by_user_id, agent_id, case_id")
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  const taskRes =
+    taskWithCaseRes.error && isMissingColumnError(taskWithCaseRes.error.message, "tasks.case_id")
+      ? await supabase
+          .from("tasks")
+          .select("id, title, status, created_at, created_by_user_id, agent_id")
+          .eq("id", id)
+          .eq("org_id", orgId)
+          .maybeSingle()
+      : taskWithCaseRes;
+
+  const [{ data: events, error: eventsError }, { data: approvals, error: approvalsError }, { data: actions, error: actionsError }] =
+    await Promise.all([
+      supabase
+        .from("task_events")
+        .select("id, created_at, event_type, actor_type, actor_id, payload_json")
+        .eq("org_id", orgId)
+        .eq("task_id", id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("approvals")
+        .select("id, status, reason, requested_by, approver_user_id, created_at, decided_at")
+        .eq("org_id", orgId)
+        .eq("task_id", id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("actions")
+        .select("id, provider, action_type, status, request_json, result_json, created_at")
+        .eq("org_id", orgId)
+        .eq("task_id", id)
+        .order("created_at", { ascending: false })
+    ]);
+
+  const { data: task, error: taskError } = taskRes;
 
   if (taskError) throw new Error(`Failed to load task: ${taskError.message}`);
   if (eventsError) throw new Error(`Failed to load events: ${eventsError.message}`);
   if (approvalsError) throw new Error(`Failed to load approvals: ${approvalsError.message}`);
   if (actionsError) throw new Error(`Failed to load actions: ${actionsError.message}`);
   if (!task) notFound();
+  const caseId = (task as { case_id?: string | null }).case_id ?? null;
 
   const [agentRes, creatorRes] = await Promise.all([
     task.agent_id
@@ -164,6 +177,51 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
       ? supabase.auth.admin.getUserById(task.created_by_user_id as string)
       : Promise.resolve({ data: { user: null }, error: null })
   ]);
+
+  const [caseRes, caseEventsRes] = caseId
+    ? await Promise.all([
+        supabase
+          .from("business_cases")
+          .select("id, title, case_type, status, source, created_at, updated_at")
+          .eq("org_id", orgId)
+          .eq("id", caseId)
+          .maybeSingle(),
+        supabase
+          .from("case_events")
+          .select("id, event_type, actor_user_id, payload_json, created_at")
+          .eq("org_id", orgId)
+          .eq("case_id", caseId)
+          .order("created_at", { ascending: false })
+          .limit(100)
+      ])
+    : [
+        { data: null, error: null },
+        { data: [], error: null }
+      ];
+  if (caseRes.error && !isMissingTableError(caseRes.error.message, "business_cases")) {
+    throw new Error(`Failed to load case: ${caseRes.error.message}`);
+  }
+  if (caseEventsRes.error && !isMissingTableError(caseEventsRes.error.message, "case_events")) {
+    throw new Error(`Failed to load case events: ${caseEventsRes.error.message}`);
+  }
+  const caseRow =
+    caseRes.error && isMissingTableError(caseRes.error.message, "business_cases")
+      ? null
+      : (caseRes.data as
+          | {
+              id: string;
+              title: string;
+              case_type: string;
+              status: string;
+              source: string;
+              created_at: string;
+              updated_at: string;
+            }
+          | null);
+  const caseEvents =
+    caseEventsRes.error && isMissingTableError(caseEventsRes.error.message, "case_events")
+      ? []
+      : (caseEventsRes.data ?? []);
 
   const { data: exceptionCasesRaw, error: exceptionCasesError } = await supabase
     .from("exception_cases")
@@ -282,6 +340,54 @@ export default async function EvidencePage({ params }: EvidencePageProps) {
               "（なし）"
             )}
           </p>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-6">
+        <h2 className="text-lg font-semibold">A2. 案件コンテキスト（Case Ledger）</h2>
+        {caseRow ? (
+          <div className="mt-3 space-y-1 text-sm text-slate-700">
+            <p>ケースID: {caseRow.id}</p>
+            <p>ケース名: {caseRow.title}</p>
+            <p>ケース種別: {caseRow.case_type}</p>
+            <p>ケース状態: {caseRow.status}</p>
+            <p>ソース: {caseRow.source}</p>
+            <p>作成日時: {new Date(caseRow.created_at).toLocaleString()}</p>
+            <p>更新日時: {new Date(caseRow.updated_at).toLocaleString()}</p>
+            <p>
+              <Link href="/app/cases" className="underline">
+                ケース一覧を見る
+              </Link>
+            </p>
+          </div>
+        ) : caseId ? (
+          <p className="mt-3 text-sm text-slate-600">ケース情報を取得できませんでした（case_id: {caseId}）。</p>
+        ) : (
+          <p className="mt-3 text-sm text-slate-600">このタスクはケース未紐付けです。</p>
+        )}
+
+        <div className="mt-4">
+          <p className="text-sm font-medium text-slate-900">Case Events</p>
+          {caseEvents.length > 0 ? (
+            <ul className="mt-2 space-y-2 text-sm text-slate-700">
+              {caseEvents.map((event) => (
+                <li key={event.id as string} className="rounded-md border border-slate-200 p-3">
+                  <p>
+                    {event.event_type as string} | at: {new Date(event.created_at as string).toLocaleString()}
+                  </p>
+                  <p>actor_user_id: {(event.actor_user_id as string) ?? "system"}</p>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer font-medium">payload JSON</summary>
+                    <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-3 text-xs">
+                      {pretty(event.payload_json)}
+                    </pre>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-slate-600">ケースイベントはありません。</p>
+          )}
         </div>
       </section>
 

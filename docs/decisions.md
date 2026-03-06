@@ -1050,3 +1050,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Caseイベント記録は業務処理を止めない方針とし、`case_events` 未適用時は安全にno-op（警告ログ）で継続する。
 - Why: migration適用の時差で本線の承認/実行フローが停止しないよう、台帳拡張を後方互換で導入するため。
+
+- Decision: Evidence Pack (`/app/tasks/[id]/evidence`) に Case Ledger セクション（`tasks.case_id` の案件情報 + `case_events` 一覧）を追加した。
+- Why: タスク単体証跡に加えて、案件単位の経緯（リンク/承認判断/状態同期）を同じ監査レポートで追跡できるようにするため。
