@@ -1755,3 +1755,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: ホーム `/app` と `/app/governance/recommendations` の指標に `APPROVAL_BLOCKED`（総数）と `sod_initiator_approver_conflict`（SoD違反）を追加し、改善提案にも「承認ブロック要因の是正」を自動生成するようにした。導線は `blocked_only=1` を付けて承認画面へ直行させる。
 - Why: SoD違反を承認ページだけでなく全体運用のKPIとして扱い、日次監視→改善提案→現場対応のループを1クリックで回せるようにするため。
+
+- Decision: `/app/approvals` に SoD違反の再発分析カード（起点メンバー上位5 / 発生経路上位5）を追加し、`APPROVAL_BLOCKED` の `reason_code` と `source` を運用改善指標として常時可視化した。
+- Why: ブロック件数だけでは再発防止策（教育対象・導線改善）が決めにくいため。誰がどの経路で失敗しやすいかを同画面で把握し、改善アクションへ直接つなげるため。

@@ -94,6 +94,13 @@ function blockedReasonLabel(reasonCode: string) {
   return reasonCode || "不明";
 }
 
+function blockedSourceLabel(source: string) {
+  if (source === "web") return "Web";
+  if (source === "chat") return "チャット";
+  if (source === "slack") return "Slack";
+  return source || "不明";
+}
+
 export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -324,6 +331,35 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         .filter((entry) => entry[1].length > 0)
     );
   }
+
+  const sodBlockedEvents = blockedEvents.filter((row) => row.reasonCode === "sod_initiator_approver_conflict");
+  const sodBlockedByActor = Array.from(
+    sodBlockedEvents.reduce((acc, row) => {
+      const actorKey = row.actorId ?? "system";
+      acc.set(actorKey, (acc.get(actorKey) ?? 0) + 1);
+      return acc;
+    }, new Map<string, number>())
+  )
+    .map(([actorKey, count]) => ({
+      actorKey,
+      count,
+      actorLabel:
+        actorKey === "system"
+          ? "system"
+          : (memberDisplayNameByUserId.get(actorKey) ?? "メンバー")
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+  const blockedBySource = Array.from(
+    blockedEvents.reduce((acc, row) => {
+      const sourceKey = row.source || "unknown";
+      acc.set(sourceKey, (acc.get(sourceKey) ?? 0) + 1);
+      return acc;
+    }, new Map<string, number>())
+  )
+    .map(([sourceKey, count]) => ({ sourceKey, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
 
   let riskScoreByTaskId = new Map<string, number>();
   let policyByTaskId = new Map<string, "pass" | "warn" | "block">();
@@ -640,6 +676,45 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         ) : (
           <p className="mt-3 text-xs text-amber-900">直近{windowLabel(windowFilter)}の承認ブロックはありません。</p>
         )}
+      </section>
+
+      <section className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-rose-900">SoD違反の再発分析（{windowLabel(windowFilter)}）</p>
+          <span className="text-xs text-rose-800">reason_code=sod_initiator_approver_conflict</span>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-md border border-rose-200 bg-white p-3">
+            <p className="text-xs font-semibold text-rose-700">起点メンバー（上位5）</p>
+            {sodBlockedByActor.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs text-slate-700">
+                {sodBlockedByActor.map((row) => (
+                  <li key={row.actorKey} className="flex items-center justify-between gap-2 rounded border border-rose-100 bg-rose-50/50 px-2 py-1">
+                    <span>{row.actorLabel}</span>
+                    <span className="font-semibold text-rose-900">{row.count}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">該当なし</p>
+            )}
+          </div>
+          <div className="rounded-md border border-rose-200 bg-white p-3">
+            <p className="text-xs font-semibold text-rose-700">発生経路（上位5）</p>
+            {blockedBySource.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs text-slate-700">
+                {blockedBySource.map((row) => (
+                  <li key={row.sourceKey} className="flex items-center justify-between gap-2 rounded border border-rose-100 bg-rose-50/50 px-2 py-1">
+                    <span>{blockedSourceLabel(row.sourceKey)}</span>
+                    <span className="font-semibold text-rose-900">{row.count}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">該当なし</p>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
