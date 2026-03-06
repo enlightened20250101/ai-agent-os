@@ -1083,3 +1083,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` に「リマインド実績（7日）」セクションを追加し、`SLACK_APPROVAL_POSTED`（`payload.reminder=true`）イベントから送信総数/手動・自動内訳/履歴を可視化した。
 - Why: 再通知施策の実行量と運用効果をその場で確認できるようにして、承認滞留の改善ループを回しやすくするため。
+
+- Decision: `/api/approvals/reminders/auto` を追加し、`stale pending approvals >= threshold` のときだけ再通知ジョブを実行するガードを導入した（`APPROVAL_REMINDER_AUTO_MIN_STALE`, default 3）。
+- Why: 常時再通知によるノイズを抑えつつ、滞留が一定量を超えた場合のみ自動介入して運用負荷を下げるため。

@@ -77,6 +77,7 @@ Set these in `.env.local`:
 - `APPROVAL_REMINDER_STALE_HOURS` (optional; pending承認の再通知対象しきい値。未設定時は `EXCEPTION_PENDING_APPROVAL_HOURS`)
 - `APPROVAL_REMINDER_COOLDOWN_MINUTES` (default `120`; 同一approvalへの再通知クールダウン)
 - `APPROVAL_REMINDER_MAX_TARGETS` (default `20`; 1回のジョブで処理する最大件数)
+- `APPROVAL_REMINDER_AUTO_MIN_STALE` (default `3`; 自動再通知ジョブ実行の最小 stale pending 件数)
 - `CHAT_DAILY_EXECUTION_LIMIT` (default `30`; ユーザー単位の1日あたりチャット実行上限)
 
 ## Scripts
@@ -203,7 +204,7 @@ Set these in `.env.local`:
   - `/api/workflows/tick?max_orgs=<N>&limit=<M>`
   - `/api/incidents/auto-open?max_orgs=<N>`
   - `/api/operations/exceptions/alerts?max_orgs=<N>`
-  - `/api/approvals/reminders?max_orgs=<N>`
+  - `/api/approvals/reminders/auto?max_orgs=<N>&min_stale=<K>`
   - `/api/chat/confirmations/expire?max_orgs=<N>`
 - Required repository secrets:
   - `APP_BASE_URL` (public reachable URL, e.g. prod URL)
@@ -218,6 +219,7 @@ Set these in `.env.local`:
 - Optional repository variables:
   - `AUTONOMY_API_RETRY_COUNT` (default `2`)
   - `AUTONOMY_API_RETRY_WAIT_SECONDS` (default `5`)
+  - `APPROVAL_REMINDER_AUTO_MIN_STALE` (default `3`, guarded reminders threshold)
 
 ## Slack Approval Setup
 

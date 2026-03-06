@@ -238,7 +238,7 @@ jobs:
             echo "$RESP"
           fi
 
-      - name: Run approval reminders batch
+      - name: Run guarded approval reminders batch
         env:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           APPROVAL_REMINDER_TOKEN: ${{ secrets.APPROVAL_REMINDER_TOKEN }}
@@ -255,8 +255,9 @@ jobs:
           TOKEN="${APPROVAL_REMINDER_TOKEN:-${EXCEPTION_ALERTS_TOKEN:-${INCIDENT_AUTOMATION_TOKEN:-${GOV_RECOMMENDATIONS_TOKEN:-${PLANNER_RUN_TOKEN}}}}}"
           RETRY_COUNT="${AUTONOMY_API_RETRY_COUNT:-2}"
           RETRY_WAIT="${AUTONOMY_API_RETRY_WAIT_SECONDS:-5}"
-          echo "Approval reminders batch max_orgs=${MAX_ORGS}"
-          URL="${APP_BASE_URL}/api/approvals/reminders?max_orgs=${MAX_ORGS}"
+          MIN_STALE="${APPROVAL_REMINDER_AUTO_MIN_STALE:-3}"
+          echo "Guarded approval reminders batch max_orgs=${MAX_ORGS} min_stale=${MIN_STALE}"
+          URL="${APP_BASE_URL}/api/approvals/reminders/auto?max_orgs=${MAX_ORGS}&min_stale=${MIN_STALE}"
           RESP=""
           for ATTEMPT in $(seq 1 "${RETRY_COUNT}"); do
             if RESP="$(curl --fail --show-error --silent \
@@ -266,18 +267,20 @@ jobs:
               break
             fi
             if [ "${ATTEMPT}" -eq "${RETRY_COUNT}" ]; then
-              echo "Approval reminders batch failed after retry."
+              echo "Guarded approval reminders batch failed after retry."
               exit 1
             fi
-            echo "Approval reminders batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
+            echo "Guarded approval reminders batch failed (attempt ${ATTEMPT}), retrying in ${RETRY_WAIT}s..."
             sleep "${RETRY_WAIT}"
           done
           if command -v jq >/dev/null 2>&1; then
             echo "$RESP" | jq .
-            echo "Approval reminder summary:"
-            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tsent=\(.sent // false)\ttarget=\(.target_count // 0)\tsent_count=\(.sent_count // 0)\tskipped_cooldown=\(.skipped_cooldown_count // 0)\treason=\(.reason // "-")"' || true
+            echo "Guarded approval reminder summary:"
+            echo "$RESP" | jq -r '.results[]? | "\(.org_id)\tok=\(.ok)\tstale=\(.stale_pending_count // 0)\tthreshold=\(.threshold // 0)\tskipped_threshold=\(.skipped_threshold // false)\tsent=\(.sent // false)\ttarget=\(.target_count // 0)\tsent_count=\(.sent_count // 0)\tskipped_cooldown=\(.skipped_cooldown_count // 0)\treason=\(.reason // "-")"' || true
             echo "Approval reminders skipped by circuit:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_circuit == true)] | length' || true
+            echo "Approval reminders skipped by threshold:"
+            echo "$RESP" | jq -r '[.results[]? | select(.skipped_threshold == true)] | length' || true
             echo "Approval reminders dry-run probes:"
             echo "$RESP" | jq -r '[.results[]? | select(.skipped_dry_run == true)] | length' || true
           else
