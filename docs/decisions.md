@@ -1134,3 +1134,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Auto Guard推移セクションは推奨文に加えて、条件に応じた即実行ボタン（通常閾値 or 低閾値）を表示するようにした。
 - Why: 推奨の読解で止まらず、その場で実行まで完結できるようにして対応速度を最大化するため。
+
+- Decision: `/app/operations/jobs` の Auto Guard推移に、guard実行結果（success/skipped/error）を色付きバナーで表示するようにした。
+- Why: 実行直後の状態を同じセクション内で即確認できるようにし、次の判断（再実行/閾値調整）を速めるため。

@@ -96,6 +96,20 @@ function formatElapsedFromNow(iso: string) {
   return `${days}d ago`;
 }
 
+function parseAutoGuardResultMessage(okMessage: string | undefined, errorMessage: string | undefined) {
+  if (errorMessage && errorMessage.includes("guard")) {
+    return { kind: "error" as const, message: errorMessage };
+  }
+  if (!okMessage || !okMessage.includes("guard")) return null;
+  if (okMessage.includes("スキップ")) {
+    return { kind: "skipped" as const, message: okMessage };
+  }
+  if (okMessage.includes("guard実行")) {
+    return { kind: "success" as const, message: okMessage };
+  }
+  return { kind: "info" as const, message: okMessage };
+}
+
 function consecutiveFailuresByStatus(rows: Array<{ status: string }>) {
   let count = 0;
   for (const row of rows) {
@@ -125,6 +139,7 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
   const failedOnly = String(sp.failed_only ?? "") === "1";
+  const autoGuardResult = parseAutoGuardResultMessage(sp.ok, sp.error);
 
   const staleHours = Number(process.env.APPROVAL_REMINDER_STALE_HOURS ?? process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleCutoffIso = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
@@ -506,6 +521,21 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
           <h2 className="text-sm font-semibold text-slate-900">承認Auto Guard推移（7日）</h2>
           <span className="text-xs text-slate-500">0件は棒を表示しません</span>
         </div>
+        {autoGuardResult ? (
+          <div
+            className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+              autoGuardResult.kind === "success"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                : autoGuardResult.kind === "skipped"
+                  ? "border-amber-300 bg-amber-50 text-amber-900"
+                  : autoGuardResult.kind === "error"
+                    ? "border-rose-300 bg-rose-50 text-rose-900"
+                    : "border-slate-300 bg-slate-50 text-slate-800"
+            }`}
+          >
+            Auto Guard結果: {autoGuardResult.message}
+          </div>
+        ) : null}
         <div className="mt-2 text-xs text-slate-600">
           stale approvals: {stalePendingApprovals} / threshold: {autoMinStale} / latest reason: {latestAutoReminderReason}
         </div>
