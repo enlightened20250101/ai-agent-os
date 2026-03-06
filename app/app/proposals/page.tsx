@@ -284,13 +284,20 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
             const actions = parseActions(proposal.proposed_actions_json);
             const risks = parseStringList(proposal.risks_json);
             const reasons = parseStringList(proposal.policy_reasons);
+            const source = String(proposal.source ?? "");
+            const priority = Number(proposal.priority_score ?? 0);
+            const isCaseStaleSeed = source === "planner_seed_case_stale";
+            const isUrgent = isCaseStaleSeed || priority >= 80 || proposal.policy_status === "warn";
             const estimatedImpact =
               typeof proposal.estimated_impact_json === "object" && proposal.estimated_impact_json !== null
                 ? (proposal.estimated_impact_json as Record<string, unknown>)
                 : {};
             const canAccept = proposal.status === "proposed" && proposal.policy_status !== "block";
             return (
-              <li key={proposal.id} className="rounded-md border border-slate-200 p-4 text-sm text-slate-700">
+              <li
+                key={proposal.id}
+                className={`rounded-md border p-4 text-sm text-slate-700 ${isUrgent ? "border-amber-300 bg-amber-50/40" : "border-slate-200"}`}
+              >
                 {proposal.status === "proposed" ? (
                   <label className="mb-2 inline-flex items-center gap-2 text-xs text-slate-600">
                     <input
@@ -305,9 +312,26 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
                 ) : null}
                 <p className="font-medium text-slate-900">{proposal.title as string}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  ソース: {proposal.source as string} | ステータス: {proposal.status as string} | ポリシー状態:{" "}
-                  {proposal.policy_status as string} | 優先度: {Number(proposal.priority_score ?? 0)}
+                  ソース: {source} | ステータス: {proposal.status as string} | ポリシー状態: {proposal.policy_status as string} |
+                  優先度: {priority}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {isCaseStaleSeed ? (
+                    <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">
+                      滞留案件由来
+                    </span>
+                  ) : null}
+                  {priority >= 80 ? (
+                    <span className="rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-[11px] text-rose-700">
+                      高優先度
+                    </span>
+                  ) : null}
+                  {proposal.policy_status === "warn" ? (
+                    <span className="rounded-full border border-fuchsia-300 bg-fuchsia-100 px-2 py-0.5 text-[11px] text-fuchsia-700">
+                      ポリシー要注意
+                    </span>
+                  ) : null}
+                </div>
                 <p className="mt-2 whitespace-pre-wrap">{proposal.rationale as string}</p>
                 <p className="mt-2 text-xs text-slate-500">
                   影響見込み: 対象件数 {String(estimatedImpact.affected_work_items ?? 0)} / 削減時間(分){" "}

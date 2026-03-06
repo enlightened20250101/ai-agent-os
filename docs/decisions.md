@@ -1071,3 +1071,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Planner提案は `stale_open_cases` 検知時に専用シード提案（滞留案件の情報回収メール案）を優先生成し、OpenAI生成案と重複除去してマージする方式にした。
 - Why: LLM出力の揺らぎに依存せず、ケース滞留に対する最小有効アクションを常に提案できるようにして運用品質を安定化するため。
+
+- Decision: `/app/proposals` で `planner_seed_case_stale` と高優先度/`policy=warn` をバッジと色で強調表示し、滞留案件由来提案の判断導線を短縮した。
+- Why: 提案一覧の情報密度が高くなってきたため、優先提案を即判別できる視覚的キューを先に整備するため。
