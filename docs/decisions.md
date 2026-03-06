@@ -1101,3 +1101,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Auto Guard カードにトレンド連動の推奨アクション文言を追加し、悪化時はより低い閾値での緊急実行ボタンを追加した。
 - Why: オペレーターが数値解釈を行わずに次の対応を即決できるようにし、悪化時の初動を短縮するため。
+
+- Decision: `/app` トップにも Auto Guard 状態カード（stale/threshold、run/skipped、delta）と「推奨値で実行」ボタンを追加し、承認ページへ遷移せずに一次対応可能にした。
+- Why: ホーム画面を運用コックピットとして強化し、承認滞留への初動時間をさらに短縮するため。

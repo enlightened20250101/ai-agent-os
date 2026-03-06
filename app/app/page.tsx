@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { runGuardedAutoReminderNow } from "@/app/app/approvals/actions";
 import { bulkRetryFailedCommands } from "@/app/app/chat/actions";
 import { expireStaleChatConfirmations } from "@/app/app/chat/actions";
 import { retryTopFailedWorkflowRuns } from "@/app/app/operations/exceptions/actions";
@@ -184,6 +185,8 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const staleApprovalHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleApprovalCutoffIso = new Date(Date.now() - staleApprovalHours * 60 * 60 * 1000).toISOString();
+  const autoMinStaleRaw = Number.parseInt(process.env.APPROVAL_REMINDER_AUTO_MIN_STALE ?? "3", 10);
+  const autoMinStale = Number.isNaN(autoMinStaleRaw) ? 3 : Math.max(1, Math.min(1000, autoMinStaleRaw));
   const staleCaseHours = Number(process.env.CASE_STALE_HOURS ?? "48");
   const staleCaseCutoffIso = new Date(Date.now() - staleCaseHours * 60 * 60 * 1000).toISOString();
   const [
@@ -197,7 +200,8 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     proposalsRes,
     chatCommandsRes,
     chatIntentsRes,
-    casesRes
+    casesRes,
+    autoReminderEventsRes
   ] = await Promise.all([
     supabase
       .from("tasks")
@@ -258,7 +262,15 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       .select("id, status, updated_at")
       .eq("org_id", orgId)
       .order("updated_at", { ascending: false })
-      .limit(1000)
+      .limit(1000),
+    supabase
+      .from("task_events")
+      .select("event_type, created_at, payload_json")
+      .eq("org_id", orgId)
+      .in("event_type", ["APPROVAL_REMINDER_AUTO_RUN", "APPROVAL_REMINDER_AUTO_SKIPPED"])
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
+      .limit(20)
   ]);
 
   if (tasksRes.error) {
@@ -315,6 +327,9 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   ) {
     throw new Error(`Failed to load case metrics: ${casesRes.error.message}`);
   }
+  if (autoReminderEventsRes.error) {
+    throw new Error(`Failed to load auto reminder metrics: ${autoReminderEventsRes.error.message}`);
+  }
 
   const tasks = tasksRes.data ?? [];
   const approvals = approvalsRes.data ?? [];
@@ -326,6 +341,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const chatCommands = chatCommandsRes.data ?? [];
   const chatIntents = chatIntentsRes.data ?? [];
   const cases = casesRes.data ?? [];
+  const autoReminderEvents = autoReminderEventsRes.data ?? [];
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
   const taskStatusCounts = new Map<string, number>();
@@ -404,6 +420,20 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const staleOpenCases = cases.filter(
     (row) => row.status === "open" && typeof row.updated_at === "string" && row.updated_at < staleCaseCutoffIso
   ).length;
+  const autoRunCount = autoReminderEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_RUN").length;
+  const autoSkippedCount = autoReminderEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_SKIPPED").length;
+  const latestAutoEvent = autoReminderEvents[0] ?? null;
+  const latestAutoPayload = asObject(latestAutoEvent?.payload_json ?? null);
+  const previousAutoEvent = autoReminderEvents[1] ?? null;
+  const previousAutoPayload = asObject(previousAutoEvent?.payload_json ?? null);
+  const latestAutoStale = Number(latestAutoPayload?.stale_pending_count ?? NaN);
+  const previousAutoStale = Number(previousAutoPayload?.stale_pending_count ?? NaN);
+  const autoDelta =
+    Number.isFinite(latestAutoStale) && Number.isFinite(previousAutoStale)
+      ? latestAutoStale - previousAutoStale
+      : null;
+  const suggestedGuardMinStale =
+    stalePendingApprovals >= 10 ? 10 : stalePendingApprovals >= 5 ? 5 : stalePendingApprovals >= 3 ? 3 : 1;
 
   const urgentSignals = [
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
@@ -459,6 +489,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       href: "/app/cases?status=open",
       score: staleOpenCases > 0 ? 78 + Math.min(20, staleOpenCases) : 0,
       detail: `${staleCaseHours}h+ open ${staleOpenCases}件`,
+      quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
+    },
+    {
+      key: "auto_guard",
+      label: "Auto Guard再通知",
+      href: "/app/approvals",
+      score: stalePendingApprovals >= autoMinStale ? 82 + Math.min(15, stalePendingApprovals) : 0,
+      detail: `stale=${stalePendingApprovals}, threshold=${autoMinStale}`,
       quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
@@ -637,6 +675,32 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           <p className={`mt-1 text-2xl font-semibold ${staleOpenCases > 0 ? "text-rose-900" : "text-slate-900"}`}>{staleOpenCases}</p>
           <p className="mt-1 text-[11px] text-slate-600">open案件総数: {openCases}</p>
         </Link>
+        <div className={`rounded-xl border p-4 shadow-sm ${stalePendingApprovals >= autoMinStale ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-slate-50"}`}>
+          <p className={`text-xs ${stalePendingApprovals >= autoMinStale ? "text-indigo-700" : "text-slate-600"}`}>
+            Auto Guard ({autoMinStale}件閾値)
+          </p>
+          <p className={`mt-1 text-2xl font-semibold ${stalePendingApprovals >= autoMinStale ? "text-indigo-900" : "text-slate-900"}`}>
+            stale {stalePendingApprovals}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-600">run: {autoRunCount} / skipped: {autoSkippedCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">
+            delta: {autoDelta === null ? "-" : autoDelta > 0 ? `+${autoDelta}` : `${autoDelta}`}
+          </p>
+          <form action={runGuardedAutoReminderNow} className="mt-2">
+            <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
+            <ConfirmSubmitButton
+              label={`推奨値(${suggestedGuardMinStale})で実行`}
+              pendingLabel="実行中..."
+              confirmMessage={`Auto Guardを推奨閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
+              className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
+            />
+          </form>
+          {latestAutoEvent ? (
+            <p className="mt-2 text-[11px] text-slate-500">
+              last: {new Date(latestAutoEvent.created_at as string).toLocaleString()} / {String(latestAutoEvent.event_type)}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
