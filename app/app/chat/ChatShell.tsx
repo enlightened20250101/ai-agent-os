@@ -73,6 +73,26 @@ function skipReasonLabel(reason: string) {
   return `skip: ${reason}`;
 }
 
+function renderMessageBody(text: string) {
+  const tokens = text.split(/(@[A-Za-z0-9_.-]+)/g);
+  return tokens.map((token, idx) => {
+    if (/^@[A-Za-z0-9_.-]+$/.test(token)) {
+      const ai = /^@ai$/i.test(token);
+      return (
+        <span
+          key={`${token}-${idx}`}
+          className={`rounded px-1 py-0.5 text-xs font-medium ${
+            ai ? "bg-emerald-100 text-emerald-800" : "bg-violet-100 text-violet-800"
+          }`}
+        >
+          {token}
+        </span>
+      );
+    }
+    return <span key={`txt-${idx}`}>{token}</span>;
+  });
+}
+
 export async function ChatShell({ scope, title, description, submitAction, searchParams }: ChatShellProps) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -152,6 +172,11 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       .eq("status", "confirmed")
       .gte("decided_at", dayStartIso)
   ]);
+  const [{ data: orgRow }, { count: memberCount }] = await Promise.all([
+    supabase.from("orgs").select("id, name").eq("id", orgId).maybeSingle(),
+    supabase.from("memberships").select("id", { count: "exact", head: true }).eq("org_id", orgId)
+  ]);
+  const workspaceName = (orgRow?.name as string | null | undefined) ?? orgId;
 
   if (messagesError) {
     if (isMissingChatSchemaError(messagesError.message)) {
@@ -219,6 +244,17 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       <header>
         <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
         <p className="mt-2 text-sm text-slate-600">{description}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-1 text-slate-700">
+            {isEn ? "Workspace" : "ワークスペース"}: {workspaceName}
+          </span>
+          <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-1 text-slate-700">
+            {isEn ? "Members" : "メンバー"}: {memberCount ?? 0}
+          </span>
+          <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-700">
+            {isEn ? "@AI to run agent actions" : "@AI 付きのみエージェント実行"}
+          </span>
+        </div>
       </header>
 
       {sp.error ? (
@@ -239,6 +275,11 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+        <div className="border-b border-slate-200 bg-white px-4 py-2 text-xs text-slate-600">
+          {isEn
+            ? "Rule: Only messages with @AI are parsed/executed by agent. Other mentions are team conversation/memo only."
+            : "ルール: @AI を含むメッセージだけがAI実行対象です。その他のメンションはメンバー間の会話/メモとして保存されます。"}
+        </div>
         <div className="h-[52vh] min-h-[380px] overflow-y-auto p-4 sm:p-5">
           {confirmations.length > 0 ? (
             <div className="mb-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
@@ -309,7 +350,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                         <span>{speakerLabel(message.sender_type, isEn)}</span>
                         <span>{new Date(message.created_at).toLocaleString()}</span>
                       </div>
-                      <p className="whitespace-pre-wrap text-slate-800">{message.body_text}</p>
+                      <p className="whitespace-pre-wrap text-slate-800">{renderMessageBody(message.body_text)}</p>
                     </li>
                   );
                 })}

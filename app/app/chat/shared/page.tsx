@@ -17,8 +17,8 @@ export default async function SharedChatPage({ searchParams }: SharedChatPagePro
       title={isEn ? "Shared Chat" : "共有チャット"}
       description={
         isEn
-          ? "A workspace-wide conversation for team tasks and operational checks."
-          : "組織全体で共有する会話です。全体タスクや運用状況の確認に使います。"
+          ? "Workspace-wide conversation. Agent execution is triggered only when you include @AI."
+          : "組織全体で共有する会話です。AI実行は @AI を含む発言のときだけ動作します。"
       }
       submitAction={postSharedMessage}
       searchParams={searchParams}

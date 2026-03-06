@@ -1149,3 +1149,12 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Chat intent を `update_case_owner_self` / `update_case_due` まで拡張し、`案件「...」を自分に割り当て` と `案件「...」の期限をYYYY-MM-DDにして` を確認付きで実行可能にした。
 - Why: ケース運用の主要操作（状態・担当・期限）をチャットで完結できるようにし、UI遷移なしでの実行率を高めるため。
+
+- Decision: チャット実行トリガーを `@AI` 明示方式に変更し、`@AI` を含まない投稿は通常メッセージ（メンバー間会話/メモ）として保存のみ行う。
+- Why: 会話チャネルをそのまま共同作業に使えるようにしつつ、AIの自動実行を意図的な呼び出しに限定して安全性と予測可能性を高めるため。
+
+- Decision: 共有/個人チャットUIにワークスペース名・メンバー数・`@AI` ルールを常時表示し、`@mention` を可視化ハイライトする。
+- Why: 同一ワークスペース内の共有境界を明確にし、どの発言がAI実行対象かを画面上で即判別できるようにするため。
+
+- Decision: Appヘッダーに `Workspace(name)` と `org_id` を表示し、現在所属コンテキストを全ページで確認可能にした。
+- Why: 複数アカウント運用時に「どの組織データを見ているか」を常に明示し、誤操作リスクを下げるため。

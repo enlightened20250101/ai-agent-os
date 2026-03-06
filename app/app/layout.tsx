@@ -75,6 +75,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .limit(1)
     .maybeSingle();
   const orgId = membership?.org_id as string | undefined;
+  const { data: orgRow } = orgId ? await supabase.from("orgs").select("name").eq("id", orgId).maybeSingle() : { data: null };
+  const orgName = (orgRow?.name as string | null | undefined) ?? null;
   const openIncident = orgId ? await getLatestOpenIncident({ supabase, orgId }) : null;
   const [plannerRunsRes, reviewEventsRes] = orgId
     ? await Promise.all([
@@ -148,6 +150,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="-mx-1 mt-2 overflow-x-auto md:mx-0 md:mt-3 md:overflow-visible">
             <AppNav links={NAV_LINKS} />
           </div>
+          {orgId ? (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+                Workspace: {orgName ?? "Unnamed"}
+              </span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">org_id: {orgId}</span>
+            </div>
+          ) : null}
           <div className="mt-1 text-[11px] text-slate-500 sm:hidden">
             {user.email}
           </div>

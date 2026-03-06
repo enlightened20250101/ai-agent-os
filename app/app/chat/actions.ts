@@ -71,6 +71,19 @@ function isMutatingIntent(intentType: string) {
   );
 }
 
+function extractMentions(text: string) {
+  const matches = text.match(/@[A-Za-z0-9_.-]+/g) ?? [];
+  return Array.from(new Set(matches.map((m) => m.slice(1))));
+}
+
+function hasAiMention(text: string) {
+  return /(^|\s)@ai\b/i.test(text);
+}
+
+function stripAiMention(text: string) {
+  return text.replace(/(^|\s)@ai\b/gi, " ").replace(/\s+/g, " ").trim();
+}
+
 async function addSystemMessage(args: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   orgId: string;
@@ -1813,6 +1826,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
+  const mentions = extractMentions(body);
+  const aiMentioned = hasAiMention(body);
 
   const session = await getOrCreateChatSession({
     supabase,
@@ -1830,7 +1845,9 @@ async function postMessage(scope: ChatScope, formData: FormData) {
       sender_user_id: userId,
       body_text: body,
       metadata_json: {
-        scope
+        scope,
+        mentions,
+        ai_mentioned: aiMentioned
       }
     })
     .select("id")
@@ -1840,7 +1857,24 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     redirect(withError(scope, `メッセージ保存に失敗しました: ${userMsgError.message}`));
   }
 
-  const intent = parseChatIntent(body);
+  await supabase
+    .from("chat_sessions")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", session.id)
+    .eq("org_id", orgId);
+
+  if (!aiMentioned) {
+    revalidatePath(pathForScope(scope));
+    redirect(withOk(scope, "メッセージを送信しました。AIに依頼する場合は @AI を付けてください。"));
+  }
+
+  const aiBody = stripAiMention(body);
+  if (!aiBody) {
+    revalidatePath(pathForScope(scope));
+    redirect(withError(scope, "@AI の後に依頼内容を入力してください。"));
+  }
+
+  const intent = parseChatIntent(aiBody);
   const { data: intentRow, error: intentError } = await supabase
     .from("chat_intents")
     .insert({
@@ -1856,12 +1890,6 @@ async function postMessage(scope: ChatScope, formData: FormData) {
   if (intentError) {
     redirect(withError(scope, `意図解析保存に失敗しました: ${intentError.message}`));
   }
-
-  await supabase
-    .from("chat_sessions")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", session.id)
-    .eq("org_id", orgId);
 
   if (intent.intentType === "status_query") {
     const taskHint = typeof intent.plan.taskHint === "string" ? intent.plan.taskHint : null;

@@ -17,8 +17,8 @@ export default async function PersonalChatPage({ searchParams }: PersonalChatPag
       title={isEn ? "Personal Chat" : "個人チャット"}
       description={
         isEn
-          ? "A private thread for your own checks and draft operations with confirmations."
-          : "あなた専用のチャットです。個別確認や下書き相談などを実行確認付きで行えます。"
+          ? "Your private thread. Agent execution runs only for messages with @AI."
+          : "あなた専用のチャットです。AI実行は @AI を付けたメッセージのみ対象です。"
       }
       submitAction={postPersonalMessage}
       searchParams={searchParams}
