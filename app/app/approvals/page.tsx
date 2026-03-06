@@ -24,6 +24,16 @@ type ApprovalRow = {
   reason: string | null;
 };
 
+type ReminderEventRow = {
+  task_id: string;
+  created_at: string;
+  payload_json: unknown;
+};
+
+function parseObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
 export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
@@ -33,7 +43,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const staleOnly = sp.stale_only === "1";
   const sort = sp.sort === "newest" ? "newest" : "oldest";
 
-  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }] = await Promise.all([
+  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }, reminderEventsRes] = await Promise.all([
     supabase
       .from("approvals")
       .select("id, task_id, status, created_at, reason")
@@ -46,6 +56,14 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .eq("org_id", orgId)
       .gte("created_at", sevenDaysAgoIso)
       .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("task_events")
+      .select("task_id, created_at, payload_json")
+      .eq("org_id", orgId)
+      .eq("event_type", "SLACK_APPROVAL_POSTED")
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
       .limit(500)
   ]);
 
@@ -54,6 +72,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   }
   if (weeklyError) {
     throw new Error(`Failed to load weekly approvals: ${weeklyError.message}`);
+  }
+  if (reminderEventsRes.error) {
+    throw new Error(`Failed to load reminder events: ${reminderEventsRes.error.message}`);
   }
 
   const pendingApprovals = (approvals ?? []) as ApprovalRow[];
@@ -70,7 +91,29 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
   const weeklyRows = weeklyApprovals ?? [];
-  const taskIds = filteredApprovals.map((approval) => approval.task_id);
+  const reminderRows = (reminderEventsRes.data ?? []) as ReminderEventRow[];
+  const reminderEvents = reminderRows
+    .map((row) => {
+      const payload = parseObject(row.payload_json);
+      if (!payload || payload.reminder !== true) return null;
+      const source = typeof payload.source === "string" ? payload.source : "unknown";
+      const approvalId = typeof payload.approval_id === "string" ? payload.approval_id : null;
+      return {
+        taskId: row.task_id,
+        createdAt: row.created_at,
+        source,
+        approvalId
+      };
+    })
+    .filter((row): row is { taskId: string; createdAt: string; source: string; approvalId: string | null } => row !== null);
+  const reminderTotal = reminderEvents.length;
+  const reminderManualCount = reminderEvents.filter((row) => row.source === "manual").length;
+  const reminderCronCount = reminderEvents.filter((row) => row.source === "cron").length;
+  const reminderUniqueApprovals = new Set(
+    reminderEvents.map((row) => row.approvalId).filter((value): value is string => Boolean(value))
+  ).size;
+  const reminderRecent = reminderEvents.slice(0, 10);
+  const taskIds = Array.from(new Set([...filteredApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
   const pendingCount = weeklyRows.filter((row) => row.status === "pending").length;
@@ -162,6 +205,49 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           <p className="mt-1 text-2xl font-semibold text-rose-900">{rejectedCount}</p>
         </div>
       </div>
+
+      <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-sky-900">リマインド実績（7日）</p>
+          <span className="text-xs text-sky-800">SLACK_APPROVAL_POSTED / reminder=true</span>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="rounded-md border border-sky-200 bg-white p-3">
+            <p className="text-xs text-sky-700">送信総数</p>
+            <p className="mt-1 text-xl font-semibold text-sky-900">{reminderTotal}</p>
+          </div>
+          <div className="rounded-md border border-sky-200 bg-white p-3">
+            <p className="text-xs text-sky-700">manual</p>
+            <p className="mt-1 text-xl font-semibold text-sky-900">{reminderManualCount}</p>
+          </div>
+          <div className="rounded-md border border-sky-200 bg-white p-3">
+            <p className="text-xs text-sky-700">cron</p>
+            <p className="mt-1 text-xl font-semibold text-sky-900">{reminderCronCount}</p>
+          </div>
+          <div className="rounded-md border border-sky-200 bg-white p-3">
+            <p className="text-xs text-sky-700">対象承認(ユニーク)</p>
+            <p className="mt-1 text-xl font-semibold text-sky-900">{reminderUniqueApprovals}</p>
+          </div>
+        </div>
+        {reminderRecent.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {reminderRecent.map((event, idx) => (
+              <li key={`${event.taskId}-${event.createdAt}-${idx}`} className="rounded-md border border-sky-200 bg-white p-2 text-xs text-slate-700">
+                <p>
+                  <Link href={`/app/tasks/${event.taskId}`} className="font-medium underline">
+                    {taskTitleById.get(event.taskId) ?? event.taskId}
+                  </Link>
+                </p>
+                <p className="mt-1 text-slate-500">
+                  {new Date(event.createdAt).toLocaleString()} | source: {event.source} | approval_id: {event.approvalId ?? "-"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs text-sky-900">直近7日のリマインド送信はありません。</p>
+        )}
+      </section>
 
       <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
         <div className="flex items-center justify-between">

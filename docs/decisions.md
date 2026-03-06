@@ -1080,3 +1080,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` に「選択承認のSlack一括再通知」を追加し、既存の単体再通知ロジックを共通化して再利用した。
 - Why: 承認滞留が複数件同時に発生した際の手作業クリックを減らし、短時間で再通知を回せる運用導線を確保するため。
+
+- Decision: `/app/approvals` に「リマインド実績（7日）」セクションを追加し、`SLACK_APPROVAL_POSTED`（`payload.reminder=true`）イベントから送信総数/手動・自動内訳/履歴を可視化した。
+- Why: 再通知施策の実行量と運用効果をその場で確認できるようにして、承認滞留の改善ループを回しやすくするため。
