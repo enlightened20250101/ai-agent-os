@@ -136,6 +136,7 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
 
   const taskRows = (tasksRes.data ?? []) as TaskRow[];
   const taskIds = new Set(taskRows.map((row) => row.id));
+  const taskById = new Map(taskRows.map((row) => [row.id, row]));
 
   const caseEvents =
     caseEventsRes.error && isMissingTableError(caseEventsRes.error.message, "case_events")
@@ -172,6 +173,8 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
   const pendingApprovals = approvals.filter((row) => row.status === "pending").length;
   const failedActions = actions.filter((row) => row.status === "failed").length;
   const successActions = actions.filter((row) => row.status === "success").length;
+  const pendingApprovalRows = approvals.filter((row) => row.status === "pending").slice(0, 8);
+  const failedActionRows = actions.filter((row) => row.status === "failed").slice(0, 8);
 
   return (
     <div className="space-y-6">
@@ -228,6 +231,64 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
               />
             </form>
           ))}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">優先トリアージ</h2>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/app/approvals?stale_only=1"
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100"
+            >
+              承認キューへ
+            </Link>
+            <Link
+              href="/app/operations/exceptions"
+              className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs text-rose-800 hover:bg-rose-100"
+            >
+              例外キューへ
+            </Link>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs font-medium text-amber-800">承認待ちタスク</p>
+            {pendingApprovalRows.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {pendingApprovalRows.map((row) => (
+                  <li key={row.id} className="rounded-md border border-amber-200 bg-white p-2 text-xs text-slate-700">
+                    <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-slate-900 underline">
+                      {taskById.get(row.task_id)?.title ?? row.task_id}
+                    </Link>
+                    <p className="mt-1 text-[11px] text-slate-500">requested: {new Date(row.created_at).toLocaleString()}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">承認待ちはありません。</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+            <p className="text-xs font-medium text-rose-800">失敗アクション</p>
+            {failedActionRows.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {failedActionRows.map((row) => (
+                  <li key={row.id} className="rounded-md border border-rose-200 bg-white p-2 text-xs text-slate-700">
+                    <Link href={`/app/tasks/${row.task_id}`} className="font-medium text-slate-900 underline">
+                      {taskById.get(row.task_id)?.title ?? row.task_id}
+                    </Link>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {row.provider}/{row.action_type} | {new Date(row.created_at).toLocaleString()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">失敗アクションはありません。</p>
+            )}
+          </div>
         </div>
       </section>
 
@@ -291,7 +352,10 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                 {approvals.slice(0, 30).map((approval) => (
                   <li key={approval.id} className="rounded-md border border-slate-200 p-3">
                     <p>
-                      task: <Link href={`/app/tasks/${approval.task_id}`} className="underline">{approval.task_id}</Link>
+                      task:{" "}
+                      <Link href={`/app/tasks/${approval.task_id}`} className="underline">
+                        {taskById.get(approval.task_id)?.title ?? approval.task_id}
+                      </Link>
                     </p>
                     <p>status: {approval.status}</p>
                     <p>reason: {approval.reason ?? "（なし）"}</p>
@@ -309,7 +373,10 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
                 {actions.slice(0, 30).map((action) => (
                   <li key={action.id} className="rounded-md border border-slate-200 p-3">
                     <p>
-                      task: <Link href={`/app/tasks/${action.task_id}`} className="underline">{action.task_id}</Link>
+                      task:{" "}
+                      <Link href={`/app/tasks/${action.task_id}`} className="underline">
+                        {taskById.get(action.task_id)?.title ?? action.task_id}
+                      </Link>
                     </p>
                     <p>
                       {action.provider}/{action.action_type} | {action.status}

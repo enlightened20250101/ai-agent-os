@@ -1059,3 +1059,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` ダッシュボードに `business_cases` ベースの「滞留案件（open かつ一定時間更新なし）」指標を追加し、優先対応キューにも組み込んだ（`CASE_STALE_HOURS`, default 48h）。
 - Why: 承認滞留だけでなく案件滞留も同一画面で検知し、Case起点の詰まりを早期にトリアージできるようにするため。
+
+- Decision: `/app/cases/[id]` に「優先トリアージ」セクションを追加し、案件内の承認待ちタスク/失敗アクションを上位表示したうえで `/app/approvals` と `/app/operations/exceptions` へ即遷移できる導線を置いた。
+- Why: 案件単位で詰まりを見つけた直後に是正操作へ移れるようにして、例外対応の往復コストを下げるため。
