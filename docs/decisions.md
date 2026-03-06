@@ -1035,3 +1035,12 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `chat_*` テーブル未適用環境で `/app/chat/shared|me|audit` が 500 にならないよう、missing-schema検知 (`isMissingChatSchemaError`) とフォールバックUIを実装した。
 - Why: 現場の migration 適用遅延時でも画面が即死せず、原因と対処（`supabase db push`）を明示して運用停止を避けるため。
+
+- Decision: チャット画面は「上=会話履歴、下=入力フォーム」の会話中心レイアウトへ再構成し、モバイルでもLINE/ChatGPTに近い導線にした。
+- Why: 入力欄が常に画面下にある構造の方が会話体験として自然で、運用オペレーション中の入力コストが下がるため。
+
+- Decision: `app_locale` Cookie + `/app/settings` を追加し、MVPとして日本語/英語のUI切替を導入した（まずはナビとチャット画面から適用）。
+- Why: 英語表記の混在を段階的に解消しつつ、グローバル運用にも拡張できる最小構成を先に作るため。
+
+- Decision: チャット意図のタスク検索は、task_hintがUUIDでない場合に `id.eq` を使わず `title ilike` のみで検索するよう修正した。
+- Why: タスク名をUUID列へ比較して発生していた `invalid input syntax for type uuid` エラーを解消し、自然文指示の成功率を上げるため。

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { confirmChatCommand, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
+import { getAppLocale } from "@/lib/i18n/locale";
 import { isMissingChatSchemaError } from "@/lib/chat/schema";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import type { ChatScope } from "@/lib/chat/sessions";
@@ -40,10 +41,18 @@ type CommandRow = {
   finished_at: string | null;
 };
 
-function speakerLabel(senderType: string) {
-  if (senderType === "user") return "You";
-  if (senderType === "system") return "Agent";
-  return "Agent";
+function speakerLabel(senderType: string, isEn: boolean) {
+  if (senderType === "user") return isEn ? "You" : "あなた";
+  if (senderType === "system") return isEn ? "Agent" : "エージェント";
+  return isEn ? "Agent" : "エージェント";
+}
+
+function commandStatusLabel(status: string, isEn: boolean) {
+  if (status === "done") return isEn ? "done" : "完了";
+  if (status === "running") return isEn ? "running" : "実行中";
+  if (status === "pending") return isEn ? "pending" : "待機";
+  if (status === "failed") return isEn ? "failed" : "失敗";
+  return status;
 }
 
 function commandStatusClass(status: string) {
@@ -68,6 +77,8 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
+  const locale = await getAppLocale();
+  const isEn = locale === "en";
   const dailyLimitRaw = Number.parseInt(process.env.CHAT_DAILY_EXECUTION_LIMIT ?? "30", 10);
   const dailyLimit = Number.isNaN(dailyLimitRaw) ? 30 : Math.max(1, Math.min(500, dailyLimitRaw));
   const dayStart = new Date();
@@ -204,7 +215,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
         : "border-emerald-300 bg-emerald-50 text-emerald-800";
 
   return (
-    <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <header>
         <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
         <p className="mt-2 text-sm text-slate-600">{description}</p>
@@ -218,111 +229,149 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       ) : null}
       {openIncident ? (
         <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          インシデントモード有効: {openIncident.severity.toUpperCase()} / {openIncident.reason}
-          （承認判断・実行コマンドは停止されます）
+          {isEn ? "Incident mode enabled:" : "インシデントモード有効:"} {openIncident.severity.toUpperCase()} / {openIncident.reason}
+          {isEn ? " (approval/execute commands are blocked)" : "（承認判断・実行コマンドは停止されます）"}
         </p>
       ) : null}
       <div className={`rounded-md border px-3 py-2 text-xs ${usageClass}`}>
-        本日のチャット実行: {confirmedToday}/{dailyLimit}（残り {remainingToday}）
+        {isEn ? "Today's chat executions:" : "本日のチャット実行:"} {confirmedToday}/{dailyLimit}{" "}
+        {isEn ? `(remaining ${remainingToday})` : `（残り ${remainingToday}）`}
       </div>
 
-      {confirmations.length > 0 ? (
-        <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-medium text-amber-900">実行確認待ち</p>
-            <form action={expireStaleChatConfirmations}>
-              <input type="hidden" name="scope" value={scope} />
-              <button
-                type="submit"
-                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
-              >
-                期限切れを整理
-              </button>
-            </form>
-          </div>
-          {confirmations.map((confirmation) => (
-            <div key={confirmation.id} className="rounded-md border border-amber-300 bg-white p-3">
-              <p className="text-sm text-slate-800">{intentMap.get(confirmation.intent_id) ?? "実行確認"}</p>
-              <p className="mt-1 text-xs text-slate-500">期限: {new Date(confirmation.expires_at).toLocaleString()}</p>
-              <div className="mt-3 flex gap-2">
-                <form action={confirmChatCommand}>
-                  <input type="hidden" name="confirmation_id" value={confirmation.id} />
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+        <div className="h-[52vh] min-h-[380px] overflow-y-auto p-4 sm:p-5">
+          {confirmations.length > 0 ? (
+            <div className="mb-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-amber-900">{isEn ? "Awaiting confirmation" : "実行確認待ち"}</p>
+                <form action={expireStaleChatConfirmations}>
                   <input type="hidden" name="scope" value={scope} />
                   <button
                     type="submit"
-                    name="decision"
-                    value="confirmed"
-                    className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs text-white hover:bg-emerald-600"
+                    className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
                   >
-                    Yes 実行する
-                  </button>
-                </form>
-                <form action={confirmChatCommand}>
-                  <input type="hidden" name="confirmation_id" value={confirmation.id} />
-                  <input type="hidden" name="scope" value={scope} />
-                  <button
-                    type="submit"
-                    name="decision"
-                    value="declined"
-                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
-                  >
-                    No キャンセル
+                    {isEn ? "Clear expired" : "期限切れを整理"}
                   </button>
                 </form>
               </div>
+              {confirmations.map((confirmation) => (
+                <div key={confirmation.id} className="rounded-md border border-amber-300 bg-white p-3">
+                  <p className="text-sm text-slate-800">{intentMap.get(confirmation.intent_id) ?? (isEn ? "Confirmation" : "実行確認")}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {isEn ? "Expires:" : "期限:"} {new Date(confirmation.expires_at).toLocaleString()}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <form action={confirmChatCommand}>
+                      <input type="hidden" name="confirmation_id" value={confirmation.id} />
+                      <input type="hidden" name="scope" value={scope} />
+                      <button
+                        type="submit"
+                        name="decision"
+                        value="confirmed"
+                        className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs text-white hover:bg-emerald-600"
+                      >
+                        {isEn ? "Yes, execute" : "Yes 実行する"}
+                      </button>
+                    </form>
+                    <form action={confirmChatCommand}>
+                      <input type="hidden" name="confirmation_id" value={confirmation.id} />
+                      <input type="hidden" name="scope" value={scope} />
+                      <button
+                        type="submit"
+                        name="decision"
+                        value="declined"
+                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        {isEn ? "No, cancel" : "No キャンセル"}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-        <form action={submitAction} className="space-y-3">
-          <label className="block text-sm font-medium text-slate-900" htmlFor="chat-input">
-            メッセージ
-          </label>
-          <textarea
-            id="chat-input"
-            name="body"
-            rows={3}
-            required
-            placeholder="例: 「請求書確認タスクを追加して」 / 「提案『○○』を受け入れて承認依頼して」 / 「task_id」で承認依頼して / 「〇〇」を実行して"
-            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
-          />
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-slate-500">
-              提案受け入れ・起票・承認依頼・承認判断（一括含む）・実行は確認ステップを挟みます（実行系は日次上限あり）。状況回答のTOP3に対して「#1を承認」のようなクイック実行も可能です。
-            </p>
-            <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
-              送信
-            </button>
+          <div className="space-y-3">
+            {messages.length > 0 ? (
+              <ul className="space-y-2">
+                {messages.map((message) => {
+                  const isUser = message.sender_type === "user";
+                  return (
+                    <li
+                      key={message.id}
+                      className={`max-w-[92%] rounded-2xl border px-3 py-2 text-sm shadow-sm ${
+                        isUser
+                          ? "ml-auto border-sky-200 bg-sky-50"
+                          : "mr-auto border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                        <span>{speakerLabel(message.sender_type, isEn)}</span>
+                        <span>{new Date(message.created_at).toLocaleString()}</span>
+                      </div>
+                      <p className="whitespace-pre-wrap text-slate-800">{message.body_text}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">{isEn ? "No messages yet." : "まだメッセージはありません。"}</p>
+            )}
           </div>
-        </form>
-      </div>
+        </div>
 
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-800">コマンド監査ビュー</h2>
-          <form method="get" className="flex items-center gap-2 text-xs">
-            <input type="hidden" name="ok" value={sp.ok ?? ""} />
-            <label className="text-slate-600">status</label>
-            <select
-              name="cmd_status"
-              defaultValue={commandStatusFilter}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
-            >
-              <option value="all">all</option>
-              <option value="failed">failed</option>
-              <option value="pending">pending</option>
-              <option value="running">running</option>
-              <option value="done">done</option>
-            </select>
-            <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs">
-              絞り込み
-            </button>
+        <div className="border-t border-slate-200 bg-white p-3 sm:p-4">
+          <form action={submitAction} className="space-y-3">
+            <label className="block text-sm font-medium text-slate-900" htmlFor="chat-input">
+              {isEn ? "Message" : "メッセージ"}
+            </label>
+            <textarea
+              id="chat-input"
+              name="body"
+              rows={3}
+              required
+              placeholder={
+                isEn
+                  ? "Example: Add an invoice-check task / request approval for task_id / execute task \"...\""
+                  : "例: 「請求書確認タスクを追加して」 / 「task_id」で承認依頼して / 「〇〇」を実行して"
+              }
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                {isEn
+                  ? "Mutating operations always require confirmation before execution."
+                  : "実行系操作は必ず確認ステップを挟んでから実行されます。"}
+              </p>
+              <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
+                {isEn ? "Send" : "送信"}
+              </button>
+            </div>
           </form>
         </div>
-        {commands.length > 0 ? (
-          <ul className="space-y-2">
+      </div>
+
+      <details className="rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+          {isEn ? "Command Audit View" : "コマンド監査ビュー"}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <form method="get" className="flex flex-wrap items-center gap-2 text-xs">
+            <input type="hidden" name="ok" value={sp.ok ?? ""} />
+            <label className="text-slate-600">{isEn ? "status" : "ステータス"}</label>
+            <select name="cmd_status" defaultValue={commandStatusFilter} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs">
+              <option value="all">{isEn ? "all" : "全て"}</option>
+              <option value="failed">{commandStatusLabel("failed", isEn)}</option>
+              <option value="pending">{commandStatusLabel("pending", isEn)}</option>
+              <option value="running">{commandStatusLabel("running", isEn)}</option>
+              <option value="done">{commandStatusLabel("done", isEn)}</option>
+            </select>
+            <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs">
+              {isEn ? "Filter" : "絞り込み"}
+            </button>
+          </form>
+          {commands.length > 0 ? (
+            <ul className="space-y-2">
             {commands.map((command) => {
               const result = parseResultJson(command.result_json);
               const skipped = result?.skipped === true;
@@ -338,11 +387,11 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                 <li key={command.id} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className={`rounded-full border px-2 py-0.5 ${commandStatusClass(command.execution_status)}`}>
-                      {command.execution_status}
+                      {commandStatusLabel(command.execution_status, isEn)}
                     </span>
                     <span className="text-slate-500">{new Date(command.created_at).toLocaleString()}</span>
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
-                      {intentMap.get(command.intent_id) ?? "intent"}
+                      {intentMap.get(command.intent_id) ?? (isEn ? "intent" : "意図")}
                     </span>
                     {skipped && skipReason ? (
                       <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
@@ -356,7 +405,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                     ) : null}
                     {taskId ? (
                       <Link href={`/app/tasks/${taskId}`} className="text-sky-700 underline">
-                        task
+                        {isEn ? "task" : "タスク"}
                       </Link>
                     ) : null}
                   </div>
@@ -379,43 +428,19 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                         type="submit"
                         className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
                       >
-                        再実行確認を作成
+                        {isEn ? "Create retry confirmation" : "再実行確認を作成"}
                       </button>
                     </form>
                   ) : null}
                 </li>
               );
             })}
-          </ul>
-        ) : (
-          <p className="text-sm text-slate-500">まだコマンド実行履歴はありません。</p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-800">会話ログ</h2>
-        {messages.length > 0 ? (
-          <ul className="space-y-2">
-            {messages.map((message) => {
-              const isUser = message.sender_type === "user";
-              return (
-                <li
-                  key={message.id}
-                  className={`rounded-lg border px-3 py-2 text-sm ${isUser ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}
-                >
-                  <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                    <span>{speakerLabel(message.sender_type)}</span>
-                    <span>{new Date(message.created_at).toLocaleString()}</span>
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap text-slate-800">{message.body_text}</p>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="text-sm text-slate-500">まだメッセージはありません。</p>
-        )}
-      </div>
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">{isEn ? "No command logs yet." : "まだコマンド実行履歴はありません。"}</p>
+          )}
+        </div>
+      </details>
     </section>
   );
 }

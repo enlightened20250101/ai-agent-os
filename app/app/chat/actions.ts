@@ -213,6 +213,8 @@ async function findTaskForChat(args: {
   taskHint: string | null;
 }) {
   const { supabase, orgId, taskHint } = args;
+  const isUuid = (value: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   let query = supabase
     .from("tasks")
     .select("id, title, status, created_at")
@@ -220,7 +222,11 @@ async function findTaskForChat(args: {
     .in("status", ["draft", "ready_for_approval", "approved"]);
 
   if (taskHint) {
-    query = query.or(`title.ilike.%${taskHint}%,id.eq.${taskHint}`);
+    if (isUuid(taskHint)) {
+      query = query.or(`title.ilike.%${taskHint}%,id.eq.${taskHint}`);
+    } else {
+      query = query.ilike("title", `%${taskHint}%`);
+    }
   }
 
   const { data, error } = await query.order("created_at", { ascending: false }).limit(6);

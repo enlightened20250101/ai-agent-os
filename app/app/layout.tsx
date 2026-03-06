@@ -2,10 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
+import { getAppLocale } from "@/lib/i18n/locale";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "@/components/LogoutButton";
 
-const NAV_LINKS = [
+const NAV_LINKS_JA = [
   { href: "/app", label: "ホーム" },
   { href: "/app/agents", label: "エージェント" },
   { href: "/app/cases", label: "案件" },
@@ -29,6 +30,34 @@ const NAV_LINKS = [
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const locale = await getAppLocale();
+  const isEn = locale === "en";
+  const NAV_LINKS = isEn
+    ? [
+        { href: "/app", label: "Home" },
+        { href: "/app/agents", label: "Agents" },
+        { href: "/app/cases", label: "Cases" },
+        { href: "/app/tasks", label: "Tasks" },
+        { href: "/app/approvals", label: "Approvals" },
+        { href: "/app/workflows", label: "Workflows" },
+        { href: "/app/chat/shared", label: "Shared Chat" },
+        { href: "/app/chat/me", label: "My Chat" },
+        { href: "/app/chat/audit", label: "Chat Audit" },
+        { href: "/app/proposals", label: "Proposals" },
+        { href: "/app/planner", label: "Planner" },
+        { href: "/app/operations/jobs", label: "Jobs" },
+        { href: "/app/operations/exceptions", label: "Exceptions" },
+        { href: "/app/governance/autonomy", label: "Autonomy" },
+        { href: "/app/governance/recommendations", label: "Recommendations" },
+        { href: "/app/governance/budgets", label: "Budgets" },
+        { href: "/app/governance/trust", label: "Trust" },
+        { href: "/app/governance/incidents", label: "Incidents" },
+        { href: "/app/integrations/slack", label: "Slack" },
+        { href: "/app/integrations/google", label: "Google" },
+        { href: "/app/settings", label: "Settings" }
+      ]
+    : [...NAV_LINKS_JA, { href: "/app/settings", label: "設定" }];
+
   const supabase = await createClient();
   const {
     data: { user }
@@ -104,6 +133,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               AI Agent OS
             </Link>
             <div className="flex items-center gap-2">
+              <Link
+                href="/app/settings"
+                className="hidden rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-100 sm:inline-flex"
+              >
+                {isEn ? "Language" : "言語"}
+              </Link>
               <p className="hidden max-w-[220px] truncate rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 sm:block">
                 {user.email}
               </p>
