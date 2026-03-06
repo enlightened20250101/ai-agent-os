@@ -378,6 +378,20 @@ export default async function ProposalsPage({ searchParams }: ProposalsPageProps
 
                 {proposal.status === "proposed" ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {isUrgent ? (
+                      <form action={acceptProposal}>
+                        <input type="hidden" name="proposal_id" value={proposal.id as string} />
+                        <input type="hidden" name="decision_reason_code" value="accepted_after_review" />
+                        <input type="hidden" name="auto_request_approval" value="1" />
+                        <button
+                          type="submit"
+                          disabled={!canAccept}
+                          className="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          最短実行: 受け入れ+承認依頼
+                        </button>
+                      </form>
+                    ) : null}
                     <form action={acceptProposal}>
                       <input type="hidden" name="proposal_id" value={proposal.id as string} />
                       <select

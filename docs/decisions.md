@@ -1074,3 +1074,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/proposals` で `planner_seed_case_stale` と高優先度/`policy=warn` をバッジと色で強調表示し、滞留案件由来提案の判断導線を短縮した。
 - Why: 提案一覧の情報密度が高くなってきたため、優先提案を即判別できる視覚的キューを先に整備するため。
+
+- Decision: 優先提案（滞留案件由来/高優先度/warn）には `最短実行: 受け入れ+承認依頼` の1クリックボタンを追加し、通常の受け入れフォームとは並列で提供する。
+- Why: 提案確認後に即座に承認フローへ接続できるようにし、オペレーターの判断から実行準備完了までのステップ数を削減するため。
