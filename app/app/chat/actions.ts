@@ -85,6 +85,33 @@ function extractMentions(text: string) {
   return Array.from(new Set(matches.map((m) => m.slice(1))));
 }
 
+async function resolveMentionedUserIds(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  mentions: string[];
+}) {
+  if (args.mentions.length === 0) return [];
+  const lowered = args.mentions.map((m) => m.toLowerCase());
+  const { data: rows, error } = await args.supabase
+    .from("user_profiles")
+    .select("user_id, mention_handle")
+    .eq("org_id", args.orgId);
+  if (error) {
+    const missing =
+      error.message.includes('relation "user_profiles" does not exist') ||
+      error.message.includes("Could not find the table 'public.user_profiles'");
+    if (missing) return [];
+    throw new Error(`メンション解決に失敗しました: ${error.message}`);
+  }
+  const handleMap = new Map(
+    ((rows ?? []) as Array<{ user_id: string; mention_handle: string | null }>).map((r) => [String(r.mention_handle ?? "").toLowerCase(), r.user_id])
+  );
+  const ids = lowered
+    .map((m) => handleMap.get(m) ?? null)
+    .filter((v): v is string => Boolean(v));
+  return Array.from(new Set(ids));
+}
+
 function hasAiMention(text: string) {
   return /(^|\s)@ai\b/i.test(text);
 }
@@ -1837,6 +1864,7 @@ async function postMessage(scope: ChatScope, formData: FormData, channelId?: str
   const supabase = await createClient();
   const mentions = extractMentions(body);
   const aiMentioned = hasAiMention(body);
+  const mentionUserIds = await resolveMentionedUserIds({ supabase, orgId, mentions });
 
   const session = await getOrCreateChatSession({
     supabase,
@@ -1857,6 +1885,7 @@ async function postMessage(scope: ChatScope, formData: FormData, channelId?: str
       metadata_json: {
         scope,
         mentions,
+        mention_user_ids: mentionUserIds,
         ai_mentioned: aiMentioned
       }
     })

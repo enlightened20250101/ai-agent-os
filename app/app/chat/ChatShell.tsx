@@ -240,7 +240,11 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
   const senderUserIds = Array.from(new Set(messages.map((m) => m.sender_user_id).filter((v): v is string => Boolean(v))));
   const [profilesRes, membersRes, channelsRes] = await Promise.all([
     senderUserIds.length > 0
-      ? supabase.from("user_profiles").select("user_id, display_name, avatar_emoji").eq("org_id", orgId).in("user_id", senderUserIds)
+      ? supabase
+          .from("user_profiles")
+          .select("user_id, display_name, mention_handle, avatar_url")
+          .eq("org_id", orgId)
+          .in("user_id", senderUserIds)
       : Promise.resolve({ data: [], error: null }),
     supabase.from("memberships").select("user_id").eq("org_id", orgId).order("created_at", { ascending: true }).limit(500),
     supabase.from("chat_channels").select("name").eq("org_id", orgId).order("created_at", { ascending: true }).limit(200)
@@ -255,19 +259,38 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
     throw new Error(`Failed to load chat channels: ${channelsRes.error.message}`);
   }
   const profileMap = new Map(
-    ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null; avatar_emoji: string | null; avatar_url?: string | null }>).map((p) => [
+    ((profilesRes.data ?? []) as Array<{
+      user_id: string;
+      display_name: string | null;
+      mention_handle?: string | null;
+      avatar_url?: string | null;
+    }>).map((p) => [
       p.user_id,
-      { name: p.display_name ?? null, avatar: p.avatar_emoji ?? "🙂", avatarUrl: p.avatar_url ?? null }
+      {
+        name: p.display_name ?? null,
+        handle: p.mention_handle ?? p.user_id.slice(0, 8),
+        avatarUrl: p.avatar_url ?? null
+      }
     ])
   );
   const memberIds = ((membersRes.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+  const memberProfilesRes = await supabase
+    .from("user_profiles")
+    .select("user_id, display_name, mention_handle")
+    .eq("org_id", orgId)
+    .in("user_id", memberIds);
+  if (memberProfilesRes.error && !isMissingTableError(memberProfilesRes.error.message, "user_profiles")) {
+    throw new Error(`Failed to load mention profiles: ${memberProfilesRes.error.message}`);
+  }
+  const memberProfiles = (memberProfilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null; mention_handle: string | null }>;
+  const memberProfileMap = new Map(memberProfiles.map((p) => [p.user_id, p]));
   const mentionCandidates = [
     { value: "AI", label: "AI" },
     ...memberIds.map((uid) => {
-      const profile = profileMap.get(uid);
-      const rawLabel = profile?.name ?? uid.slice(0, 8);
-      const value = rawLabel.replace(/\s+/g, "_");
-      return { value, label: rawLabel };
+      const profile = memberProfileMap.get(uid);
+      const rawLabel = profile?.display_name ?? uid.slice(0, 8);
+      const value = profile?.mention_handle ?? uid.slice(0, 8);
+      return { value, label: `${rawLabel} (${value})` };
     }),
     ...((channelsRes.data ?? []) as Array<{ name: string }>).map((c) => ({ value: c.name, label: `#${c.name}` }))
   ];
@@ -389,7 +412,7 @@ export async function ChatShell({ scope, channelId, title, description, submitAc
                         ? "Agent"
                         : "エージェント"
                       : profile?.name ?? message.sender_user_id?.slice(0, 8) ?? speakerLabel(message.sender_type, isEn);
-                  const avatar = message.sender_type === "system" ? "🤖" : profile?.avatar ?? "🙂";
+                  const avatar = message.sender_type === "system" ? "🤖" : "👤";
                   return (
                     <li
                       key={message.id}

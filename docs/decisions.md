@@ -1185,3 +1185,15 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `ai_execution_logs` を org横断監査台帳として運用し、チャットの confirmed 実行を `done/failed/declined` で記録する方式を採用した。
 - Why: チャンネル閲覧権限とは独立して、組織全体のAI実行責任トレースを一元化するため。
+
+- Decision: 設定画面のプロフィール入力を簡素化し、`表示名 + 画像アップロード` のみに統一した（絵文字アイコン/画像URL入力は廃止）。
+- Why: 運用上の入力負荷と混乱を減らし、要望どおり画像ベースのプロフィールに集中するため。
+
+- Decision: メンション解決の安定化のため `user_profiles.mention_handle` を追加し、メッセージ保存時に `mentions_user_ids` を metadata へ記録するようにした。
+- Why: 表示名変更があっても実体ユーザーIDを追跡できる監査性を確保するため。
+
+- Decision: `dm_external` チャンネルに Gmail 実送信アクション（件名/本文）を追加し、送信結果を `ai_execution_logs` に `source=external_dm` で記録する。
+- Why: 社外DM運用を会話ログだけで終わらせず、実際の外部送信まで接続して監査可能にするため。
+
+- Decision: `/app/executions` に集計カード（total/done/failed/success rate）と CSV エクスポート導線 (`/api/executions/export`) を追加した。
+- Why: 実行監査を一覧確認だけでなく、定量把握と二次分析に使える形へ拡張するため。

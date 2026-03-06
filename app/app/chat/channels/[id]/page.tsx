@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { postChannelMessage } from "@/app/app/chat/actions";
 import { ChatShell } from "@/app/app/chat/ChatShell";
-import { inviteChannelMember, leaveChannel } from "@/app/app/chat/channels/actions";
+import { inviteChannelMember, leaveChannel, sendExternalDmEmail } from "@/app/app/chat/channels/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -95,6 +95,26 @@ export default async function ChatChannelDetailPage({ params, searchParams }: Ch
         {sp.ok ? <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{sp.ok}</p> : null}
         {sp.error ? <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{sp.error}</p> : null}
       </section>
+
+      {channelType === "dm_external" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-slate-900">社外DM送信（Gmail）</p>
+          <form action={sendExternalDmEmail} className="mt-3 space-y-2">
+            <input type="hidden" name="channel_id" value={id} />
+            <input name="subject" required placeholder="件名" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            <textarea
+              name="body_text"
+              required
+              rows={4}
+              placeholder="本文"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button type="submit" className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800">
+              送信
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-sm font-semibold text-slate-900">メンバー招待（同じworkspace内の user_id）</p>

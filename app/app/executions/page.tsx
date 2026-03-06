@@ -90,6 +90,13 @@ export default async function ExecutionsPage({ searchParams }: ExecutionPageProp
   const rows = (data ?? []) as LogRow[];
   const requesterOptions = Array.from(new Set(rows.map((r) => r.triggered_by_user_id).filter((v): v is string => Boolean(v))));
   const intentOptions = Array.from(new Set(rows.map((r) => r.intent_type).filter((v): v is string => Boolean(v))));
+  const doneCount = rows.filter((r) => r.execution_status === "done").length;
+  const failedCount = rows.filter((r) => r.execution_status === "failed").length;
+  const declinedCount = rows.filter((r) => r.execution_status === "declined").length;
+  const successRate = rows.length > 0 ? Math.round((doneCount / rows.length) * 100) : 0;
+  const exportParams = new URLSearchParams();
+  exportParams.set("from", fromDate.toISOString());
+  exportParams.set("to", toDate.toISOString());
 
   return (
     <section className="space-y-6">
@@ -141,7 +148,33 @@ export default async function ExecutionsPage({ searchParams }: ExecutionPageProp
         <button type="submit" className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
           絞り込み
         </button>
+        <Link
+          href={`/api/executions/export?${exportParams.toString()}`}
+          className="ml-2 inline-flex rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
+        >
+          CSVエクスポート
+        </Link>
       </form>
+
+      <section className="grid gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="text-xs text-slate-500">TOTAL</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{rows.length}</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-xs text-emerald-700">DONE</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900">{doneCount}</p>
+        </div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+          <p className="text-xs text-rose-700">FAILED</p>
+          <p className="mt-1 text-2xl font-semibold text-rose-900">{failedCount}</p>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-xs text-amber-700">SUCCESS RATE</p>
+          <p className="mt-1 text-2xl font-semibold text-amber-900">{successRate}%</p>
+          <p className="text-[11px] text-amber-700">declined: {declinedCount}</p>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         {rows.length === 0 ? (

@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { resolveGoogleRuntimeConfig } from "@/lib/connectors/runtime";
+import { appendAiExecutionLog } from "@/lib/executions/logs";
+import { sendEmailWithGmail } from "@/lib/google/gmail";
 import { getOrCreateChatSession } from "@/lib/chat/sessions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -208,4 +211,113 @@ export async function leaveChannel(formData: FormData) {
 
   revalidatePath("/app/chat/channels");
   redirect(toOk("チャンネルから退出しました。"));
+}
+
+export async function sendExternalDmEmail(formData: FormData) {
+  const channelId = String(formData.get("channel_id") ?? "").trim();
+  const subject = String(formData.get("subject") ?? "").trim();
+  const bodyText = String(formData.get("body_text") ?? "").trim();
+  if (!channelId || !subject || !bodyText) {
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent("件名と本文は必須です。")}`);
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const { data: channel, error: channelError } = await supabase
+    .from("chat_channels")
+    .select("id, channel_type, external_contact_id, name")
+    .eq("org_id", orgId)
+    .eq("id", channelId)
+    .maybeSingle();
+  if (channelError || !channel) {
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent("チャンネルが見つかりません。")}`);
+  }
+  if ((channel.channel_type as string) !== "dm_external" || !(channel.external_contact_id as string | null)) {
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent("このチャンネルは社外DM送信対象ではありません。")}`);
+  }
+
+  const { data: contact, error: contactError } = await supabase
+    .from("external_contacts")
+    .select("id, display_name, email")
+    .eq("org_id", orgId)
+    .eq("id", channel.external_contact_id as string)
+    .maybeSingle();
+  if (contactError || !contact || !(contact.email as string | null)) {
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent("社外連絡先メールが未設定です。")}`);
+  }
+
+  const cfg = await resolveGoogleRuntimeConfig({ supabase, orgId });
+  if (!cfg.clientId || !cfg.clientSecret || !cfg.refreshToken || !cfg.senderEmail) {
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent("Googleコネクタが未設定です。")}`);
+  }
+
+  try {
+    const res = await sendEmailWithGmail({
+      clientId: cfg.clientId,
+      clientSecret: cfg.clientSecret,
+      refreshToken: cfg.refreshToken,
+      senderEmail: cfg.senderEmail,
+      to: contact.email as string,
+      subject,
+      bodyText
+    });
+
+    const session = await getOrCreateChatSession({ supabase, orgId, scope: "channel", userId, channelId });
+    await supabase.from("chat_messages").insert({
+      org_id: orgId,
+      session_id: session.id,
+      sender_type: "system",
+      body_text: `社外送信しました: to=${contact.email as string}, subject=${subject}`,
+      metadata_json: {
+        source: "external_dm_send",
+        external_contact_id: contact.id,
+        gmail_message_id: res.messageId
+      }
+    });
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionId: session.id,
+      sessionScope: "channel",
+      channelId,
+      intentType: "external_dm_send",
+      executionStatus: "done",
+      executionRefType: "channel",
+      executionRefId: channelId,
+      source: "external_dm",
+      summaryText: `External DM sent to ${contact.email as string}`,
+      metadata: {
+        contact_id: contact.id,
+        contact_name: contact.display_name,
+        to: contact.email,
+        subject,
+        gmail_message_id: res.messageId,
+        stubbed: res.stubbed
+      },
+      finishedAt: new Date().toISOString()
+    });
+    revalidatePath(`/app/chat/channels/${channelId}`);
+    revalidatePath("/app/executions");
+    redirect(`/app/chat/channels/${channelId}?ok=${encodeURIComponent("社外DMを送信しました。")}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "送信に失敗しました。";
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionScope: "channel",
+      channelId,
+      intentType: "external_dm_send",
+      executionStatus: "failed",
+      executionRefType: "channel",
+      executionRefId: channelId,
+      source: "external_dm",
+      summaryText: `External DM failed: ${message}`,
+      metadata: { error: message, subject, to: contact.email },
+      finishedAt: new Date().toISOString()
+    });
+    revalidatePath("/app/executions");
+    redirect(`/app/chat/channels/${channelId}?error=${encodeURIComponent(`社外DM送信失敗: ${message}`)}`);
+  }
 }

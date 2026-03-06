@@ -6,6 +6,14 @@ import { APP_LOCALE_COOKIE } from "@/lib/i18n/locale";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
+function toHandle(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32);
+}
+
 export async function updateLocale(formData: FormData) {
   const locale = String(formData.get("locale") ?? "ja").trim();
   const returnTo = String(formData.get("return_to") ?? "/app/settings").trim() || "/app/settings";
@@ -24,11 +32,16 @@ export async function updateLocale(formData: FormData) {
 
 export async function updateProfile(formData: FormData) {
   const displayName = String(formData.get("display_name") ?? "").trim();
-  const avatarEmojiRaw = String(formData.get("avatar_emoji") ?? "🙂").trim();
-  const avatarEmoji = avatarEmojiRaw.length > 0 ? avatarEmojiRaw.slice(0, 2) : "🙂";
-  const avatarUrlRaw = String(formData.get("avatar_url") ?? "").trim();
   const avatarFile = formData.get("avatar_file");
-  let avatarUrl: string | null = avatarUrlRaw.length > 0 ? avatarUrlRaw : null;
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const { data: existingProfile } = await supabase
+    .from("user_profiles")
+    .select("avatar_url")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  let avatarUrl: string | null = ((existingProfile?.avatar_url as string | null | undefined) ?? null);
   if (avatarFile instanceof File && avatarFile.size > 0) {
     const maxBytes = 256 * 1024;
     if (avatarFile.size > maxBytes) {
@@ -41,15 +54,25 @@ export async function updateProfile(formData: FormData) {
     const base64 = bytes.toString("base64");
     avatarUrl = `data:${avatarFile.type};base64,${base64}`;
   }
-
-  const { orgId, userId } = await requireOrgContext();
-  const supabase = await createClient();
+  const baseHandle = toHandle(displayName) || userId.slice(0, 8);
+  let mentionHandle = baseHandle;
+  const { data: conflict } = await supabase
+    .from("user_profiles")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("mention_handle", baseHandle)
+    .neq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  if (conflict?.id) {
+    mentionHandle = `${baseHandle}_${userId.slice(0, 4)}`;
+  }
   const { error } = await supabase.from("user_profiles").upsert(
     {
       org_id: orgId,
       user_id: userId,
       display_name: displayName.length > 0 ? displayName : null,
-      avatar_emoji: avatarEmoji,
+      mention_handle: mentionHandle,
       avatar_url: avatarUrl,
       updated_at: new Date().toISOString()
     },
