@@ -117,3 +117,109 @@ export async function updateCaseStatus(formData: FormData) {
   revalidatePath("/app/cases");
   redirect(withMessage("ok", "案件ステータスを更新しました。"));
 }
+
+export async function updateCaseOwner(formData: FormData) {
+  const caseId = String(formData.get("case_id") ?? "").trim();
+  const ownerUserIdRaw = String(formData.get("owner_user_id") ?? "").trim();
+  const ownerUserId = ownerUserIdRaw.length > 0 ? ownerUserIdRaw : null;
+  if (!caseId) {
+    redirect(withMessage("error", "不正なパラメータです。"));
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const { data: beforeCase } = await supabase
+    .from("business_cases")
+    .select("id, owner_user_id")
+    .eq("id", caseId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from("business_cases")
+    .update({ owner_user_id: ownerUserId, updated_at: new Date().toISOString() })
+    .eq("id", caseId)
+    .eq("org_id", orgId);
+
+  if (error) {
+    if (isMissingTableError(error.message, "business_cases")) {
+      redirect(withMessage("error", "business_cases migration 未適用です。`supabase db push` を実行してください。"));
+    }
+    redirect(withMessage("error", `案件担当者の更新に失敗しました: ${error.message}`));
+  }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: userId,
+    eventType: "CASE_OWNER_UPDATED",
+    payload: {
+      changed_fields: {
+        owner_user_id: {
+          from: (beforeCase?.owner_user_id as string | null) ?? null,
+          to: ownerUserId
+        }
+      },
+      source: "case_owner_update"
+    }
+  });
+
+  revalidatePath("/app/cases");
+  revalidatePath(`/app/cases/${caseId}`);
+  redirect(withMessage("ok", "案件担当者を更新しました。"));
+}
+
+export async function updateCaseDue(formData: FormData) {
+  const caseId = String(formData.get("case_id") ?? "").trim();
+  const dueAtRaw = String(formData.get("due_at") ?? "").trim();
+  const dueAt = dueAtRaw.length > 0 ? new Date(dueAtRaw).toISOString() : null;
+  if (!caseId || (dueAtRaw && !Number.isFinite(Date.parse(dueAtRaw)))) {
+    redirect(withMessage("error", "不正な期限指定です。"));
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const { data: beforeCase } = await supabase
+    .from("business_cases")
+    .select("id, due_at")
+    .eq("id", caseId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from("business_cases")
+    .update({ due_at: dueAt, updated_at: new Date().toISOString() })
+    .eq("id", caseId)
+    .eq("org_id", orgId);
+
+  if (error) {
+    if (isMissingTableError(error.message, "business_cases")) {
+      redirect(withMessage("error", "business_cases migration 未適用です。`supabase db push` を実行してください。"));
+    }
+    redirect(withMessage("error", `案件期限の更新に失敗しました: ${error.message}`));
+  }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: userId,
+    eventType: "CASE_DUE_UPDATED",
+    payload: {
+      changed_fields: {
+        due_at: {
+          from: (beforeCase?.due_at as string | null) ?? null,
+          to: dueAt
+        }
+      },
+      source: "case_due_update"
+    }
+  });
+
+  revalidatePath("/app/cases");
+  revalidatePath(`/app/cases/${caseId}`);
+  redirect(withMessage("ok", "案件期限を更新しました。"));
+}

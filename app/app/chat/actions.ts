@@ -65,7 +65,9 @@ function isMutatingIntent(intentType: string) {
     intentType === "execute_action" ||
     intentType === "run_planner" ||
     intentType === "run_workflow" ||
-    intentType === "update_case_status"
+    intentType === "update_case_status" ||
+    intentType === "update_case_owner_self" ||
+    intentType === "update_case_due"
   );
 }
 
@@ -304,7 +306,7 @@ async function findCaseForChat(args: {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   let query = supabase
     .from("business_cases")
-    .select("id, title, status, updated_at")
+    .select("id, title, status, owner_user_id, due_at, updated_at")
     .eq("org_id", orgId);
 
   if (caseHint) {
@@ -326,9 +328,25 @@ async function findCaseForChat(args: {
 
   if (caseHint) {
     const exactById = rows.find((row) => String(row.id) === caseHint);
-    if (exactById) return { id: exactById.id as string, title: exactById.title as string, status: String(exactById.status) };
+    if (exactById) {
+      return {
+        id: exactById.id as string,
+        title: exactById.title as string,
+        status: String(exactById.status),
+        ownerUserId: (exactById.owner_user_id as string | null | undefined) ?? null,
+        dueAt: (exactById.due_at as string | null | undefined) ?? null
+      };
+    }
     const exactByTitle = rows.find((row) => String(row.title) === caseHint);
-    if (exactByTitle) return { id: exactByTitle.id as string, title: exactByTitle.title as string, status: String(exactByTitle.status) };
+    if (exactByTitle) {
+      return {
+        id: exactByTitle.id as string,
+        title: exactByTitle.title as string,
+        status: String(exactByTitle.status),
+        ownerUserId: (exactByTitle.owner_user_id as string | null | undefined) ?? null,
+        dueAt: (exactByTitle.due_at as string | null | undefined) ?? null
+      };
+    }
     if (rows.length > 1) {
       const previews = rows
         .slice(0, 3)
@@ -339,7 +357,13 @@ async function findCaseForChat(args: {
   }
 
   const first = rows[0];
-  return { id: first.id as string, title: first.title as string, status: String(first.status) };
+  return {
+    id: first.id as string,
+    title: first.title as string,
+    status: String(first.status),
+    ownerUserId: (first.owner_user_id as string | null | undefined) ?? null,
+    dueAt: (first.due_at as string | null | undefined) ?? null
+  };
 }
 
 async function getRecentTaskHintFromSession(args: {
@@ -680,6 +704,144 @@ async function runUpdateCaseStatusCommand(args: {
       status_to: targetStatus
     },
     message: `案件ステータスを更新しました: ${target.title} ${target.status} -> ${targetStatus} (/app/cases/${target.id})`,
+    touchedTaskId: null
+  };
+}
+
+async function runUpdateCaseOwnerSelfCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const caseHint = typeof intentJson.caseHint === "string" ? intentJson.caseHint : null;
+  const target = await findCaseForChat({ supabase, orgId, caseHint });
+  if (target.ownerUserId === userId) {
+    return {
+      executionRefType: "case",
+      executionRefId: target.id,
+      result: {
+        case_id: target.id,
+        owner_user_id: userId,
+        skipped: true,
+        reason: "already_owner"
+      },
+      message: `案件担当はすでにあなたです: ${target.title} (/app/cases/${target.id})`,
+      touchedTaskId: null
+    };
+  }
+
+  const { error } = await supabase
+    .from("business_cases")
+    .update({
+      owner_user_id: userId,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", target.id)
+    .eq("org_id", orgId);
+  if (error) {
+    throw new Error(`案件担当更新に失敗しました: ${error.message}`);
+  }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId: target.id,
+    actorUserId: userId,
+    eventType: "CASE_OWNER_UPDATED",
+    payload: {
+      changed_fields: {
+        owner_user_id: {
+          from: target.ownerUserId,
+          to: userId
+        }
+      },
+      source: "chat_command"
+    }
+  });
+
+  return {
+    executionRefType: "case",
+    executionRefId: target.id,
+    result: {
+      case_id: target.id,
+      owner_user_id_from: target.ownerUserId,
+      owner_user_id_to: userId
+    },
+    message: `案件担当をあなたに更新しました: ${target.title} (/app/cases/${target.id})`,
+    touchedTaskId: null
+  };
+}
+
+async function runUpdateCaseDueCommand(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  userId: string;
+  intentJson: Record<string, unknown>;
+}) {
+  const { supabase, orgId, userId, intentJson } = args;
+  const dueAtRaw = typeof intentJson.dueAt === "string" ? intentJson.dueAt : null;
+  if (!dueAtRaw || !Number.isFinite(Date.parse(dueAtRaw))) {
+    throw new Error("案件期限更新の dueAt 指定が不正です。");
+  }
+  const dueAt = new Date(dueAtRaw).toISOString();
+  const caseHint = typeof intentJson.caseHint === "string" ? intentJson.caseHint : null;
+  const target = await findCaseForChat({ supabase, orgId, caseHint });
+
+  if (target.dueAt && new Date(target.dueAt).toISOString() === dueAt) {
+    return {
+      executionRefType: "case",
+      executionRefId: target.id,
+      result: {
+        case_id: target.id,
+        due_at: dueAt,
+        skipped: true,
+        reason: "already_due"
+      },
+      message: `案件期限はすでに同じです: ${target.title} (/app/cases/${target.id})`,
+      touchedTaskId: null
+    };
+  }
+
+  const { error } = await supabase
+    .from("business_cases")
+    .update({
+      due_at: dueAt,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", target.id)
+    .eq("org_id", orgId);
+  if (error) {
+    throw new Error(`案件期限更新に失敗しました: ${error.message}`);
+  }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId: target.id,
+    actorUserId: userId,
+    eventType: "CASE_DUE_UPDATED",
+    payload: {
+      changed_fields: {
+        due_at: {
+          from: target.dueAt,
+          to: dueAt
+        }
+      },
+      source: "chat_command"
+    }
+  });
+
+  return {
+    executionRefType: "case",
+    executionRefId: target.id,
+    result: {
+      case_id: target.id,
+      due_at_from: target.dueAt,
+      due_at_to: dueAt
+    },
+    message: `案件期限を更新しました: ${target.title} (/app/cases/${target.id})`,
     touchedTaskId: null
   };
 }
@@ -1631,6 +1793,12 @@ async function executeIntentCommand(args: {
   if (args.intentType === "update_case_status") {
     return runUpdateCaseStatusCommand(args);
   }
+  if (args.intentType === "update_case_owner_self") {
+    return runUpdateCaseOwnerSelfCommand(args);
+  }
+  if (args.intentType === "update_case_due") {
+    return runUpdateCaseDueCommand(args);
+  }
   if (args.intentType === "bulk_retry_failed_workflows") {
     return runBulkRetryFailedWorkflowsCommand(args);
   }
@@ -2498,6 +2666,9 @@ export async function confirmChatCommand(formData: FormData) {
     revalidatePath("/app/planner");
     revalidatePath("/app/proposals");
     revalidatePath("/app/cases");
+    if (executed.executionRefType === "case" && typeof executed.executionRefId === "string" && executed.executionRefId.length > 0) {
+      revalidatePath(`/app/cases/${executed.executionRefId}`);
+    }
     revalidatePath("/app/workflows/runs");
     if (executed.touchedTaskId) {
       revalidatePath(`/app/tasks/${executed.touchedTaskId}`);

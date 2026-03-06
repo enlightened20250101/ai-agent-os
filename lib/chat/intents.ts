@@ -83,6 +83,18 @@ export type ParsedChatIntent =
       plan: { summary: string; caseHint: string | null; status: "open" | "blocked" | "closed" };
     }
   | {
+      intentType: "update_case_owner_self";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; caseHint: string | null };
+    }
+  | {
+      intentType: "update_case_due";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; caseHint: string | null; dueAt: string };
+    }
+  | {
       intentType: "unknown";
       confidence: number;
       requiresConfirmation: false;
@@ -104,6 +116,26 @@ function extractReason(text: string) {
   if (!m) return null;
   const reason = normalizeText(m[1] ?? "");
   return reason.length > 0 ? reason.slice(0, 180) : null;
+}
+
+function extractDueAtFromText(text: string) {
+  const isoDate = text.match(/(20\d{2})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (isoDate) {
+    const yyyy = isoDate[1];
+    const mm = isoDate[2]?.padStart(2, "0");
+    const dd = isoDate[3]?.padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}T23:59:00+09:00`;
+  }
+  if (/(明日|tomorrow)/i.test(text)) {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T23:59:00+09:00`;
+  }
+  if (/(今日|本日|today)/i.test(text)) {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T23:59:00+09:00`;
+  }
+  return null;
 }
 
 export function parseChatIntent(message: string): ParsedChatIntent {
@@ -171,6 +203,38 @@ export function parseChatIntent(message: string): ParsedChatIntent {
             : `最新の案件を ${mappedStatus} に更新します。`,
           caseHint,
           status: mappedStatus
+        }
+      };
+    }
+  }
+
+  const caseOwnerLike = /(案件|case)/i.test(text) && /(担当|owner|アサイン|割当|割り当て)/i.test(text);
+  if (caseOwnerLike && /(自分|me|myself)/i.test(text)) {
+    const caseHint = quoted ?? taskIdHint;
+    return {
+      intentType: "update_case_owner_self",
+      confidence: 0.8,
+      requiresConfirmation: true,
+      plan: {
+        summary: caseHint ? `案件「${caseHint}」の担当者を自分に設定します。` : "最新の案件の担当者を自分に設定します。",
+        caseHint
+      }
+    };
+  }
+
+  const caseDueLike = /(案件|case)/i.test(text) && /(期限|due|締切|〆切|deadline)/i.test(text);
+  if (caseDueLike) {
+    const dueAt = extractDueAtFromText(text);
+    if (dueAt) {
+      const caseHint = quoted ?? taskIdHint;
+      return {
+        intentType: "update_case_due",
+        confidence: 0.8,
+        requiresConfirmation: true,
+        plan: {
+          summary: caseHint ? `案件「${caseHint}」の期限を更新します。` : "最新の案件の期限を更新します。",
+          caseHint,
+          dueAt
         }
       };
     }
@@ -430,7 +494,7 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         "2) 承認依頼: 「E2E Task」を承認依頼して\n" +
         "3) 承認処理: 承認待ちを3件まとめて承認して\n" +
         "4) 実行: 「E2E Task」を実行して\n" +
-        "5) 案件更新: 「請求書A」をblockedにして\n" +
+        "5) 案件更新: 「請求書A」をblockedにして / 「請求書A」を自分に割り当てて / 「請求書A」の期限を2026-03-10にして\n" +
         "6) 自律系: プランナーを実行して / 失敗ワークフローを3件再試行して"
     }
   };

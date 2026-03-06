@@ -17,6 +17,8 @@ type CaseRow = {
   case_type: string;
   status: "open" | "blocked" | "closed";
   source: string;
+  owner_user_id: string | null;
+  due_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -33,6 +35,10 @@ function isMissingTableError(message: string, tableName: string) {
     message.includes(`relation "${tableName}" does not exist`) ||
     message.includes(`Could not find the table 'public.${tableName}'`)
   );
+}
+
+function isMissingColumnError(message: string, columnName: string) {
+  return message.includes(`column ${columnName} does not exist`) || message.includes(`Could not find the '${columnName}' column`);
 }
 
 function statusBadge(status: CaseRow["status"]) {
@@ -53,14 +59,26 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
 
   const casesResBase = supabase
     .from("business_cases")
-    .select("id, title, case_type, status, source, created_at, updated_at")
+    .select("id, title, case_type, status, source, owner_user_id, due_at, created_at, updated_at")
     .eq("org_id", orgId)
     .order("updated_at", { ascending: false });
 
   const casesRes = statusFilter === "all" ? await casesResBase : await casesResBase.eq("status", statusFilter);
+  let caseRowsData = (casesRes.data ?? []) as Array<Record<string, unknown>>;
+  let casesError = casesRes.error;
+  if (casesError && isMissingColumnError(casesError.message, "owner_user_id")) {
+    const fallbackBase = supabase
+      .from("business_cases")
+      .select("id, title, case_type, status, source, created_at, updated_at")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false });
+    const fallbackRes = statusFilter === "all" ? await fallbackBase : await fallbackBase.eq("status", statusFilter);
+    caseRowsData = (fallbackRes.data ?? []).map((row) => ({ ...row, owner_user_id: null, due_at: null }));
+    casesError = fallbackRes.error;
+  }
 
-  if (casesRes.error) {
-    if (isMissingTableError(casesRes.error.message, "business_cases")) {
+  if (casesError) {
+    if (isMissingTableError(casesError.message, "business_cases")) {
       return (
         <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
           <h1 className="text-xl font-semibold text-amber-900">案件台帳</h1>
@@ -70,10 +88,10 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         </section>
       );
     }
-    throw new Error(`Failed to load cases: ${casesRes.error.message}`);
+    throw new Error(`Failed to load cases: ${casesError.message}`);
   }
 
-  const rows = (casesRes.data ?? []) as CaseRow[];
+  const rows = caseRowsData as CaseRow[];
   const caseIds = rows.map((row) => row.id);
   const taskCountByCaseId = new Map<string, number>();
   const recentEventsByCaseId = new Map<string, CaseEventRow[]>();
@@ -220,7 +238,8 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  tasks: {taskCountByCaseId.get(row.id) ?? 0} | updated: {new Date(row.updated_at).toLocaleString()}
+                  tasks: {taskCountByCaseId.get(row.id) ?? 0} | owner: {row.owner_user_id ?? "未割当"} | due:{" "}
+                  {row.due_at ? new Date(row.due_at).toLocaleString() : "未設定"} | updated: {new Date(row.updated_at).toLocaleString()}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Link

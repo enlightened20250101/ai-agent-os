@@ -1140,3 +1140,12 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Chat intent に `update_case_status` を追加し、`案件「...」を blocked/closed/open に変更` の自然文を確認付きで実行できるようにした。
 - Why: ケース中心運用の更新操作をUI遷移なしで完結させ、チャット起点オペレーションの実用性を上げるため。
+
+- Decision: `business_cases` に `owner_user_id` と `due_at` を追加し、案件の担当者・期限をCase Ledgerで一元管理する最小運用モデルに拡張した。
+- Why: 案件ベースの滞留解消を進めるには、状態(open/blocked/closed)だけでなく「誰が対応するか」「いつまでに対応するか」を同じ台帳で扱う必要があるため。
+
+- Decision: `/app/cases/[id]` に担当者更新フォームと期限更新フォームを追加し、更新時に `CASE_OWNER_UPDATED` / `CASE_DUE_UPDATED` を `case_events` へ記録する。
+- Why: ケース運用の変更履歴を監査可能に保ちながら、詳細画面から即時にオペレーションできるようにするため。
+
+- Decision: Chat intent を `update_case_owner_self` / `update_case_due` まで拡張し、`案件「...」を自分に割り当て` と `案件「...」の期限をYYYY-MM-DDにして` を確認付きで実行可能にした。
+- Why: ケース運用の主要操作（状態・担当・期限）をチャットで完結できるようにし、UI遷移なしでの実行率を高めるため。

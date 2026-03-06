@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { StatusNotice } from "@/app/app/StatusNotice";
-import { updateCaseStatus } from "@/app/app/cases/actions";
+import { updateCaseDue, updateCaseOwner, updateCaseStatus } from "@/app/app/cases/actions";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,6 +20,8 @@ type CaseRow = {
   status: "open" | "blocked" | "closed";
   source: string;
   created_by_user_id: string;
+  owner_user_id: string | null;
+  due_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -47,6 +49,10 @@ function isMissingTableError(message: string, tableName: string) {
   );
 }
 
+function isMissingColumnError(message: string, columnName: string) {
+  return message.includes(`column ${columnName} does not exist`) || message.includes(`Could not find the '${columnName}' column`);
+}
+
 function pretty(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
@@ -63,10 +69,10 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
 
-  const [caseRes, tasksRes, caseEventsRes, approvalsRes, actionsRes, agentsRes] = await Promise.all([
+  const [caseResRaw, tasksRes, caseEventsRes, approvalsRes, actionsRes, agentsRes, membersRes] = await Promise.all([
     supabase
       .from("business_cases")
-      .select("id, title, case_type, status, source, created_by_user_id, created_at, updated_at")
+      .select("id, title, case_type, status, source, created_by_user_id, owner_user_id, due_at, created_at, updated_at")
       .eq("org_id", orgId)
       .eq("id", id)
       .maybeSingle(),
@@ -101,11 +107,25 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
       .select("id, name, role_key")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
-      .limit(200)
+      .limit(200),
+    supabase.from("memberships").select("user_id, role").eq("org_id", orgId).order("created_at", { ascending: true }).limit(200)
   ]);
 
-  if (caseRes.error) {
-    if (isMissingTableError(caseRes.error.message, "business_cases")) {
+  let caseData = caseResRaw.data as Record<string, unknown> | null;
+  let caseError = caseResRaw.error;
+  if (caseError && isMissingColumnError(caseError.message, "owner_user_id")) {
+    const fallback = await supabase
+      .from("business_cases")
+      .select("id, title, case_type, status, source, created_by_user_id, created_at, updated_at")
+      .eq("org_id", orgId)
+      .eq("id", id)
+      .maybeSingle();
+    caseData = fallback.data ? { ...fallback.data, owner_user_id: null, due_at: null } : null;
+    caseError = fallback.error;
+  }
+
+  if (caseError) {
+    if (isMissingTableError(caseError.message, "business_cases")) {
       return (
         <section className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-6">
           <h1 className="text-xl font-semibold text-amber-900">案件詳細</h1>
@@ -115,10 +135,10 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
         </section>
       );
     }
-    throw new Error(`Failed to load case: ${caseRes.error.message}`);
+    throw new Error(`Failed to load case: ${caseError.message}`);
   }
 
-  const caseRow = caseRes.data as CaseRow | null;
+  const caseRow = caseData as CaseRow | null;
   if (!caseRow) notFound();
 
   if (tasksRes.error) {
@@ -133,8 +153,12 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
   if (agentsRes.error) {
     throw new Error(`Failed to load agents: ${agentsRes.error.message}`);
   }
+  if (membersRes.error) {
+    throw new Error(`Failed to load memberships: ${membersRes.error.message}`);
+  }
 
   const taskRows = (tasksRes.data ?? []) as TaskRow[];
+  const memberships = (membersRes.data ?? []) as Array<{ user_id: string; role: string }>;
   const taskIds = new Set(taskRows.map((row) => row.id));
   const taskById = new Map(taskRows.map((row) => [row.id, row]));
 
@@ -184,6 +208,9 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
             <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Case Ledger</p>
             <h1 className="mt-1 text-xl font-semibold text-slate-900">{caseRow.title}</h1>
             <p className="mt-1 text-sm text-slate-600">{caseRow.case_type}</p>
+            <p className="mt-2 text-xs text-slate-500">
+              owner: {caseRow.owner_user_id ?? "未割当"} | due: {caseRow.due_at ? new Date(caseRow.due_at).toLocaleString() : "未設定"}
+            </p>
           </div>
           <div className={`rounded-full border px-3 py-1 text-xs ${statusBadge(caseRow.status)}`}>{caseRow.status}</div>
         </div>
@@ -231,6 +258,46 @@ export default async function CaseDetailPage({ params, searchParams }: CaseDetai
               />
             </form>
           ))}
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <form action={updateCaseOwner} className="rounded-lg border border-slate-200 p-3">
+            <input type="hidden" name="case_id" value={caseRow.id} />
+            <p className="text-xs font-medium text-slate-700">担当者</p>
+            <div className="mt-2 flex gap-2">
+              <select name="owner_user_id" defaultValue={caseRow.owner_user_id ?? ""} className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm">
+                <option value="">未割当</option>
+                {memberships.map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {member.user_id} ({member.role})
+                  </option>
+                ))}
+              </select>
+              <ConfirmSubmitButton
+                label="更新"
+                pendingLabel="更新中..."
+                confirmMessage="案件担当者を更新します。よろしいですか？"
+                className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 hover:bg-slate-100"
+              />
+            </div>
+          </form>
+          <form action={updateCaseDue} className="rounded-lg border border-slate-200 p-3">
+            <input type="hidden" name="case_id" value={caseRow.id} />
+            <p className="text-xs font-medium text-slate-700">期限</p>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="datetime-local"
+                name="due_at"
+                defaultValue={caseRow.due_at ? new Date(caseRow.due_at).toISOString().slice(0, 16) : ""}
+                className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
+              />
+              <ConfirmSubmitButton
+                label="更新"
+                pendingLabel="更新中..."
+                confirmMessage="案件期限を更新します。よろしいですか？"
+                className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 hover:bg-slate-100"
+              />
+            </div>
+          </form>
         </div>
       </section>
 

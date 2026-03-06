@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type CaseEventType =
   | "CASE_CREATED"
   | "CASE_STATUS_UPDATED"
+  | "CASE_OWNER_UPDATED"
+  | "CASE_DUE_UPDATED"
   | "CASE_TASK_LINKED"
   | "CASE_TASK_STATUS_SYNC"
   | "CASE_APPROVAL_DECIDED";
