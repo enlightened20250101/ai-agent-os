@@ -1137,3 +1137,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/operations/jobs` の Auto Guard推移に、guard実行結果（success/skipped/error）を色付きバナーで表示するようにした。
 - Why: 実行直後の状態を同じセクション内で即確認できるようにし、次の判断（再実行/閾値調整）を速めるため。
+
+- Decision: Chat intent に `update_case_status` を追加し、`案件「...」を blocked/closed/open に変更` の自然文を確認付きで実行できるようにした。
+- Why: ケース中心運用の更新操作をUI遷移なしで完結させ、チャット起点オペレーションの実用性を上げるため。

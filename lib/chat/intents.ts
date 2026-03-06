@@ -77,6 +77,12 @@ export type ParsedChatIntent =
       plan: { summary: string; taskHint: string | null };
     }
   | {
+      intentType: "update_case_status";
+      confidence: number;
+      requiresConfirmation: true;
+      plan: { summary: string; caseHint: string | null; status: "open" | "blocked" | "closed" };
+    }
+  | {
       intentType: "unknown";
       confidence: number;
       requiresConfirmation: false;
@@ -144,6 +150,31 @@ export function parseChatIntent(message: string): ParsedChatIntent {
 
   const quoted = extractQuoted(text);
   const explicitTaskHint = quoted ?? taskIdHint;
+  const caseStatusLike = /(案件|case)/i.test(text) && /(変更|更新|にして|にする|set|ステータス)/i.test(text);
+  if (caseStatusLike) {
+    const mappedStatus = /(blocked|block|保留|停止|止め|ブロック)/i.test(text)
+      ? "blocked"
+      : /(closed|close|クローズ|完了|終了|閉じ)/i.test(text)
+        ? "closed"
+        : /(open|再開|オープン|対応中|進行)/i.test(text)
+          ? "open"
+          : null;
+    if (mappedStatus) {
+      const caseHint = quoted ?? taskIdHint;
+      return {
+        intentType: "update_case_status",
+        confidence: 0.8,
+        requiresConfirmation: true,
+        plan: {
+          summary: caseHint
+            ? `案件「${caseHint}」を ${mappedStatus} に更新します。`
+            : `最新の案件を ${mappedStatus} に更新します。`,
+          caseHint,
+          status: mappedStatus
+        }
+      };
+    }
+  }
 
   const acceptProposalLike =
     /(提案.*(受け入れ|採用)|受け入れ.*提案|accept proposal|提案を.*承認依頼|提案を.*タスク化)/i.test(text) ||
@@ -399,7 +430,8 @@ export function parseChatIntent(message: string): ParsedChatIntent {
         "2) 承認依頼: 「E2E Task」を承認依頼して\n" +
         "3) 承認処理: 承認待ちを3件まとめて承認して\n" +
         "4) 実行: 「E2E Task」を実行して\n" +
-        "5) 自律系: プランナーを実行して / 失敗ワークフローを3件再試行して"
+        "5) 案件更新: 「請求書A」をblockedにして\n" +
+        "6) 自律系: プランナーを実行して / 失敗ワークフローを3件再試行して"
     }
   };
 }
