@@ -5,6 +5,7 @@ import {
   decideApproval,
   resendSelectedApprovalSlackReminders,
   resendApprovalSlackReminder,
+  runGuardedAutoReminderNow,
   sendStaleApprovalRemindersNow
 } from "@/app/app/approvals/actions";
 import { requireOrgContext } from "@/lib/org/context";
@@ -315,6 +316,27 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         ) : (
           <p className="mt-3 text-xs text-indigo-900">直近7日の auto 実行ログはありません。</p>
         )}
+        <form action={runGuardedAutoReminderNow} className="mt-3 rounded-md border border-indigo-200 bg-white p-3">
+          <p className="text-xs font-medium text-indigo-900">今回のみ閾値指定で実行</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+              min_stale
+              <select name="min_stale" defaultValue={String(autoMinStale)} className="rounded-md border border-slate-300 px-2 py-1">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <ConfirmSubmitButton
+              label="guard付き再通知を実行"
+              pendingLabel="実行中..."
+              confirmMessage="指定した閾値で今回のみガード判定して再通知を実行します。よろしいですか？"
+              className="rounded-md border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
+            />
+          </div>
+        </form>
       </section>
 
       <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">

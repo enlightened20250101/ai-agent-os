@@ -1089,3 +1089,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: auto再通知APIは `APPROVAL_REMINDER_AUTO_RUN` / `APPROVAL_REMINDER_AUTO_SKIPPED` を `task_events` に記録し、`/app/approvals` で threshold・current stale・直近結果（skipped/sent）を可視化する。
 - Why: 自動化ガードが「いつ・なぜ実行/スキップされたか」を画面上で追えるようにして、運用者の信頼性とデバッグ性を高めるため。
+
+- Decision: `/app/approvals` の Auto Guard セクションに「今回のみ閾値指定で実行」フォームを追加し、`min_stale` を一時上書きして手動実行できるようにした。
+- Why: 緊急時にenv変更やcron待ちをせず、画面上の操作だけでガード条件を調整して即時に再通知を走らせるため。

@@ -254,3 +254,56 @@ export async function sendStaleApprovalRemindersNow() {
   }
   redirect(okRedirect(`送信対象なし（reason=${result.reason} target=${result.targetCount}）`));
 }
+
+function parseOneOffMinStale(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return null;
+  return Math.max(1, Math.min(1000, parsed));
+}
+
+export async function runGuardedAutoReminderNow(formData: FormData) {
+  const minStaleRaw = String(formData.get("min_stale") ?? "").trim();
+  const oneOffThreshold = parseOneOffMinStale(minStaleRaw);
+  if (!oneOffThreshold) {
+    redirect(errorRedirect("min_stale が不正です。"));
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const staleHours = Number(process.env.APPROVAL_REMINDER_STALE_HOURS ?? process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
+  const staleCutoffIso = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
+
+  const countRes = await supabase
+    .from("approvals")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .lt("created_at", staleCutoffIso);
+  if (countRes.error) {
+    redirect(errorRedirect(`stale件数の取得に失敗しました: ${countRes.error.message}`));
+  }
+  const stalePendingCount = countRes.count ?? 0;
+  if (stalePendingCount < oneOffThreshold) {
+    revalidatePath("/app/approvals");
+    redirect(okRedirect(`guardによりスキップ: stale=${stalePendingCount} threshold=${oneOffThreshold}`));
+  }
+
+  let result;
+  try {
+    result = await sendApprovalReminders({
+      supabase,
+      orgId,
+      actorUserId: userId,
+      source: "manual"
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "ガード付き再通知に失敗しました。";
+    redirect(errorRedirect(message));
+  }
+
+  revalidatePath("/app/approvals");
+  if (result.sentCount > 0) {
+    redirect(okRedirect(`guard実行: stale=${stalePendingCount} threshold=${oneOffThreshold} sent=${result.sentCount}`));
+  }
+  redirect(okRedirect(`guard実行: stale=${stalePendingCount} threshold=${oneOffThreshold} reason=${result.reason}`));
+}
