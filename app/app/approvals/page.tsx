@@ -42,8 +42,10 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   const staleHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleOnly = sp.stale_only === "1";
   const sort = sp.sort === "newest" ? "newest" : "oldest";
+  const autoMinStaleRaw = Number.parseInt(process.env.APPROVAL_REMINDER_AUTO_MIN_STALE ?? "3", 10);
+  const autoMinStale = Number.isNaN(autoMinStaleRaw) ? 3 : Math.max(1, Math.min(1000, autoMinStaleRaw));
 
-  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }, reminderEventsRes] = await Promise.all([
+  const [{ data: approvals, error }, { data: weeklyApprovals, error: weeklyError }, reminderEventsRes, autoRunEventsRes] = await Promise.all([
     supabase
       .from("approvals")
       .select("id, task_id, status, created_at, reason")
@@ -64,7 +66,15 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
       .eq("event_type", "SLACK_APPROVAL_POSTED")
       .gte("created_at", sevenDaysAgoIso)
       .order("created_at", { ascending: false })
-      .limit(500)
+      .limit(500),
+    supabase
+      .from("task_events")
+      .select("task_id, created_at, event_type, payload_json")
+      .eq("org_id", orgId)
+      .in("event_type", ["APPROVAL_REMINDER_AUTO_RUN", "APPROVAL_REMINDER_AUTO_SKIPPED"])
+      .gte("created_at", sevenDaysAgoIso)
+      .order("created_at", { ascending: false })
+      .limit(100)
   ]);
 
   if (error) {
@@ -75,6 +85,9 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   }
   if (reminderEventsRes.error) {
     throw new Error(`Failed to load reminder events: ${reminderEventsRes.error.message}`);
+  }
+  if (autoRunEventsRes.error) {
+    throw new Error(`Failed to load auto reminder run events: ${autoRunEventsRes.error.message}`);
   }
 
   const pendingApprovals = (approvals ?? []) as ApprovalRow[];
@@ -113,6 +126,20 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     reminderEvents.map((row) => row.approvalId).filter((value): value is string => Boolean(value))
   ).size;
   const reminderRecent = reminderEvents.slice(0, 10);
+  const autoEvents = (autoRunEventsRes.data ?? []) as Array<{
+    task_id: string;
+    created_at: string;
+    event_type: "APPROVAL_REMINDER_AUTO_RUN" | "APPROVAL_REMINDER_AUTO_SKIPPED";
+    payload_json: unknown;
+  }>;
+  const autoSentRuns = autoEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_RUN").length;
+  const autoSkippedRuns = autoEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_SKIPPED").length;
+  const latestAutoEvent = autoEvents[0] ?? null;
+  const latestAutoPayload = parseObject(latestAutoEvent?.payload_json ?? null);
+  const currentStalePendingCount = pendingApprovals.filter((approval) => {
+    const ageHours = (Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000);
+    return ageHours >= staleHours;
+  }).length;
   const taskIds = Array.from(new Set([...filteredApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
@@ -246,6 +273,47 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           </ul>
         ) : (
           <p className="mt-3 text-xs text-sky-900">直近7日のリマインド送信はありません。</p>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-indigo-900">Auto Guard 状態（7日）</p>
+          <span className="text-xs text-indigo-800">/api/approvals/reminders/auto</span>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="rounded-md border border-indigo-200 bg-white p-3">
+            <p className="text-xs text-indigo-700">guard threshold</p>
+            <p className="mt-1 text-xl font-semibold text-indigo-900">{autoMinStale}</p>
+          </div>
+          <div className="rounded-md border border-indigo-200 bg-white p-3">
+            <p className="text-xs text-indigo-700">current stale pending</p>
+            <p className={`mt-1 text-xl font-semibold ${currentStalePendingCount >= autoMinStale ? "text-rose-700" : "text-indigo-900"}`}>
+              {currentStalePendingCount}
+            </p>
+          </div>
+          <div className="rounded-md border border-indigo-200 bg-white p-3">
+            <p className="text-xs text-indigo-700">auto sent runs</p>
+            <p className="mt-1 text-xl font-semibold text-indigo-900">{autoSentRuns}</p>
+          </div>
+          <div className="rounded-md border border-indigo-200 bg-white p-3">
+            <p className="text-xs text-indigo-700">auto skipped runs</p>
+            <p className="mt-1 text-xl font-semibold text-indigo-900">{autoSkippedRuns}</p>
+          </div>
+        </div>
+        {latestAutoEvent ? (
+          <div className="mt-3 rounded-md border border-indigo-200 bg-white p-3 text-xs text-slate-700">
+            <p className="font-medium text-indigo-900">直近 auto 実行結果</p>
+            <p className="mt-1 text-slate-600">
+              {new Date(latestAutoEvent.created_at).toLocaleString()} | {latestAutoEvent.event_type}
+            </p>
+            <p className="mt-1 text-slate-600">
+              stale={String(latestAutoPayload?.stale_pending_count ?? "-")} threshold={String(latestAutoPayload?.threshold ?? autoMinStale)} reason=
+              {String(latestAutoPayload?.reason ?? "-")} sent_count={String(latestAutoPayload?.sent_count ?? 0)}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-indigo-900">直近7日の auto 実行ログはありません。</p>
         )}
       </section>
 

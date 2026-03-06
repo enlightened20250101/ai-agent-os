@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { sendApprovalReminders } from "@/lib/approvals/reminders";
+import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { runWithOpsRetry } from "@/lib/governance/jobRetry";
+import { getOrCreateGovernanceOpsTaskId } from "@/lib/governance/review";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 function isAllowedByMode(request: Request) {
@@ -63,6 +65,29 @@ async function countStalePendingApprovals(args: {
   return countRes.count ?? 0;
 }
 
+async function logAutoReminderEvent(args: {
+  admin: ReturnType<typeof createAdminClient>;
+  orgId: string;
+  eventType: "APPROVAL_REMINDER_AUTO_RUN" | "APPROVAL_REMINDER_AUTO_SKIPPED";
+  payload: Record<string, unknown>;
+}) {
+  try {
+    const taskId = await getOrCreateGovernanceOpsTaskId({ supabase: args.admin, orgId: args.orgId });
+    await appendTaskEvent({
+      supabase: args.admin,
+      orgId: args.orgId,
+      taskId,
+      actorType: "system",
+      actorId: null,
+      eventType: args.eventType,
+      payload: args.payload
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "auto reminder event log failed";
+    console.error(`[APPROVAL_REMINDER_AUTO_EVENT_LOG_FAILED] org_id=${args.orgId} ${message}`);
+  }
+}
+
 export async function POST(request: Request) {
   if (!isAllowedByMode(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -113,6 +138,17 @@ export async function POST(request: Request) {
           staleCutoffIso
         });
         if (stalePendingCount < guardThreshold) {
+          await logAutoReminderEvent({
+            admin,
+            orgId: targetOrgId,
+            eventType: "APPROVAL_REMINDER_AUTO_SKIPPED",
+            payload: {
+              reason: "below_threshold",
+              stale_pending_count: stalePendingCount,
+              threshold: guardThreshold,
+              stale_hours: staleHours
+            }
+          });
           results.push({
             org_id: targetOrgId,
             ok: true,
@@ -142,6 +178,21 @@ export async function POST(request: Request) {
 
         if (retried.ok) {
           const result = retried.value;
+          await logAutoReminderEvent({
+            admin,
+            orgId: targetOrgId,
+            eventType: "APPROVAL_REMINDER_AUTO_RUN",
+            payload: {
+              stale_pending_count: stalePendingCount,
+              threshold: guardThreshold,
+              stale_hours: staleHours,
+              sent: result.sent,
+              reason: result.reason,
+              target_count: result.targetCount,
+              sent_count: result.sentCount,
+              skipped_cooldown_count: result.skippedCooldownCount
+            }
+          });
           results.push({
             org_id: targetOrgId,
             ok: true,
@@ -214,6 +265,17 @@ export async function POST(request: Request) {
   try {
     const stalePendingCount = await countStalePendingApprovals({ admin, orgId, staleCutoffIso });
     if (stalePendingCount < guardThreshold) {
+      await logAutoReminderEvent({
+        admin,
+        orgId,
+        eventType: "APPROVAL_REMINDER_AUTO_SKIPPED",
+        payload: {
+          reason: "below_threshold",
+          stale_pending_count: stalePendingCount,
+          threshold: guardThreshold,
+          stale_hours: staleHours
+        }
+      });
       return NextResponse.json({
         ok: true,
         org_id: orgId,
@@ -241,6 +303,21 @@ export async function POST(request: Request) {
 
     if (retried.ok) {
       const result = retried.value;
+      await logAutoReminderEvent({
+        admin,
+        orgId,
+        eventType: "APPROVAL_REMINDER_AUTO_RUN",
+        payload: {
+          stale_pending_count: stalePendingCount,
+          threshold: guardThreshold,
+          stale_hours: staleHours,
+          sent: result.sent,
+          reason: result.reason,
+          target_count: result.targetCount,
+          sent_count: result.sentCount,
+          skipped_cooldown_count: result.skippedCooldownCount
+        }
+      });
       return NextResponse.json({
         ok: true,
         org_id: orgId,
@@ -288,4 +365,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

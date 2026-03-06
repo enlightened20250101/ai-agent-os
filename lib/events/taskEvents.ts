@@ -44,7 +44,9 @@ export type AppEventType =
   | "OPS_JOB_DRY_RUN_PASSED"
   | "OPS_JOB_DRY_RUN_FAILED"
   | "OPS_JOB_CIRCUIT_ALERT_POSTED"
-  | "OPS_JOB_CIRCUIT_ALERT_FAILED";
+  | "OPS_JOB_CIRCUIT_ALERT_FAILED"
+  | "APPROVAL_REMINDER_AUTO_RUN"
+  | "APPROVAL_REMINDER_AUTO_SKIPPED";
 
 type AppendTaskEventArgs = {
   supabase: SupabaseClient;

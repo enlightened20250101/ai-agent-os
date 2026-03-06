@@ -1086,3 +1086,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/api/approvals/reminders/auto` を追加し、`stale pending approvals >= threshold` のときだけ再通知ジョブを実行するガードを導入した（`APPROVAL_REMINDER_AUTO_MIN_STALE`, default 3）。
 - Why: 常時再通知によるノイズを抑えつつ、滞留が一定量を超えた場合のみ自動介入して運用負荷を下げるため。
+
+- Decision: auto再通知APIは `APPROVAL_REMINDER_AUTO_RUN` / `APPROVAL_REMINDER_AUTO_SKIPPED` を `task_events` に記録し、`/app/approvals` で threshold・current stale・直近結果（skipped/sent）を可視化する。
+- Why: 自動化ガードが「いつ・なぜ実行/スキップされたか」を画面上で追えるようにして、運用者の信頼性とデバッグ性を高めるため。
