@@ -438,6 +438,10 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     autoDelta !== null && autoDelta > 0
       ? Math.max(1, Math.min(suggestedGuardMinStale, Math.max(1, stalePendingApprovals - 1)))
       : suggestedGuardMinStale;
+  const autoReason = typeof latestAutoPayload?.reason === "string" ? latestAutoPayload.reason : "n/a";
+  const autoDeltaText =
+    autoDelta === null ? "delta=n/a" : autoDelta > 0 ? `delta=+${autoDelta}` : `delta=${autoDelta}`;
+  const autoQueueSummary = `${autoReason} / ${autoDeltaText}`;
 
   const urgentSignals = [
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
@@ -500,7 +504,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       label: "Auto Guard再通知",
       href: "/app/approvals",
       score: stalePendingApprovals >= autoMinStale ? 82 + Math.min(15, stalePendingApprovals) : 0,
-      detail: `stale=${stalePendingApprovals}, threshold=${autoMinStale}`,
+      detail: `stale=${stalePendingApprovals}, threshold=${autoMinStale}, ${autoQueueSummary}`,
       quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
@@ -730,6 +734,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           >
             <p className={`text-xs ${stalePendingApprovals > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留承認 ({staleApprovalHours}h+)</p>
             <p className={`mt-1 text-xl font-semibold ${stalePendingApprovals > 0 ? "text-rose-900" : "text-slate-900"}`}>{stalePendingApprovals}</p>
+            <p className="mt-1 text-[11px] text-slate-600">auto: {autoQueueSummary}</p>
           </Link>
           <Link
             href="/app/operations/exceptions"
