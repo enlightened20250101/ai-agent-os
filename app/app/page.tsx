@@ -740,7 +740,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
             href="/app/approvals"
             className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
           >
-            <p className={`text-xs ${stalePendingApprovals > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留承認 ({staleApprovalHours}h+)</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className={`text-xs ${stalePendingApprovals > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留承認 ({staleApprovalHours}h+)</p>
+              {autoDelta !== null && autoDelta > 0 ? (
+                <span className="animate-pulse rounded-full border border-rose-400 bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                  悪化中
+                </span>
+              ) : null}
+            </div>
             <p className={`mt-1 text-xl font-semibold ${stalePendingApprovals > 0 ? "text-rose-900" : "text-slate-900"}`}>{stalePendingApprovals}</p>
             <p className={`mt-1 text-[11px] ${autoSummaryTextClass}`}>auto: {autoQueueSummary}</p>
           </Link>

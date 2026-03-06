@@ -1113,3 +1113,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` 優先対応キューの Auto Guard サマリは `delta` に応じて色分け（悪化=rose, 改善=emerald, 横ばい=amber）するようにした。
 - Why: 数値を読まなくても状態の方向性を瞬時に判別できるようにして、運用判断の速度を上げるため。
+
+- Decision: `/app` の滞留承認カードは `delta>0`（悪化）時に `悪化中` バッジを pulse 表示する。
+- Why: 優先対応キュー内で悪化シグナルに視線を集め、初動対応の見落としを減らすため。
