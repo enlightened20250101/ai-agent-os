@@ -1053,3 +1053,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Evidence Pack (`/app/tasks/[id]/evidence`) に Case Ledger セクション（`tasks.case_id` の案件情報 + `case_events` 一覧）を追加した。
 - Why: タスク単体証跡に加えて、案件単位の経緯（リンク/承認判断/状態同期）を同じ監査レポートで追跡できるようにするため。
+
+- Decision: `/app/cases/[id]` を追加し、案件単位で `case_events`・紐づくタスク・承認/実行履歴を横断確認できる詳細画面を実装した。
+- Why: 例外対応や月次締めの運用では、タスク単位より案件単位での俯瞰が必要なため、Case中心のオペレーション画面を先に整備する。

@@ -182,7 +182,9 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
             {rows.map((row) => (
               <li key={row.id} className="rounded-lg border border-slate-200 p-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-medium text-slate-900">{row.title}</p>
+                  <Link href={`/app/cases/${row.id}`} className="font-medium text-slate-900 hover:underline">
+                    {row.title}
+                  </Link>
                   <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusBadge(row.status)}`}>{row.status}</span>
                   <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
                     {row.case_type}
