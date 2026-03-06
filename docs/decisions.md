@@ -1131,3 +1131,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Auto Guard推移セクションに、`stale件数` と `run/skipped` バランスに応じた推奨アクション文を追加した。
 - Why: 指標を見てから次に何をするかの判断を短縮し、運用者の意思決定をワンステップ化するため。
+
+- Decision: Auto Guard推移セクションは推奨文に加えて、条件に応じた即実行ボタン（通常閾値 or 低閾値）を表示するようにした。
+- Why: 推奨の読解で止まらず、その場で実行まで完結できるようにして対応速度を最大化するため。

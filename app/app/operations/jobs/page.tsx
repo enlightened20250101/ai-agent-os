@@ -328,14 +328,20 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
     { key: "auto_skipped", label: "auto_skipped", value: autoReminderSkippedCount, color: "bg-slate-400" }
   ];
   const maxAutoBar = Math.max(1, ...autoBarItems.map((item) => item.value));
-  const autoGuardGuidance =
-    stalePendingApprovals >= autoMinStale && autoReminderRunCount === 0
-      ? "推奨: staleが閾値以上ですが auto_run がないため、手動で Guard再通知を1回実行。"
-      : autoReminderSkippedCount > autoReminderRunCount
-        ? "推奨: skipがrunを上回るため、閾値を一時的に下げて実行可否を再評価。"
-        : stalePendingApprovals < autoMinStale
-          ? "推奨: stale件数は閾値未満。現行設定を維持し、過剰通知を回避。"
-          : "推奨: runが機能中。現行閾値で監視を継続。";
+  const isAutoRunMissing = stalePendingApprovals >= autoMinStale && autoReminderRunCount === 0;
+  const isAutoSkipDominant = autoReminderSkippedCount > autoReminderRunCount;
+  const autoGuardGuidance = isAutoRunMissing
+    ? "推奨: staleが閾値以上ですが auto_run がないため、手動で Guard再通知を1回実行。"
+    : isAutoSkipDominant
+      ? "推奨: skipがrunを上回るため、閾値を一時的に下げて実行可否を再評価。"
+      : stalePendingApprovals < autoMinStale
+        ? "推奨: stale件数は閾値未満。現行設定を維持し、過剰通知を回避。"
+        : "推奨: runが機能中。現行閾値で監視を継続。";
+  const autoGuardActionThreshold = isAutoSkipDominant ? Math.max(1, suggestedGuardMinStale - 1) : suggestedGuardMinStale;
+  const autoGuardActionLabel = isAutoSkipDominant
+    ? `推奨実行: 低閾値(${autoGuardActionThreshold})`
+    : `推奨実行: 閾値(${autoGuardActionThreshold})`;
+  const shouldShowAutoGuardAction = isAutoRunMissing || isAutoSkipDominant;
 
   return (
     <section className="space-y-6">
@@ -504,6 +510,17 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
           stale approvals: {stalePendingApprovals} / threshold: {autoMinStale} / latest reason: {latestAutoReminderReason}
         </div>
         <p className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">{autoGuardGuidance}</p>
+        {shouldShowAutoGuardAction ? (
+          <form action={runGuardedApprovalReminderJobNow} className="mt-2">
+            <input type="hidden" name="min_stale" value={String(autoGuardActionThreshold)} />
+            <ConfirmSubmitButton
+              label={autoGuardActionLabel}
+              pendingLabel="実行中..."
+              confirmMessage={`承認Guard再通知を閾値 ${autoGuardActionThreshold} で実行します。よろしいですか？`}
+              className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+            />
+          </form>
+        ) : null}
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-2">
           {autoBarItems.map((item) => {
             const heightPct = item.value > 0 ? Math.max(12, Math.round((item.value / maxAutoBar) * 100)) : 0;
