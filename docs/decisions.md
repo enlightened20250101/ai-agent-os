@@ -1122,3 +1122,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 悪化時の Auto Guard 主ボタンはカード上段へ配置し、通常時の推奨ボタンは従来位置に残す出し分けにした。
 - Why: 悪化シグナル時に最優先アクションを視線の最初に置いて、クリックまでの迷いを最小化するため。
+
+- Decision: `/app/operations/jobs` にも Guard再通知の手動実行を追加し、`APPROVAL_REMINDER_AUTO_RUN/SKIPPED` をジョブ画面で集計表示するようにした。
+- Why: 承認ページだけでなく運用ジョブ画面からも同じ自動化制御を行えるようにして、NOC的運用の導線を一本化するため。

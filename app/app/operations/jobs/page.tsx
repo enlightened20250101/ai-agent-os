@@ -1,5 +1,6 @@
 import {
   clearJobCircuitNow,
+  runGuardedApprovalReminderJobNow,
   resendOpsAlertNow,
   runAutoIncidentCheckNow,
   runWorkflowTickNow
@@ -125,7 +126,11 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const sp = searchParams ? await searchParams : {};
   const failedOnly = String(sp.failed_only ?? "") === "1";
 
-  const [plannerRunsRes, reviewEventsRes, alertEventsRes, incidentEventsRes, retryEventsRes] =
+  const staleHours = Number(process.env.APPROVAL_REMINDER_STALE_HOURS ?? process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
+  const staleCutoffIso = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
+  const autoMinStaleRaw = Number.parseInt(process.env.APPROVAL_REMINDER_AUTO_MIN_STALE ?? "3", 10);
+  const autoMinStale = Number.isNaN(autoMinStaleRaw) ? 3 : Math.max(1, Math.min(1000, autoMinStaleRaw));
+  const [plannerRunsRes, reviewEventsRes, alertEventsRes, incidentEventsRes, retryEventsRes, pendingApprovalsCountRes, autoReminderEventsRes] =
     await Promise.all([
     supabase
       .from("planner_runs")
@@ -176,6 +181,19 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
       ])
       .order("created_at", { ascending: false })
       .limit(30),
+    supabase
+      .from("approvals")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("status", "pending")
+      .lt("created_at", staleCutoffIso),
+    supabase
+      .from("task_events")
+      .select("id, event_type, created_at, payload_json")
+      .eq("org_id", orgId)
+      .in("event_type", ["APPROVAL_REMINDER_AUTO_RUN", "APPROVAL_REMINDER_AUTO_SKIPPED"])
+      .order("created_at", { ascending: false })
+      .limit(30)
     ]);
 
   if (plannerRunsRes.error && !isMissingTable(plannerRunsRes.error.message, "planner_runs")) {
@@ -192,6 +210,12 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   }
   if (retryEventsRes.error) {
     throw new Error(`Failed to load retry events: ${retryEventsRes.error.message}`);
+  }
+  if (pendingApprovalsCountRes.error) {
+    throw new Error(`Failed to load stale pending approvals count: ${pendingApprovalsCountRes.error.message}`);
+  }
+  if (autoReminderEventsRes.error) {
+    throw new Error(`Failed to load auto reminder events: ${autoReminderEventsRes.error.message}`);
   }
   let circuits: CircuitRow[] = [];
   const circuitPrimary = await supabase
@@ -241,6 +265,8 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const alertEvents = (alertEventsRes.data ?? []) as AlertEventRow[];
   const incidentEvents = (incidentEventsRes.data ?? []) as IncidentEventRow[];
   const retryEvents = (retryEventsRes.data ?? []) as RetryEventRow[];
+  const stalePendingApprovals = pendingApprovalsCountRes.count ?? 0;
+  const autoReminderEvents = (autoReminderEventsRes.data ?? []) as RetryEventRow[];
   const filteredPlannerRuns = failedOnly ? plannerRuns.filter((row) => row.status === "failed") : plannerRuns;
   const filteredReviewEvents = failedOnly
     ? reviewEvents.filter((row) => row.event_type === "GOVERNANCE_RECOMMENDATIONS_REVIEW_FAILED")
@@ -280,6 +306,15 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
   const latestAlertFailure = alertEvents.find((row) => row.event_type === "OPS_ALERT_FAILED") ?? null;
   const plannerConsecutiveFailures = consecutiveFailuresByStatus(plannerRuns);
   const reviewConsecutiveFailures = consecutiveFailuresByEventType(reviewEvents);
+  const autoReminderRunCount = autoReminderEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_RUN").length;
+  const autoReminderSkippedCount = autoReminderEvents.filter((row) => row.event_type === "APPROVAL_REMINDER_AUTO_SKIPPED").length;
+  const latestAutoReminderEvent = autoReminderEvents[0] ?? null;
+  const latestAutoReminderPayload = asObject(latestAutoReminderEvent?.payload_json ?? null);
+  const latestAutoReminderReason =
+    typeof latestAutoReminderPayload?.reason === "string" ? latestAutoReminderPayload.reason : "-";
+  const latestAutoReminderSentCount = Number(latestAutoReminderPayload?.sent_count ?? 0);
+  const suggestedGuardMinStale =
+    stalePendingApprovals >= 10 ? 10 : stalePendingApprovals >= 5 ? 5 : stalePendingApprovals >= 3 ? 3 : 1;
 
   const barItems = [
     { key: "planner_completed", label: "planner_ok", value: plannerCompleted, color: "bg-emerald-500" },
@@ -319,6 +354,15 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
               label="Opsアラートを手動再送"
               pendingLabel="再送中..."
               confirmMessage="Opsアラートを手動再送します。よろしいですか？"
+              className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
+            />
+          </form>
+          <form action={runGuardedApprovalReminderJobNow} className="flex items-center gap-2">
+            <input type="hidden" name="min_stale" value={String(suggestedGuardMinStale)} />
+            <ConfirmSubmitButton
+              label={`承認Guard再通知（${suggestedGuardMinStale}）`}
+              pendingLabel="実行中..."
+              confirmMessage={`承認Guard再通知を閾値 ${suggestedGuardMinStale} で実行します。よろしいですか？`}
               className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
             />
           </form>
@@ -387,6 +431,23 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 shadow-sm">
           <p className="text-xs text-yellow-700">skipped by circuit</p>
           <p className="mt-1 text-2xl font-semibold text-yellow-900">{retrySkippedCircuitCount}</p>
+        </div>
+        <div className={`rounded-xl border p-4 shadow-sm ${stalePendingApprovals >= autoMinStale ? "border-rose-300 bg-rose-50" : "border-indigo-200 bg-indigo-50"}`}>
+          <p className={`text-xs ${stalePendingApprovals >= autoMinStale ? "text-rose-700" : "text-indigo-700"}`}>
+            stale approvals ({staleHours}h+)
+          </p>
+          <p className={`mt-1 text-2xl font-semibold ${stalePendingApprovals >= autoMinStale ? "text-rose-900" : "text-indigo-900"}`}>
+            {stalePendingApprovals}
+          </p>
+        </div>
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+          <p className="text-xs text-indigo-700">approval auto run/skipped</p>
+          <p className="mt-1 text-2xl font-semibold text-indigo-900">
+            {autoReminderRunCount}/{autoReminderSkippedCount}
+          </p>
+          <p className="mt-1 text-[11px] text-indigo-700">
+            last: {latestAutoReminderReason} / sent={latestAutoReminderSentCount}
+          </p>
         </div>
         <div className="rounded-xl border border-lime-200 bg-lime-50 p-4 shadow-sm">
           <p className="text-xs text-lime-700">dry-run passed</p>

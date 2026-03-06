@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { sendApprovalReminders } from "@/lib/approvals/reminders";
+import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { getOrCreateGovernanceOpsTaskId } from "@/lib/governance/review";
 import { recordJobCircuitManualClear } from "@/lib/governance/jobCircuitBreaker";
 import { maybeSendOpsFailureAlert } from "@/lib/governance/opsAlerts";
@@ -182,6 +184,92 @@ export async function clearJobCircuitNow(formData: FormData) {
       jobName
         ? `job(${jobName})のサーキットを解除しました。reason=${reason}`
         : `全ジョブのサーキット状態を解除しました。count=${targets.length} reason=${reason}`
+    )
+  );
+}
+
+function parseOneOffMinStale(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return null;
+  return Math.max(1, Math.min(1000, parsed));
+}
+
+export async function runGuardedApprovalReminderJobNow(formData: FormData) {
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const minStaleRaw = String(formData.get("min_stale") ?? "").trim();
+  const oneOffThreshold = parseOneOffMinStale(minStaleRaw);
+  if (!oneOffThreshold) {
+    redirect(withMessage("error", "min_stale が不正です。"));
+  }
+
+  const staleHours = Number(process.env.APPROVAL_REMINDER_STALE_HOURS ?? process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
+  const staleCutoffIso = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
+  const countRes = await supabase
+    .from("approvals")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .lt("created_at", staleCutoffIso);
+  if (countRes.error) {
+    redirect(withMessage("error", `stale件数の取得に失敗しました: ${countRes.error.message}`));
+  }
+
+  const stalePendingCount = countRes.count ?? 0;
+  const governanceTaskId = await getOrCreateGovernanceOpsTaskId({ supabase, orgId });
+  if (stalePendingCount < oneOffThreshold) {
+    await appendTaskEvent({
+      supabase,
+      orgId,
+      taskId: governanceTaskId,
+      actorType: "user",
+      actorId: userId,
+      eventType: "APPROVAL_REMINDER_AUTO_SKIPPED",
+      payload: {
+        reason: "below_threshold",
+        stale_pending_count: stalePendingCount,
+        threshold: oneOffThreshold,
+        stale_hours: staleHours,
+        source: "jobs_manual"
+      }
+    });
+    revalidatePath("/app/operations/jobs");
+    revalidatePath("/app/approvals");
+    redirect(withMessage("ok", `guardによりスキップ: stale=${stalePendingCount} threshold=${oneOffThreshold}`));
+  }
+
+  const result = await sendApprovalReminders({
+    supabase,
+    orgId,
+    actorUserId: userId,
+    source: "manual"
+  });
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: governanceTaskId,
+    actorType: "user",
+    actorId: userId,
+    eventType: "APPROVAL_REMINDER_AUTO_RUN",
+    payload: {
+      stale_pending_count: stalePendingCount,
+      threshold: oneOffThreshold,
+      stale_hours: staleHours,
+      sent: result.sent,
+      reason: result.reason,
+      target_count: result.targetCount,
+      sent_count: result.sentCount,
+      skipped_cooldown_count: result.skippedCooldownCount,
+      source: "jobs_manual"
+    }
+  });
+
+  revalidatePath("/app/operations/jobs");
+  revalidatePath("/app/approvals");
+  redirect(
+    withMessage(
+      "ok",
+      `guard実行: stale=${stalePendingCount} threshold=${oneOffThreshold} sent=${result.sentCount} reason=${result.reason}`
     )
   );
 }
