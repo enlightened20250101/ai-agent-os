@@ -3,6 +3,7 @@ import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   decideApproval,
+  resendSelectedApprovalSlackReminders,
   resendApprovalSlackReminder,
   sendStaleApprovalRemindersNow
 } from "@/app/app/approvals/actions";
@@ -135,6 +136,17 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
           />
         </form>
       </div>
+      <form action={resendSelectedApprovalSlackReminders} id="bulk-approval-remind-form" className="rounded-md border border-sky-200 bg-sky-50 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <ConfirmSubmitButton
+            label="選択承認をSlack一括再通知"
+            pendingLabel="再通知中..."
+            confirmMessage="選択した pending 承認をSlackへ再通知します。実行しますか？"
+            className="rounded-md border border-sky-300 bg-white px-2 py-1 text-xs text-sky-700 hover:bg-sky-100"
+          />
+          <span className="text-xs text-sky-800">各カードのチェック項目で対象を選択</span>
+        </div>
+      </form>
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
@@ -176,6 +188,16 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         <ul className="mt-5 space-y-4">
           {filteredApprovals.map((approval) => (
             <li key={approval.id} className="rounded-md border border-amber-200 bg-amber-50/30 p-4">
+              <label className="mb-2 inline-flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  name="approval_ids"
+                  value={approval.id}
+                  form="bulk-approval-remind-form"
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                一括再通知に含める
+              </label>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm text-slate-700">
                   タスク:{" "}

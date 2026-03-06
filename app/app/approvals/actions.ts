@@ -81,6 +81,32 @@ export async function resendApprovalSlackReminder(formData: FormData) {
   }
 
   const taskId = approval.task_id as string;
+  try {
+    await resendApprovalSlackReminderShared({
+      supabase,
+      orgId,
+      taskId,
+      approvalId,
+      actorId: userId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Slack再通知に失敗しました。";
+    redirect(errorRedirect(message));
+  }
+
+  revalidatePath("/app/approvals");
+  revalidatePath(`/app/tasks/${taskId}`);
+  redirect(okRedirect("Slackへ承認リマインドを送信しました。"));
+}
+
+async function resendApprovalSlackReminderShared(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  orgId: string;
+  taskId: string;
+  approvalId: string;
+  actorId: string | null;
+}) {
+  const { supabase, orgId, taskId, approvalId, actorId } = args;
   const [{ data: task, error: taskError }, { data: latestModel }, { data: latestPolicy }] = await Promise.all([
     supabase
       .from("tasks")
@@ -109,49 +135,96 @@ export async function resendApprovalSlackReminder(formData: FormData) {
   ]);
 
   if (taskError) {
-    redirect(errorRedirect(`タスク情報の取得に失敗しました: ${taskError.message}`));
+    throw new Error(`タスク情報の取得に失敗しました: ${taskError.message}`);
   }
 
   const modelPayload = latestModel?.payload_json as { output?: { summary?: string } } | null;
   const policyPayload = latestPolicy?.payload_json as { status?: string } | null;
-  const draftSummary =
-    typeof modelPayload?.output?.summary === "string" ? modelPayload.output.summary : null;
+  const draftSummary = typeof modelPayload?.output?.summary === "string" ? modelPayload.output.summary : null;
   const policyStatus = typeof policyPayload?.status === "string" ? policyPayload.status : null;
 
-  try {
-    const slackMessage = await postApprovalRequestToSlack({
+  const slackMessage = await postApprovalRequestToSlack({
+    supabase,
+    orgId,
+    approvalId,
+    taskId,
+    taskTitle: task.title as string,
+    draftSummary,
+    policyStatus
+  });
+  if (slackMessage) {
+    await appendTaskEvent({
       supabase,
       orgId,
-      approvalId,
       taskId,
-      taskTitle: task.title as string,
-      draftSummary,
-      policyStatus
+      actorType: "user",
+      actorId,
+      eventType: "SLACK_APPROVAL_POSTED",
+      payload: {
+        channel_id: slackMessage.channel,
+        slack_ts: slackMessage.ts,
+        reminder: true,
+        approval_id: approvalId
+      }
     });
-    if (slackMessage) {
-      await appendTaskEvent({
+  }
+}
+
+export async function resendSelectedApprovalSlackReminders(formData: FormData) {
+  const approvalIds = formData
+    .getAll("approval_ids")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  if (approvalIds.length === 0) {
+    redirect(errorRedirect("再通知対象の承認が選択されていません。"));
+  }
+
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const slackCfg = await resolveSlackRuntimeConfig({ supabase, orgId });
+  if (!slackCfg.botToken || !slackCfg.approvalChannelId || !slackCfg.signingSecret) {
+    redirect(errorRedirect("Slack承認通知の設定がありません。"));
+  }
+
+  const { data: approvals, error: approvalsError } = await supabase
+    .from("approvals")
+    .select("id, task_id, status")
+    .eq("org_id", orgId)
+    .in("id", approvalIds)
+    .eq("status", "pending");
+  if (approvalsError) {
+    redirect(errorRedirect(`承認情報の取得に失敗しました: ${approvalsError.message}`));
+  }
+
+  const pendingRows = (approvals ?? []) as Array<{ id: string; task_id: string; status: string }>;
+  if (pendingRows.length === 0) {
+    redirect(errorRedirect("pending 承認が見つかりません。"));
+  }
+
+  let sentCount = 0;
+  for (const row of pendingRows) {
+    try {
+      await resendApprovalSlackReminderShared({
         supabase,
         orgId,
-        taskId,
-        actorType: "user",
-        actorId: userId,
-        eventType: "SLACK_APPROVAL_POSTED",
-        payload: {
-          channel_id: slackMessage.channel,
-          slack_ts: slackMessage.ts,
-          reminder: true,
-          approval_id: approvalId
-        }
+        taskId: row.task_id,
+        approvalId: row.id,
+        actorId: userId
       });
+      sentCount += 1;
+      revalidatePath(`/app/tasks/${row.task_id}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Slack再通知に失敗しました。";
+      console.error(`[APPROVAL_BULK_REMINDER_FAILED] org_id=${orgId} approval_id=${row.id} ${message}`);
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Slack再通知に失敗しました。";
-    redirect(errorRedirect(message));
   }
 
   revalidatePath("/app/approvals");
-  revalidatePath(`/app/tasks/${taskId}`);
-  redirect(okRedirect("Slackへ承認リマインドを送信しました。"));
+  if (sentCount === 0) {
+    redirect(errorRedirect("Slack再通知を送信できませんでした。ログを確認してください。"));
+  }
+  redirect(okRedirect(`Slack再通知を送信しました。sent=${sentCount} target=${pendingRows.length}`));
 }
 
 export async function sendStaleApprovalRemindersNow() {
