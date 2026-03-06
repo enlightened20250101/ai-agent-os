@@ -1062,3 +1062,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/cases/[id]` に「優先トリアージ」セクションを追加し、案件内の承認待ちタスク/失敗アクションを上位表示したうえで `/app/approvals` と `/app/operations/exceptions` へ即遷移できる導線を置いた。
 - Why: 案件単位で詰まりを見つけた直後に是正操作へ移れるようにして、例外対応の往復コストを下げるため。
+
+- Decision: `/app/cases` 一覧は `blocked` と長時間未更新 `open` を優先表示する並びに変更し、`緊急`/`滞留` バッジと滞留アラートを追加した（`CASE_STALE_HOURS`, default 48h）。
+- Why: 運用者が案件一覧を開いた瞬間に「先に処理すべき案件」を判断できるようにし、ケース滞留の見落としを減らすため。

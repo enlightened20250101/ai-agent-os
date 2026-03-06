@@ -45,6 +45,8 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
   const params = searchParams ? await searchParams : {};
+  const staleCaseHours = Number(process.env.CASE_STALE_HOURS ?? "48");
+  const staleCaseCutoffIso = new Date(Date.now() - staleCaseHours * 60 * 60 * 1000).toISOString();
 
   const statusFilter =
     params.status === "open" || params.status === "blocked" || params.status === "closed" ? params.status : "all";
@@ -111,6 +113,17 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const openCount = rows.filter((row) => row.status === "open").length;
   const blockedCount = rows.filter((row) => row.status === "blocked").length;
   const closedCount = rows.filter((row) => row.status === "closed").length;
+  const enrichedRows = rows
+    .map((row) => {
+      const isStale = row.status === "open" && row.updated_at < staleCaseCutoffIso;
+      const urgencyScore = row.status === "blocked" ? 100 : isStale ? 90 : row.status === "open" ? 60 : 10;
+      return { ...row, isStale, urgencyScore };
+    })
+    .sort((a, b) => {
+      if (b.urgencyScore !== a.urgencyScore) return b.urgencyScore - a.urgencyScore;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+  const staleCount = enrichedRows.filter((row) => row.isStale).length;
 
   return (
     <div className="space-y-6">
@@ -157,6 +170,15 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         </div>
       </section>
 
+      {staleCount > 0 ? (
+        <section className="rounded-xl border border-rose-300 bg-rose-50 p-4">
+          <p className="text-sm font-semibold text-rose-900">滞留案件アラート</p>
+          <p className="mt-1 text-xs text-rose-800">
+            {staleCaseHours}時間以上更新されていない open 案件が {staleCount} 件あります。
+          </p>
+        </section>
+      ) : null}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
           <span className="font-medium text-slate-700">ステータス</span>
@@ -175,17 +197,24 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           })}
         </div>
 
-        {rows.length === 0 ? (
+        {enrichedRows.length === 0 ? (
           <p className="text-sm text-slate-600">案件はまだありません。</p>
         ) : (
           <ul className="space-y-3">
-            {rows.map((row) => (
+            {enrichedRows.map((row) => (
               <li key={row.id} className="rounded-lg border border-slate-200 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Link href={`/app/cases/${row.id}`} className="font-medium text-slate-900 hover:underline">
                     {row.title}
                   </Link>
                   <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusBadge(row.status)}`}>{row.status}</span>
+                  {row.status === "blocked" ? (
+                    <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">緊急</span>
+                  ) : row.isStale ? (
+                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+                      滞留 {staleCaseHours}h+
+                    </span>
+                  ) : null}
                   <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
                     {row.case_type}
                   </span>
