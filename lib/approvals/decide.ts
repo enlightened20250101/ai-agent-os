@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { appendCaseEventSafe, getCaseIdForTask } from "@/lib/cases/events";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { recordTrustOutcome } from "@/lib/governance/trust";
 
@@ -152,6 +153,38 @@ export async function decideApprovalShared(params: DecideApprovalParams): Promis
       },
       source: `approval_decision_${source}`,
       approval_id: approvalId
+    }
+  });
+
+  const caseId = await getCaseIdForTask({ supabase, orgId, taskId });
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: actorType === "user" ? actorId : null,
+    eventType: "CASE_APPROVAL_DECIDED",
+    payload: {
+      approval_id: approvalId,
+      decision,
+      reason: reason || null,
+      source
+    }
+  });
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: actorType === "user" ? actorId : null,
+    eventType: "CASE_TASK_STATUS_SYNC",
+    payload: {
+      task_id: taskId,
+      changed_fields: {
+        status: {
+          from: task.status as string,
+          to: nextTaskStatus
+        }
+      },
+      source: `approval_decision_${source}`
     }
   });
 

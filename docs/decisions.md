@@ -1044,3 +1044,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: チャット意図のタスク検索は、task_hintがUUIDでない場合に `id.eq` を使わず `title ilike` のみで検索するよう修正した。
 - Why: タスク名をUUID列へ比較して発生していた `invalid input syntax for type uuid` エラーを解消し、自然文指示の成功率を上げるため。
+
+- Decision: Unified Business Ledgerを強化するため `case_events` 台帳を追加し、`CASE_CREATED / CASE_STATUS_UPDATED / CASE_TASK_LINKED / CASE_TASK_STATUS_SYNC / CASE_APPROVAL_DECIDED` を記録する。
+- Why: タスク単位イベントだけでは追いづらい「案件単位の責務・履歴」を分離して、監査と例外トリアージをCase起点で実施しやすくするため。
+
+- Decision: Caseイベント記録は業務処理を止めない方針とし、`case_events` 未適用時は安全にno-op（警告ログ）で継続する。
+- Why: migration適用の時差で本線の承認/実行フローが停止しないよう、台帳拡張を後方互換で導入するため。

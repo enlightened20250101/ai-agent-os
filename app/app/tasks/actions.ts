@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { appendCaseEventSafe } from "@/lib/cases/events";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -150,6 +151,20 @@ export async function createTask(formData: FormData) {
         workflow_template_id: (createdTask as { workflow_template_id?: string | null }).workflow_template_id ?? null,
         source: "web_manual"
       }
+    }
+  });
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: userId,
+    eventType: "CASE_TASK_LINKED",
+    payload: {
+      task_id: createdTaskId,
+      task_title: createdTask.title as string,
+      task_status: createdTask.status as string,
+      source: "task_create"
     }
   });
 

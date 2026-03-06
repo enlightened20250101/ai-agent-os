@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { appendCaseEventSafe } from "@/lib/cases/events";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,14 +28,18 @@ export async function createCase(formData: FormData) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { error } = await supabase.from("business_cases").insert({
+  const { data: createdCase, error } = await supabase
+    .from("business_cases")
+    .insert({
     org_id: orgId,
     created_by_user_id: userId,
     case_type: caseType,
     title,
     status: "open",
     source: "manual"
-  });
+    })
+    .select("id")
+    .single();
 
   if (error) {
     if (isMissingTableError(error.message, "business_cases")) {
@@ -42,6 +47,20 @@ export async function createCase(formData: FormData) {
     }
     redirect(withMessage("error", `案件の作成に失敗しました: ${error.message}`));
   }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId: (createdCase?.id as string | undefined) ?? null,
+    actorUserId: userId,
+    eventType: "CASE_CREATED",
+    payload: {
+      title,
+      case_type: caseType,
+      status: "open",
+      source: "manual"
+    }
+  });
 
   revalidatePath("/app/cases");
   revalidatePath("/app/tasks");
@@ -55,8 +74,15 @@ export async function updateCaseStatus(formData: FormData) {
     redirect(withMessage("error", "不正なパラメータです。"));
   }
 
-  const { orgId } = await requireOrgContext();
+  const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
+
+  const { data: beforeCase } = await supabase
+    .from("business_cases")
+    .select("id, status")
+    .eq("id", caseId)
+    .eq("org_id", orgId)
+    .maybeSingle();
 
   const { error } = await supabase
     .from("business_cases")
@@ -70,6 +96,23 @@ export async function updateCaseStatus(formData: FormData) {
     }
     redirect(withMessage("error", `案件の更新に失敗しました: ${error.message}`));
   }
+
+  await appendCaseEventSafe({
+    supabase,
+    orgId,
+    caseId,
+    actorUserId: userId,
+    eventType: "CASE_STATUS_UPDATED",
+    payload: {
+      changed_fields: {
+        status: {
+          from: (beforeCase?.status as string | null) ?? null,
+          to: status
+        }
+      },
+      source: "case_status_update"
+    }
+  });
 
   revalidatePath("/app/cases");
   redirect(withMessage("ok", "案件ステータスを更新しました。"));

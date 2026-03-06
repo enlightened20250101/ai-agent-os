@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { executeTaskDraftActionShared } from "@/lib/actions/executeDraft";
+import { appendCaseEventSafe, getCaseIdForTask } from "@/lib/cases/events";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { requireOrgContext } from "@/lib/org/context";
 import { generateDraftWithOpenAI } from "@/lib/llm/openai";
@@ -63,6 +64,25 @@ export async function setTaskReadyForApproval(formData: FormData) {
         changed_fields: {
           status: {
             from: task.status,
+            to: "ready_for_approval"
+          }
+        },
+        source: "manual_status_update"
+      }
+    });
+
+    const caseId = await getCaseIdForTask({ supabase, orgId, taskId });
+    await appendCaseEventSafe({
+      supabase,
+      orgId,
+      caseId,
+      actorUserId: userId,
+      eventType: "CASE_TASK_STATUS_SYNC",
+      payload: {
+        task_id: taskId,
+        changed_fields: {
+          status: {
+            from: task.status as string,
             to: "ready_for_approval"
           }
         },
@@ -200,6 +220,25 @@ export async function requestApproval(formData: FormData) {
         changed_fields: {
           status: {
             from: task.status,
+            to: "ready_for_approval"
+          }
+        },
+        source: "approval_request"
+      }
+    });
+
+    const caseId = await getCaseIdForTask({ supabase, orgId, taskId });
+    await appendCaseEventSafe({
+      supabase,
+      orgId,
+      caseId,
+      actorUserId: userId,
+      eventType: "CASE_TASK_STATUS_SYNC",
+      payload: {
+        task_id: taskId,
+        changed_fields: {
+          status: {
+            from: task.status as string,
             to: "ready_for_approval"
           }
         },

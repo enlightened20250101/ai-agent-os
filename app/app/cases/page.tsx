@@ -21,6 +21,13 @@ type CaseRow = {
   updated_at: string;
 };
 
+type CaseEventRow = {
+  case_id: string;
+  event_type: string;
+  created_at: string;
+  payload_json: unknown;
+};
+
 function isMissingTableError(message: string, tableName: string) {
   return (
     message.includes(`relation "${tableName}" does not exist`) ||
@@ -67,17 +74,36 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const rows = (casesRes.data ?? []) as CaseRow[];
   const caseIds = rows.map((row) => row.id);
   const taskCountByCaseId = new Map<string, number>();
+  const recentEventsByCaseId = new Map<string, CaseEventRow[]>();
   if (caseIds.length > 0) {
-    const countRes = await supabase
-      .from("tasks")
-      .select("case_id")
-      .eq("org_id", orgId)
-      .in("case_id", caseIds);
+    const [countRes, caseEventsRes] = await Promise.all([
+      supabase
+        .from("tasks")
+        .select("case_id")
+        .eq("org_id", orgId)
+        .in("case_id", caseIds),
+      supabase
+        .from("case_events")
+        .select("case_id, event_type, created_at, payload_json")
+        .eq("org_id", orgId)
+        .in("case_id", caseIds)
+        .order("created_at", { ascending: false })
+        .limit(120)
+    ]);
     if (!countRes.error) {
       for (const row of countRes.data ?? []) {
         const caseId = row.case_id as string | null;
         if (!caseId) continue;
         taskCountByCaseId.set(caseId, (taskCountByCaseId.get(caseId) ?? 0) + 1);
+      }
+    }
+    if (!caseEventsRes.error) {
+      for (const raw of (caseEventsRes.data ?? []) as CaseEventRow[]) {
+        const list = recentEventsByCaseId.get(raw.case_id) ?? [];
+        if (list.length < 5) {
+          list.push(raw);
+          recentEventsByCaseId.set(raw.case_id, list);
+        }
       }
     }
   }
@@ -203,6 +229,18 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                     />
                   </form>
                 </div>
+                {recentEventsByCaseId.get(row.id)?.length ? (
+                  <details className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <summary className="cursor-pointer text-xs font-medium text-slate-700">最近のケースイベント</summary>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                      {(recentEventsByCaseId.get(row.id) ?? []).map((event) => (
+                        <li key={`${row.id}-${event.created_at}-${event.event_type}`}>
+                          {new Date(event.created_at).toLocaleString()} | {event.event_type}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
               </li>
             ))}
           </ul>
