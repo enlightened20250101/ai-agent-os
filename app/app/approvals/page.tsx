@@ -151,6 +151,18 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
   }).length;
   const suggestedOneOffMinStale =
     currentStalePendingCount >= 10 ? 10 : currentStalePendingCount >= 5 ? 5 : currentStalePendingCount >= 3 ? 3 : 1;
+  const trendAction =
+    autoStaleDelta === null
+      ? "推奨: まず推奨閾値で1回実行して基準値を作成。"
+      : autoStaleDelta > 0
+        ? "推奨: 悪化傾向のため閾値を下げて即実行し、承認滞留を先に圧縮。"
+        : autoStaleDelta === 0
+          ? "推奨: 横ばいのため現行閾値維持で実行し、担当者アサインを見直し。"
+          : "推奨: 改善傾向。現行閾値を維持し、過剰通知を避ける。";
+  const suggestedUrgentMinStale =
+    autoStaleDelta !== null && autoStaleDelta > 0
+      ? Math.max(1, Math.min(suggestedOneOffMinStale, Math.max(1, currentStalePendingCount - 1)))
+      : suggestedOneOffMinStale;
   const taskIds = Array.from(new Set([...filteredApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
@@ -334,6 +346,7 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
                 <span className="font-semibold text-slate-700">0（横ばい）</span>
               )}
             </p>
+            <p className="mt-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-indigo-900">{trendAction}</p>
           </div>
         ) : (
           <p className="mt-3 text-xs text-indigo-900">直近7日の auto 実行ログはありません。</p>
@@ -351,6 +364,17 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
             className="rounded-md border border-indigo-300 bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-200"
           />
         </form>
+        {suggestedUrgentMinStale !== suggestedOneOffMinStale ? (
+          <form action={runGuardedAutoReminderNow} className="mt-2">
+            <input type="hidden" name="min_stale" value={String(suggestedUrgentMinStale)} />
+            <ConfirmSubmitButton
+              label={`悪化対応: 閾値${suggestedUrgentMinStale}で即実行`}
+              pendingLabel="実行中..."
+              confirmMessage={`悪化傾向に対処するため、閾値 ${suggestedUrgentMinStale} で再通知を実行します。よろしいですか？`}
+              className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-200"
+            />
+          </form>
+        ) : null}
         <form action={runGuardedAutoReminderNow} className="mt-3 rounded-md border border-indigo-200 bg-white p-3">
           <p className="text-xs font-medium text-indigo-900">今回のみ閾値指定で実行</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">

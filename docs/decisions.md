@@ -1098,3 +1098,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Auto Guard の直近結果カードに「前回比(stale件数)」を追加し、直近2回の auto 実行ログから改善/悪化/横ばいを表示する。
 - Why: 再通知施策の効果を単発値ではなくトレンドで判断できるようにし、次アクションの優先度を決めやすくするため。
+
+- Decision: Auto Guard カードにトレンド連動の推奨アクション文言を追加し、悪化時はより低い閾値での緊急実行ボタンを追加した。
+- Why: オペレーターが数値解釈を行わずに次の対応を即決できるようにし、悪化時の初動を短縮するため。
