@@ -1110,3 +1110,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` の優先対応キューにも Auto Guard の短文サマリ（`reason` と `delta`）を表示し、滞留承認カードと Next Actions の両方で即読できるようにした。
 - Why: 詳細カードを開かずに現在の自動再通知状態を把握できるようにして、キュー上での優先度判断を速くするため。
+
+- Decision: `/app` 優先対応キューの Auto Guard サマリは `delta` に応じて色分け（悪化=rose, 改善=emerald, 横ばい=amber）するようにした。
+- Why: 数値を読まなくても状態の方向性を瞬時に判別できるようにして、運用判断の速度を上げるため。

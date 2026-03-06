@@ -442,6 +442,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const autoDeltaText =
     autoDelta === null ? "delta=n/a" : autoDelta > 0 ? `delta=+${autoDelta}` : `delta=${autoDelta}`;
   const autoQueueSummary = `${autoReason} / ${autoDeltaText}`;
+  const autoSummaryTextClass =
+    autoDelta === null
+      ? "text-slate-600"
+      : autoDelta > 0
+        ? "text-rose-700"
+        : autoDelta < 0
+          ? "text-emerald-700"
+          : "text-amber-700";
 
   const urgentSignals = [
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
@@ -734,7 +742,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           >
             <p className={`text-xs ${stalePendingApprovals > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留承認 ({staleApprovalHours}h+)</p>
             <p className={`mt-1 text-xl font-semibold ${stalePendingApprovals > 0 ? "text-rose-900" : "text-slate-900"}`}>{stalePendingApprovals}</p>
-            <p className="mt-1 text-[11px] text-slate-600">auto: {autoQueueSummary}</p>
+            <p className={`mt-1 text-[11px] ${autoSummaryTextClass}`}>auto: {autoQueueSummary}</p>
           </Link>
           <Link
             href="/app/operations/exceptions"
