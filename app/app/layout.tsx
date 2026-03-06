@@ -8,6 +8,7 @@ import { LogoutButton } from "@/components/LogoutButton";
 const NAV_LINKS = [
   { href: "/app", label: "ホーム" },
   { href: "/app/agents", label: "エージェント" },
+  { href: "/app/cases", label: "案件" },
   { href: "/app/tasks", label: "タスク" },
   { href: "/app/approvals", label: "承認" },
   { href: "/app/workflows", label: "ワークフロー" },

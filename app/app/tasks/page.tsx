@@ -13,6 +13,7 @@ type TasksPageProps = {
     error?: string;
     ok?: string;
     source?: string;
+    case_id?: string;
   }>;
 };
 
@@ -52,17 +53,59 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();
   const params = searchParams ? await searchParams : {};
+  const selectedCaseId = String(params.case_id ?? "").trim();
   const isMissingWorkflowTemplatesTable = (message: string) =>
     message.includes('relation "workflow_templates" does not exist') ||
     message.includes("Could not find the table 'public.workflow_templates'");
+  const isMissingCasesTable = (message: string) =>
+    message.includes('relation "business_cases" does not exist') ||
+    message.includes("Could not find the table 'public.business_cases'");
+  const isMissingCaseColumn = (message: string) =>
+    message.includes("Could not find the 'case_id' column") || message.includes("column tasks.case_id does not exist");
+  const tasksWithCaseRes = await supabase
+    .from("tasks")
+    .select("id, title, status, created_at, agent_id, case_id")
+    .eq("org_id", orgId)
+    .neq("title", AGENT_EVENTS_TASK_TITLE)
+    .order("created_at", { ascending: false });
 
-  const [{ data: tasks, error: tasksError }, { data: agents, error: agentsError }, templatesRes] = await Promise.all([
-    supabase
+  let tasksData:
+    | Array<{ id: string; title: string; status: string; created_at: string; agent_id: string | null; case_id: string | null }>
+    | Array<{ id: string; title: string; status: string; created_at: string; agent_id: string | null }> = [];
+  let tasksError: string | null = null;
+
+  if (!tasksWithCaseRes.error) {
+    tasksData = (tasksWithCaseRes.data ?? []) as Array<{
+      id: string;
+      title: string;
+      status: string;
+      created_at: string;
+      agent_id: string | null;
+      case_id: string | null;
+    }>;
+  } else if (isMissingCaseColumn(tasksWithCaseRes.error.message)) {
+    const tasksFallbackRes = await supabase
       .from("tasks")
       .select("id, title, status, created_at, agent_id")
       .eq("org_id", orgId)
       .neq("title", AGENT_EVENTS_TASK_TITLE)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false });
+    if (tasksFallbackRes.error) {
+      tasksError = tasksFallbackRes.error.message;
+    } else {
+      tasksData = (tasksFallbackRes.data ?? []) as Array<{
+        id: string;
+        title: string;
+        status: string;
+        created_at: string;
+        agent_id: string | null;
+      }>;
+    }
+  } else {
+    tasksError = tasksWithCaseRes.error.message;
+  }
+
+  const [{ data: agents, error: agentsError }, templatesRes, casesRes] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, status")
@@ -72,11 +115,16 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
       .from("workflow_templates")
       .select("id, name")
       .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("business_cases")
+      .select("id, title, status")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false })
   ]);
 
   if (tasksError) {
-    throw new Error(`Failed to load tasks: ${tasksError.message}`);
+    throw new Error(`Failed to load tasks: ${tasksError}`);
   }
 
   if (agentsError) {
@@ -91,7 +139,23 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
     throw new Error(`Failed to load workflow templates: ${templatesRes.error.message}`);
   }
 
-  const tasksList = tasks ?? [];
+  const cases =
+    casesRes.error && isMissingCasesTable(casesRes.error.message)
+      ? []
+      : ((casesRes.data ?? []) as Array<{ id: string; title: string; status: string }>);
+  if (casesRes.error && !isMissingCasesTable(casesRes.error.message)) {
+    throw new Error(`Failed to load cases: ${casesRes.error.message}`);
+  }
+
+  const caseTitleById = new Map(cases.map((row) => [row.id, row.title]));
+  const tasksList = tasksData as Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+    agent_id: string | null;
+    case_id?: string | null;
+  }>;
   const taskIds = tasksList.map((task) => task.id as string);
   const sourceByTaskId = new Map<string, TaskSource>();
   if (taskIds.length > 0) {
@@ -121,10 +185,13 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
     params.source === "slack" || params.source === "proposal" || params.source === "manual" || params.source === "system"
       ? params.source
       : "all";
-  const filteredTasks =
+  const sourceFilteredTasks =
     selectedSource === "all"
       ? tasksList
       : tasksList.filter((task) => (sourceByTaskId.get(task.id as string) ?? "manual") === selectedSource);
+  const filteredTasks = selectedCaseId
+    ? sourceFilteredTasks.filter((task) => (task.case_id ?? null) === selectedCaseId)
+    : sourceFilteredTasks;
 
   const agentNameById = new Map<string, string>((agents ?? []).map((agent) => [agent.id as string, agent.name as string]));
   const statusCounts = new Map<string, number>();
@@ -176,6 +243,14 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
             {templates.map((template) => (
               <option key={template.id} value={template.id}>
                 {template.name}
+              </option>
+            ))}
+          </select>
+          <select name="case_id" className="rounded-md border border-slate-300 px-3 py-2 text-sm">
+            <option value="">案件（任意）</option>
+            {cases.map((caseRow) => (
+              <option key={caseRow.id} value={caseRow.id}>
+                {caseRow.title} ({caseRow.status})
               </option>
             ))}
           </select>
@@ -256,6 +331,33 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
             );
           })}
         </div>
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs">
+          <span className="font-medium text-slate-700">案件</span>
+          <Link
+            href={selectedSource === "all" ? "/app/tasks" : `/app/tasks?source=${selectedSource}`}
+            className={`rounded-full border px-2 py-1 ${selectedCaseId ? "border-slate-300 bg-white text-slate-700" : "border-slate-900 bg-slate-900 text-white"}`}
+          >
+            all
+          </Link>
+          {cases.slice(0, 12).map((caseRow) => {
+            const href = selectedSource === "all"
+              ? `/app/tasks?case_id=${caseRow.id}`
+              : `/app/tasks?source=${selectedSource}&case_id=${caseRow.id}`;
+            const selected = selectedCaseId === caseRow.id;
+            return (
+              <Link
+                key={caseRow.id}
+                href={href}
+                className={`rounded-full border px-2 py-1 ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+              >
+                {caseRow.title}
+              </Link>
+            );
+          })}
+          <Link href="/app/cases" className="rounded-full border border-slate-300 bg-white px-2 py-1 text-slate-700">
+            + 案件管理
+          </Link>
+        </div>
         <h2 className="text-lg font-semibold">タスク一覧</h2>
         {filteredTasks.length > 0 ? (
           <ul className="mt-4 space-y-3">
@@ -275,6 +377,11 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
                   ステータス: {task.status as string} | エージェント:{" "}
                   {task.agent_id ? agentNameById.get(task.agent_id as string) ?? "未割り当て" : "未割り当て"}
                 </p>
+                {task.case_id ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    案件: {caseTitleById.get(task.case_id) ?? task.case_id}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>

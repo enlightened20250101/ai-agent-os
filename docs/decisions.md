@@ -1026,3 +1026,9 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Gmail送信MIMEの本文エンコードを `Content-Transfer-Encoding: base64` から `8bit` に変更し、UTF-8本文をそのままRFC822メッセージへ載せる方式に統一した。
 - Why: 日本語メールでの文字化けリスクを下げるため、二重エンコード解釈に依存しないシンプルなUTF-8送信を採用する。
+
+- Decision: Unified Business Ledgerの最小実装として `business_cases` を追加し、`tasks.case_id` で案件とタスクを紐付ける構成にした（`/app/cases` + `/app/tasks` で運用）。
+- Why: 「タスク単位」だけでなく「案件単位（Case）」で状態と例外を追跡できる土台を先に作り、将来の文書/照合/支払ワークフロー統合へ接続しやすくするため。
+
+- Decision: `business_cases` / `tasks.case_id` が未適用の環境でも既存フローを壊さないよう、UIとserver actionに missing table/column フォールバックを実装した。
+- Why: migration適用タイミング差で開発・検証環境が一時不一致でも、既存のタスク運用を継続可能にするため。
