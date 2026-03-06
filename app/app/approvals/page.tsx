@@ -141,6 +141,8 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
     const ageHours = (Date.now() - new Date(approval.created_at).getTime()) / (60 * 60 * 1000);
     return ageHours >= staleHours;
   }).length;
+  const suggestedOneOffMinStale =
+    currentStalePendingCount >= 10 ? 10 : currentStalePendingCount >= 5 ? 5 : currentStalePendingCount >= 3 ? 3 : 1;
   const taskIds = Array.from(new Set([...filteredApprovals.map((approval) => approval.task_id), ...reminderEvents.map((row) => row.taskId)]));
   const approvedCount = weeklyRows.filter((row) => row.status === "approved").length;
   const rejectedCount = weeklyRows.filter((row) => row.status === "rejected").length;
@@ -316,12 +318,29 @@ export default async function ApprovalsPage({ searchParams }: ApprovalsPageProps
         ) : (
           <p className="mt-3 text-xs text-indigo-900">直近7日の auto 実行ログはありません。</p>
         )}
+        <p className="mt-3 text-xs text-indigo-900">
+          推奨閾値: <span className="font-semibold">{suggestedOneOffMinStale}</span>
+          （現在の stale pending 件数 {currentStalePendingCount} に基づく）
+        </p>
+        <form action={runGuardedAutoReminderNow} className="mt-2">
+          <input type="hidden" name="min_stale" value={String(suggestedOneOffMinStale)} />
+          <ConfirmSubmitButton
+            label={`推奨値(${suggestedOneOffMinStale})で即実行`}
+            pendingLabel="実行中..."
+            confirmMessage={`推奨閾値 ${suggestedOneOffMinStale} でガード付き再通知を実行します。よろしいですか？`}
+            className="rounded-md border border-indigo-300 bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-200"
+          />
+        </form>
         <form action={runGuardedAutoReminderNow} className="mt-3 rounded-md border border-indigo-200 bg-white p-3">
           <p className="text-xs font-medium text-indigo-900">今回のみ閾値指定で実行</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <label className="inline-flex items-center gap-2 text-xs text-slate-700">
               min_stale
-              <select name="min_stale" defaultValue={String(autoMinStale)} className="rounded-md border border-slate-300 px-2 py-1">
+              <select
+                name="min_stale"
+                defaultValue={String(suggestedOneOffMinStale)}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              >
                 <option value="1">1</option>
                 <option value="2">2</option>
                 <option value="3">3</option>

@@ -1092,3 +1092,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` の Auto Guard セクションに「今回のみ閾値指定で実行」フォームを追加し、`min_stale` を一時上書きして手動実行できるようにした。
 - Why: 緊急時にenv変更やcron待ちをせず、画面上の操作だけでガード条件を調整して即時に再通知を走らせるため。
+
+- Decision: Auto Guard セクションに「推奨閾値（現在の stale pending 件数から算出）」とワンクリック実行を追加し、手動実行フォームの初期値も推奨値にした。
+- Why: 運用者が閾値を都度考える負荷を減らし、状況に応じたガード実行をより短い操作で行えるようにするため。
