@@ -323,6 +323,11 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
     { key: "review_failed", label: "review_failed", value: reviewFailed, color: "bg-amber-500" }
   ];
   const maxBar = Math.max(1, ...barItems.map((item) => item.value));
+  const autoBarItems = [
+    { key: "auto_run", label: "auto_run", value: autoReminderRunCount, color: "bg-indigo-500" },
+    { key: "auto_skipped", label: "auto_skipped", value: autoReminderSkippedCount, color: "bg-slate-400" }
+  ];
+  const maxAutoBar = Math.max(1, ...autoBarItems.map((item) => item.value));
 
   return (
     <section className="space-y-6">
@@ -480,6 +485,30 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         <p className="mt-3 text-xs text-slate-600">
           ops alert最終失敗: {latestAlertFailure ? formatElapsedFromNow(latestAlertFailure.created_at) : "失敗なし"}
         </p>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">承認Auto Guard推移（7日）</h2>
+          <span className="text-xs text-slate-500">0件は棒を表示しません</span>
+        </div>
+        <div className="mt-2 text-xs text-slate-600">
+          stale approvals: {stalePendingApprovals} / threshold: {autoMinStale} / latest reason: {latestAutoReminderReason}
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-2">
+          {autoBarItems.map((item) => {
+            const heightPct = item.value > 0 ? Math.max(12, Math.round((item.value / maxAutoBar) * 100)) : 0;
+            return (
+              <div key={item.key} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <div className="flex h-32 items-end justify-center rounded-md bg-white px-2">
+                  {item.value > 0 ? <div className={`w-10 rounded-t-md ${item.color}`} style={{ height: `${heightPct}%` }} /> : null}
+                </div>
+                <p className="mt-2 text-center font-mono text-[11px] text-slate-600">{item.label}</p>
+                <p className="text-center text-sm font-semibold text-slate-900">{item.value}</p>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

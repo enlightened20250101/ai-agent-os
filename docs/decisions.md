@@ -1125,3 +1125,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/operations/jobs` にも Guard再通知の手動実行を追加し、`APPROVAL_REMINDER_AUTO_RUN/SKIPPED` をジョブ画面で集計表示するようにした。
 - Why: 承認ページだけでなく運用ジョブ画面からも同じ自動化制御を行えるようにして、NOC的運用の導線を一本化するため。
+
+- Decision: `/app/operations/jobs` に「承認Auto Guard推移（7日）」縦棒を追加し、`auto_run` / `auto_skipped` を同一グラフで比較表示する。
+- Why: Auto Guardが実際に送信を実行しているか、閾値スキップが多いかを運用ジョブ画面で即判断できるようにするため。
