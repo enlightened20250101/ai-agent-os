@@ -1128,3 +1128,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/operations/jobs` に「承認Auto Guard推移（7日）」縦棒を追加し、`auto_run` / `auto_skipped` を同一グラフで比較表示する。
 - Why: Auto Guardが実際に送信を実行しているか、閾値スキップが多いかを運用ジョブ画面で即判断できるようにするため。
+
+- Decision: Auto Guard推移セクションに、`stale件数` と `run/skipped` バランスに応じた推奨アクション文を追加した。
+- Why: 指標を見てから次に何をするかの判断を短縮し、運用者の意思決定をワンステップ化するため。

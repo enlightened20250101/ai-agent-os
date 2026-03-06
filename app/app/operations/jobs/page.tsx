@@ -328,6 +328,14 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
     { key: "auto_skipped", label: "auto_skipped", value: autoReminderSkippedCount, color: "bg-slate-400" }
   ];
   const maxAutoBar = Math.max(1, ...autoBarItems.map((item) => item.value));
+  const autoGuardGuidance =
+    stalePendingApprovals >= autoMinStale && autoReminderRunCount === 0
+      ? "推奨: staleが閾値以上ですが auto_run がないため、手動で Guard再通知を1回実行。"
+      : autoReminderSkippedCount > autoReminderRunCount
+        ? "推奨: skipがrunを上回るため、閾値を一時的に下げて実行可否を再評価。"
+        : stalePendingApprovals < autoMinStale
+          ? "推奨: stale件数は閾値未満。現行設定を維持し、過剰通知を回避。"
+          : "推奨: runが機能中。現行閾値で監視を継続。";
 
   return (
     <section className="space-y-6">
@@ -495,6 +503,7 @@ export default async function OperationsJobsPage({ searchParams }: JobsPageProps
         <div className="mt-2 text-xs text-slate-600">
           stale approvals: {stalePendingApprovals} / threshold: {autoMinStale} / latest reason: {latestAutoReminderReason}
         </div>
+        <p className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">{autoGuardGuidance}</p>
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-2">
           {autoBarItems.map((item) => {
             const heightPct = item.value > 0 ? Math.max(12, Math.round((item.value / maxAutoBar) * 100)) : 0;
