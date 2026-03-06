@@ -1056,3 +1056,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/cases/[id]` を追加し、案件単位で `case_events`・紐づくタスク・承認/実行履歴を横断確認できる詳細画面を実装した。
 - Why: 例外対応や月次締めの運用では、タスク単位より案件単位での俯瞰が必要なため、Case中心のオペレーション画面を先に整備する。
+
+- Decision: `/app` ダッシュボードに `business_cases` ベースの「滞留案件（open かつ一定時間更新なし）」指標を追加し、優先対応キューにも組み込んだ（`CASE_STALE_HOURS`, default 48h）。
+- Why: 承認滞留だけでなく案件滞留も同一画面で検知し、Case起点の詰まりを早期にトリアージできるようにするため。

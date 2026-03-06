@@ -184,6 +184,8 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const staleApprovalHours = Number(process.env.EXCEPTION_PENDING_APPROVAL_HOURS ?? "6");
   const staleApprovalCutoffIso = new Date(Date.now() - staleApprovalHours * 60 * 60 * 1000).toISOString();
+  const staleCaseHours = Number(process.env.CASE_STALE_HOURS ?? "48");
+  const staleCaseCutoffIso = new Date(Date.now() - staleCaseHours * 60 * 60 * 1000).toISOString();
   const [
     tasksRes,
     approvalsRes,
@@ -194,7 +196,8 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     reviewEventsRes,
     proposalsRes,
     chatCommandsRes,
-    chatIntentsRes
+    chatIntentsRes,
+    casesRes
   ] = await Promise.all([
     supabase
       .from("tasks")
@@ -249,6 +252,12 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       .eq("org_id", orgId)
       .gte("created_at", sevenDaysAgoIso)
       .order("created_at", { ascending: false })
+      .limit(1000),
+    supabase
+      .from("business_cases")
+      .select("id, status, updated_at")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false })
       .limit(1000)
   ]);
 
@@ -299,6 +308,13 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   ) {
     throw new Error(`Failed to load chat intent metrics: ${chatIntentsRes.error.message}`);
   }
+  if (
+    casesRes.error &&
+    !casesRes.error.message.includes('relation "business_cases" does not exist') &&
+    !casesRes.error.message.includes("Could not find the table 'public.business_cases'")
+  ) {
+    throw new Error(`Failed to load case metrics: ${casesRes.error.message}`);
+  }
 
   const tasks = tasksRes.data ?? [];
   const approvals = approvalsRes.data ?? [];
@@ -309,6 +325,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const proposals = proposalsRes.data ?? [];
   const chatCommands = chatCommandsRes.data ?? [];
   const chatIntents = chatIntentsRes.data ?? [];
+  const cases = casesRes.data ?? [];
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
   const taskStatusCounts = new Map<string, number>();
@@ -383,6 +400,10 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     executedActions + failedActions > 0
       ? Math.round((executedActions / (executedActions + failedActions)) * 100)
       : null;
+  const openCases = cases.filter((row) => row.status === "open").length;
+  const staleOpenCases = cases.filter(
+    (row) => row.status === "open" && typeof row.updated_at === "string" && row.updated_at < staleCaseCutoffIso
+  ).length;
 
   const urgentSignals = [
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
@@ -390,6 +411,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     pendingApprovals > 5 ? `承認待ち ${pendingApprovals}件` : null,
     failedActions > 0 ? `直近7日アクション失敗 ${failedActions}件` : null,
     failedChatCommands > 0 ? `直近7日チャット失敗 ${failedChatCommands}件` : null,
+    staleOpenCases > 0 ? `滞留案件 ${staleOpenCases}件` : null,
     worstFailedIntent && worstFailedIntent.failureRate >= 50
       ? `高失敗intent ${worstFailedIntent.intentType} (${worstFailedIntent.failureRate}%)`
       : null
@@ -429,6 +451,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       href: "/app/approvals",
       score: stalePendingApprovals > 0 ? 80 + Math.min(20, stalePendingApprovals) : 0,
       detail: `${staleApprovalHours}h+ pending ${stalePendingApprovals}件`,
+      quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
+    },
+    {
+      key: "stale_cases",
+      label: "滞留案件を解消",
+      href: "/app/cases?status=open",
+      score: staleOpenCases > 0 ? 78 + Math.min(20, staleOpenCases) : 0,
+      detail: `${staleCaseHours}h+ open ${staleOpenCases}件`,
       quickAction: null as null | "retry_failed_workflows" | "expire_chat_confirmations"
     },
     {
@@ -598,13 +628,23 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           </p>
         </Link>
       </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <Link
+          href="/app/cases?status=open"
+          className={`rounded-xl border p-4 shadow-sm ${staleOpenCases > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
+        >
+          <p className={`text-xs ${staleOpenCases > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留案件 ({staleCaseHours}h+)</p>
+          <p className={`mt-1 text-2xl font-semibold ${staleOpenCases > 0 ? "text-rose-900" : "text-slate-900"}`}>{staleOpenCases}</p>
+          <p className="mt-1 text-[11px] text-slate-600">open案件総数: {openCases}</p>
+        </Link>
+      </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-900">優先対応キュー</h2>
           <span className="text-xs text-slate-500">緊急度の高いものを先頭表示</span>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
           <Link
             href="/app/approvals"
             className={`rounded-lg border p-3 ${stalePendingApprovals > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
@@ -632,6 +672,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
           >
             <p className={`text-xs ${pendingProposals > 0 ? "text-sky-700" : "text-slate-600"}`}>未判断提案</p>
             <p className={`mt-1 text-xl font-semibold ${pendingProposals > 0 ? "text-sky-900" : "text-slate-900"}`}>{pendingProposals}</p>
+          </Link>
+          <Link
+            href="/app/cases?status=open"
+            className={`rounded-lg border p-3 ${staleOpenCases > 0 ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}
+          >
+            <p className={`text-xs ${staleOpenCases > 0 ? "text-rose-700" : "text-slate-600"}`}>滞留案件 ({staleCaseHours}h+)</p>
+            <p className={`mt-1 text-xl font-semibold ${staleOpenCases > 0 ? "text-rose-900" : "text-slate-900"}`}>{staleOpenCases}</p>
+            <p className="mt-1 text-[11px] text-slate-600">open: {openCases}</p>
           </Link>
           <Link
             href="/app/chat/audit?status=failed"
