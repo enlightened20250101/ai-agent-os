@@ -1158,3 +1158,15 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: Appヘッダーに `Workspace(name)` と `org_id` を表示し、現在所属コンテキストを全ページで確認可能にした。
 - Why: 複数アカウント運用時に「どの組織データを見ているか」を常に明示し、誤操作リスクを下げるため。
+
+- Decision: チャットを `shared/personal` から `shared/personal/channel` の3スコープへ拡張し、`chat_channels` + `chat_channel_members` でSlack風チャンネル運用（作成/招待/退出）を導入した。
+- Why: ワークスペース内の複数チーム会話を分離しつつ、どのチャンネルでも `@AI` 呼び出しを可能にするため。
+
+- Decision: `ai_execution_logs` を追加し、チャット経由のAI実行結果（done/failed/declined）を org 横断で記録・閲覧できる `/app/executions` を実装した。
+- Why: チャンネル閲覧権限に依存せず、団体単位で実行監査を行えるようにするため。
+
+- Decision: メンションサジェストUI（`@...`）を導入し、`@AI` 以外のメンションは会話/メモ用途として保持、`@AI` を含む発言のみ意図解析・実行確認フローへ進める方式を継続した。
+- Why: Slack同様の共同会話体験を維持しながら、AI実行を明示呼び出しに限定して誤実行を防ぐため。
+
+- Decision: `user_profiles`（display_name, avatar_emoji）を追加し、設定画面で更新可能にしてチャットバブルに表示名/アイコンを表示する。
+- Why: 複数アカウント運用時の識別性を高め、チーム会話の可読性を上げるため。

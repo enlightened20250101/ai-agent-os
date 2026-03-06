@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { confirmChatCommand, expireStaleChatConfirmations, retryChatCommand } from "@/app/app/chat/actions";
+import { MentionTextarea } from "@/app/app/chat/MentionTextarea";
 import { getAppLocale } from "@/lib/i18n/locale";
 import { isMissingChatSchemaError } from "@/lib/chat/schema";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
@@ -10,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 
 type ChatShellProps = {
   scope: ChatScope;
+  channelId?: string;
   title: string;
   description: string;
   // eslint-disable-next-line no-unused-vars
@@ -20,7 +22,9 @@ type ChatShellProps = {
 type ChatMessageRow = {
   id: string;
   sender_type: string;
+  sender_user_id: string | null;
   body_text: string;
+  metadata_json: unknown;
   created_at: string;
 };
 
@@ -73,6 +77,10 @@ function skipReasonLabel(reason: string) {
   return `skip: ${reason}`;
 }
 
+function isMissingTableError(message: string, tableName: string) {
+  return message.includes(`relation "${tableName}" does not exist`) || message.includes(`Could not find the table 'public.${tableName}'`);
+}
+
 function renderMessageBody(text: string) {
   const tokens = text.split(/(@[A-Za-z0-9_.-]+)/g);
   return tokens.map((token, idx) => {
@@ -93,7 +101,7 @@ function renderMessageBody(text: string) {
   });
 }
 
-export async function ChatShell({ scope, title, description, submitAction, searchParams }: ChatShellProps) {
+export async function ChatShell({ scope, channelId, title, description, submitAction, searchParams }: ChatShellProps) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
@@ -110,7 +118,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
       : "all";
   let session: Awaited<ReturnType<typeof getOrCreateChatSession>> | null = null;
   try {
-    session = await getOrCreateChatSession({ supabase, orgId, scope, userId });
+    session = await getOrCreateChatSession({ supabase, orgId, scope, userId, channelId: scope === "channel" ? channelId ?? null : null });
   } catch (error) {
     const message = error instanceof Error ? error.message : "chat session error";
     if (isMissingChatSchemaError(message)) {
@@ -138,7 +146,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   ] = await Promise.all([
     supabase
       .from("chat_messages")
-      .select("id, sender_type, body_text, created_at")
+      .select("id, sender_type, sender_user_id, body_text, metadata_json, created_at")
       .eq("org_id", orgId)
       .eq("session_id", session.id)
       .order("created_at", { ascending: true })
@@ -229,6 +237,34 @@ export async function ChatShell({ scope, title, description, submitAction, searc
   }
 
   const messages = (messagesData ?? []) as ChatMessageRow[];
+  const senderUserIds = Array.from(new Set(messages.map((m) => m.sender_user_id).filter((v): v is string => Boolean(v))));
+  const [profilesRes, membersRes, channelsRes] = await Promise.all([
+    senderUserIds.length > 0
+      ? supabase.from("user_profiles").select("user_id, display_name, avatar_emoji").eq("org_id", orgId).in("user_id", senderUserIds)
+      : Promise.resolve({ data: [], error: null }),
+    supabase.from("memberships").select("user_id").eq("org_id", orgId).order("created_at", { ascending: true }).limit(500),
+    supabase.from("chat_channels").select("name").eq("org_id", orgId).order("created_at", { ascending: true }).limit(200)
+  ]);
+  if (profilesRes.error && !isMissingTableError(profilesRes.error.message, "user_profiles")) {
+    throw new Error(`Failed to load user profiles: ${profilesRes.error.message}`);
+  }
+  if (membersRes.error) {
+    throw new Error(`Failed to load memberships: ${membersRes.error.message}`);
+  }
+  if (channelsRes.error && !isMissingTableError(channelsRes.error.message, "chat_channels")) {
+    throw new Error(`Failed to load chat channels: ${channelsRes.error.message}`);
+  }
+  const profileMap = new Map(
+    ((profilesRes.data ?? []) as Array<{ user_id: string; display_name: string | null; avatar_emoji: string | null }>).map((p) => [
+      p.user_id,
+      { name: p.display_name ?? null, avatar: p.avatar_emoji ?? "🙂" }
+    ])
+  );
+  const mentionCandidates = [
+    "AI",
+    ...((membersRes.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id.slice(0, 8)),
+    ...((channelsRes.data ?? []) as Array<{ name: string }>).map((c) => c.name)
+  ];
   const confirmedToday = todayConfirmedCount ?? 0;
   const remainingToday = Math.max(0, dailyLimit - confirmedToday);
   const usageRatio = confirmedToday / dailyLimit;
@@ -287,6 +323,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                 <p className="text-sm font-medium text-amber-900">{isEn ? "Awaiting confirmation" : "実行確認待ち"}</p>
                 <form action={expireStaleChatConfirmations}>
                   <input type="hidden" name="scope" value={scope} />
+                  {scope === "channel" && channelId ? <input type="hidden" name="channel_id" value={channelId} /> : null}
                   <button
                     type="submit"
                     className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
@@ -305,6 +342,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                     <form action={confirmChatCommand}>
                       <input type="hidden" name="confirmation_id" value={confirmation.id} />
                       <input type="hidden" name="scope" value={scope} />
+                      {scope === "channel" && channelId ? <input type="hidden" name="channel_id" value={channelId} /> : null}
                       <button
                         type="submit"
                         name="decision"
@@ -317,6 +355,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                     <form action={confirmChatCommand}>
                       <input type="hidden" name="confirmation_id" value={confirmation.id} />
                       <input type="hidden" name="scope" value={scope} />
+                      {scope === "channel" && channelId ? <input type="hidden" name="channel_id" value={channelId} /> : null}
                       <button
                         type="submit"
                         name="decision"
@@ -337,6 +376,14 @@ export async function ChatShell({ scope, title, description, submitAction, searc
               <ul className="space-y-2">
                 {messages.map((message) => {
                   const isUser = message.sender_type === "user";
+                  const profile = message.sender_user_id ? profileMap.get(message.sender_user_id) : null;
+                  const label =
+                    message.sender_type === "system"
+                      ? isEn
+                        ? "Agent"
+                        : "エージェント"
+                      : profile?.name ?? message.sender_user_id?.slice(0, 8) ?? speakerLabel(message.sender_type, isEn);
+                  const avatar = message.sender_type === "system" ? "🤖" : profile?.avatar ?? "🙂";
                   return (
                     <li
                       key={message.id}
@@ -347,7 +394,10 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                       }`}
                     >
                       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                        <span>{speakerLabel(message.sender_type, isEn)}</span>
+                        <span className="inline-flex items-center gap-1">
+                          <span>{avatar}</span>
+                          <span>{label}</span>
+                        </span>
                         <span>{new Date(message.created_at).toLocaleString()}</span>
                       </div>
                       <p className="whitespace-pre-wrap text-slate-800">{renderMessageBody(message.body_text)}</p>
@@ -363,20 +413,20 @@ export async function ChatShell({ scope, title, description, submitAction, searc
 
         <div className="border-t border-slate-200 bg-white p-3 sm:p-4">
           <form action={submitAction} className="space-y-3">
+            {scope === "channel" && channelId ? <input type="hidden" name="channel_id" value={channelId} /> : null}
             <label className="block text-sm font-medium text-slate-900" htmlFor="chat-input">
               {isEn ? "Message" : "メッセージ"}
             </label>
-            <textarea
+            <MentionTextarea
               id="chat-input"
               name="body"
-              rows={3}
               required
               placeholder={
                 isEn
-                  ? "Example: Add an invoice-check task / request approval for task_id / execute task \"...\""
-                  : "例: 「請求書確認タスクを追加して」 / 「task_id」で承認依頼して / 「〇〇」を実行して"
+                  ? "Example: @AI add an invoice-check task / @mike please review"
+                  : "例: @AI 請求書確認タスクを追加して / @tanaka 確認お願いします"
               }
-              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
+              candidates={mentionCandidates}
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-slate-500">
@@ -465,6 +515,7 @@ export async function ChatShell({ scope, title, description, submitAction, searc
                     <form action={retryChatCommand} className="mt-2">
                       <input type="hidden" name="command_id" value={command.id} />
                       <input type="hidden" name="scope" value={scope} />
+                      {scope === "channel" && channelId ? <input type="hidden" name="channel_id" value={channelId} /> : null}
                       <button
                         type="submit"
                         className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"

@@ -8,6 +8,7 @@ import { appendCaseEventSafe } from "@/lib/cases/events";
 import { parseChatIntent } from "@/lib/chat/intents";
 import { expirePendingChatConfirmations } from "@/lib/chat/maintenance";
 import { getOrCreateChatSession, type ChatScope } from "@/lib/chat/sessions";
+import { appendAiExecutionLog } from "@/lib/executions/logs";
 import { appendTaskEvent } from "@/lib/events/taskEvents";
 import { getLatestOpenIncident } from "@/lib/governance/incidents";
 import { requireOrgContext } from "@/lib/org/context";
@@ -17,16 +18,24 @@ import { postApprovalRequestToSlack } from "@/lib/slack/approvals";
 import { createClient } from "@/lib/supabase/server";
 import { retryFailedWorkflowRun, startWorkflowRun } from "@/lib/workflows/orchestrator";
 
-function pathForScope(scope: ChatScope) {
-  return scope === "shared" ? "/app/chat/shared" : "/app/chat/me";
+function normalizeScope(raw: string): ChatScope {
+  if (raw === "shared" || raw === "personal" || raw === "channel") return raw;
+  return "shared";
 }
 
-function withError(scope: ChatScope, message: string) {
-  return `${pathForScope(scope)}?error=${encodeURIComponent(message)}`;
+function pathForScope(scope: ChatScope, channelId?: string | null) {
+  if (scope === "shared") return "/app/chat/shared";
+  if (scope === "personal") return "/app/chat/me";
+  if (channelId) return `/app/chat/channels/${channelId}`;
+  return "/app/chat/channels";
 }
 
-function withOk(scope: ChatScope, message: string) {
-  return `${pathForScope(scope)}?ok=${encodeURIComponent(message)}`;
+function withError(scope: ChatScope, message: string, channelId?: string | null) {
+  return `${pathForScope(scope, channelId)}?error=${encodeURIComponent(message)}`;
+}
+
+function withOk(scope: ChatScope, message: string, channelId?: string | null) {
+  return `${pathForScope(scope, channelId)}?ok=${encodeURIComponent(message)}`;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -1818,10 +1827,10 @@ async function executeIntentCommand(args: {
   throw new Error("この実行タイプは未対応です。");
 }
 
-async function postMessage(scope: ChatScope, formData: FormData) {
+async function postMessage(scope: ChatScope, formData: FormData, channelId?: string | null) {
   const body = String(formData.get("body") ?? "").trim();
   if (!body) {
-    redirect(withError(scope, "メッセージを入力してください。"));
+    redirect(withError(scope, "メッセージを入力してください。", channelId));
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -1833,7 +1842,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     supabase,
     orgId,
     scope,
-    userId
+    userId,
+    channelId
   });
 
   const { data: userMsg, error: userMsgError } = await supabase
@@ -1854,7 +1864,7 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     .single();
 
   if (userMsgError) {
-    redirect(withError(scope, `メッセージ保存に失敗しました: ${userMsgError.message}`));
+    redirect(withError(scope, `メッセージ保存に失敗しました: ${userMsgError.message}`, channelId));
   }
 
   await supabase
@@ -1864,14 +1874,14 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     .eq("org_id", orgId);
 
   if (!aiMentioned) {
-    revalidatePath(pathForScope(scope));
-    redirect(withOk(scope, "メッセージを送信しました。AIに依頼する場合は @AI を付けてください。"));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withOk(scope, "メッセージを送信しました。AIに依頼する場合は @AI を付けてください。", channelId));
   }
 
   const aiBody = stripAiMention(body);
   if (!aiBody) {
-    revalidatePath(pathForScope(scope));
-    redirect(withError(scope, "@AI の後に依頼内容を入力してください。"));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withError(scope, "@AI の後に依頼内容を入力してください。", channelId));
   }
 
   const intent = parseChatIntent(aiBody);
@@ -1888,7 +1898,7 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     .single();
 
   if (intentError) {
-    redirect(withError(scope, `意図解析保存に失敗しました: ${intentError.message}`));
+    redirect(withError(scope, `意図解析保存に失敗しました: ${intentError.message}`, channelId));
   }
 
   if (intent.intentType === "status_query") {
@@ -2181,8 +2191,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
       });
     }
 
-    revalidatePath(pathForScope(scope));
-    redirect(withOk(scope, "状況を要約しました。"));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withOk(scope, "状況を要約しました。", channelId));
   }
 
   if (intent.requiresConfirmation) {
@@ -2212,11 +2222,11 @@ async function postMessage(scope: ChatScope, formData: FormData) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "実行確認作成に失敗しました。";
-      redirect(withError(scope, message));
+      redirect(withError(scope, message, channelId));
     }
 
-    revalidatePath(pathForScope(scope));
-    redirect(withOk(scope, "実行確認を作成しました。"));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withOk(scope, "実行確認を作成しました。", channelId));
   }
 
   await addSystemMessage({
@@ -2230,8 +2240,8 @@ async function postMessage(scope: ChatScope, formData: FormData) {
     }
   });
 
-  revalidatePath(pathForScope(scope));
-  redirect(withOk(scope, "回答を返しました。"));
+  revalidatePath(pathForScope(scope, channelId));
+  redirect(withOk(scope, "回答を返しました。", channelId));
 }
 
 export async function postSharedMessage(formData: FormData) {
@@ -2242,10 +2252,19 @@ export async function postPersonalMessage(formData: FormData) {
   return postMessage("personal", formData);
 }
 
+export async function postChannelMessage(formData: FormData) {
+  const channelId = String(formData.get("channel_id") ?? "").trim();
+  if (!channelId) {
+    redirect("/app/chat/channels?error=channel_id%20is%20required");
+  }
+  return postMessage("channel", formData, channelId);
+}
+
 export async function expireStaleChatConfirmations(formData: FormData) {
-  const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+  const scope = normalizeScope(String(formData.get("scope") ?? "shared").trim());
+  const channelId = String(formData.get("channel_id") ?? "").trim() || null;
   const returnTo = String(formData.get("return_to") ?? "").trim();
-  const redirectPath = returnTo || pathForScope(scope);
+  const redirectPath = returnTo || pathForScope(scope, channelId);
 
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
@@ -2265,6 +2284,7 @@ export async function expireStaleChatConfirmations(formData: FormData) {
 
   revalidatePath("/app/chat/shared");
   revalidatePath("/app/chat/me");
+  revalidatePath("/app/chat/channels");
   revalidatePath("/app/chat/audit");
   redirect(`${redirectPath}?ok=${encodeURIComponent(`期限切れ確認を${expiredCount}件更新しました。`)}`);
 }
@@ -2362,9 +2382,10 @@ async function createRetryConfirmationForFailedCommand(args: {
 
 export async function retryChatCommand(formData: FormData) {
   const commandId = String(formData.get("command_id") ?? "").trim();
-  const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+  const scope = normalizeScope(String(formData.get("scope") ?? "shared").trim());
+  const channelId = String(formData.get("channel_id") ?? "").trim() || null;
   const returnTo = String(formData.get("return_to") ?? "").trim();
-  const redirectPath = returnTo || pathForScope(scope);
+  const redirectPath = returnTo || pathForScope(scope, channelId);
 
   if (!commandId) {
     redirect(`${redirectPath}?error=${encodeURIComponent("command_id がありません。")}`);
@@ -2385,7 +2406,7 @@ export async function retryChatCommand(formData: FormData) {
     redirect(`${redirectPath}?error=${encodeURIComponent(message)}`);
   }
 
-  revalidatePath(pathForScope(scope));
+  revalidatePath(pathForScope(scope, channelId));
   revalidatePath("/app/chat/audit");
   redirect(`${redirectPath}?ok=${encodeURIComponent("再実行確認を作成しました。")}`);
 }
@@ -2483,6 +2504,7 @@ export async function bulkRetryFailedCommands(formData: FormData) {
 
   revalidatePath("/app/chat/shared");
   revalidatePath("/app/chat/me");
+  revalidatePath("/app/chat/channels");
   revalidatePath("/app/chat/audit");
   revalidatePath("/app");
 
@@ -2493,11 +2515,12 @@ export async function bulkRetryFailedCommands(formData: FormData) {
 
 export async function confirmChatCommand(formData: FormData) {
   const confirmationId = String(formData.get("confirmation_id") ?? "").trim();
-  const scope = String(formData.get("scope") ?? "shared").trim() === "personal" ? "personal" : "shared";
+  const scope = normalizeScope(String(formData.get("scope") ?? "shared").trim());
+  const channelId = String(formData.get("channel_id") ?? "").trim() || null;
   const decision = String(formData.get("decision") ?? "").trim();
 
   if (!confirmationId || (decision !== "confirmed" && decision !== "declined")) {
-    redirect(withError(scope, "確認リクエストが不正です。"));
+    redirect(withError(scope, "確認リクエストが不正です。", channelId));
   }
 
   const { orgId, userId } = await requireOrgContext();
@@ -2511,11 +2534,11 @@ export async function confirmChatCommand(formData: FormData) {
     .single();
 
   if (confirmationError) {
-    redirect(withError(scope, `確認情報の取得に失敗しました: ${confirmationError.message}`));
+    redirect(withError(scope, `確認情報の取得に失敗しました: ${confirmationError.message}`, channelId));
   }
 
   if (confirmation.status !== "pending") {
-    redirect(withError(scope, "この確認はすでに処理済みです。"));
+    redirect(withError(scope, "この確認はすでに処理済みです。", channelId));
   }
 
   const expiresAt = new Date(confirmation.expires_at as string).getTime();
@@ -2525,7 +2548,7 @@ export async function confirmChatCommand(formData: FormData) {
       .update({ status: "expired", decided_at: new Date().toISOString(), decided_by: userId })
       .eq("id", confirmationId)
       .eq("org_id", orgId);
-    redirect(withError(scope, "確認期限が切れています。もう一度依頼してください。"));
+    redirect(withError(scope, "確認期限が切れています。もう一度依頼してください。", channelId));
   }
 
   const { data: intent, error: intentError } = await supabase
@@ -2535,7 +2558,7 @@ export async function confirmChatCommand(formData: FormData) {
     .eq("org_id", orgId)
     .single();
   if (intentError) {
-    redirect(withError(scope, `意図情報の取得に失敗しました: ${intentError.message}`));
+    redirect(withError(scope, `意図情報の取得に失敗しました: ${intentError.message}`, channelId));
   }
 
   const latestOpenIncident = await getLatestOpenIncident({ supabase, orgId });
@@ -2563,8 +2586,8 @@ export async function confirmChatCommand(formData: FormData) {
       }
     });
 
-    revalidatePath(pathForScope(scope));
-    redirect(withError(scope, "インシデントモード中のため、この実行はブロックされました。"));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withError(scope, "インシデントモード中のため、この実行はブロックされました。", channelId));
   }
 
   try {
@@ -2596,8 +2619,8 @@ export async function confirmChatCommand(formData: FormData) {
         blocked_by_daily_limit: true
       }
     });
-    revalidatePath(pathForScope(scope));
-    redirect(withError(scope, message));
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withError(scope, message, channelId));
   }
 
   const nowIso = new Date().toISOString();
@@ -2623,8 +2646,23 @@ export async function confirmChatCommand(formData: FormData) {
         decision
       }
     });
-    revalidatePath(pathForScope(scope));
-    redirect(withOk(scope, "実行をキャンセルしました。"));
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionId: confirmation.session_id as string,
+      sessionScope: scope,
+      channelId,
+      intentType: intent.intent_type as string,
+      executionStatus: "declined",
+      source: "chat",
+      summaryText: "User declined command confirmation",
+      metadata: { confirmation_id: confirmationId, decision: "declined" },
+      createdAt: nowIso,
+      finishedAt: nowIso
+    });
+    revalidatePath(pathForScope(scope, channelId));
+    redirect(withOk(scope, "実行をキャンセルしました。", channelId));
   }
 
   const { data: command, error: commandError } = await supabase
@@ -2641,7 +2679,7 @@ export async function confirmChatCommand(formData: FormData) {
     .select("id")
     .single();
   if (commandError) {
-    redirect(withError(scope, `コマンド生成に失敗しました: ${commandError.message}`));
+    redirect(withError(scope, `コマンド生成に失敗しました: ${commandError.message}`, channelId));
   }
 
   await supabase
@@ -2673,6 +2711,24 @@ export async function confirmChatCommand(formData: FormData) {
       .eq("id", command.id as string)
       .eq("org_id", orgId);
 
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionId: confirmation.session_id as string,
+      sessionScope: scope,
+      channelId,
+      intentType: intent.intent_type as string,
+      executionStatus: "done",
+      executionRefType: executed.executionRefType,
+      executionRefId: executed.executionRefId,
+      source: "chat",
+      summaryText: executed.message,
+      metadata: { command_id: command.id, confirmation_id: confirmationId, result: executed.result },
+      createdAt: nowIso,
+      finishedAt: new Date().toISOString()
+    });
+
     await addSystemMessage({
       supabase,
       orgId,
@@ -2688,7 +2744,7 @@ export async function confirmChatCommand(formData: FormData) {
       }
     });
 
-    revalidatePath(pathForScope(scope));
+    revalidatePath(pathForScope(scope, channelId));
     revalidatePath("/app/tasks");
     revalidatePath("/app/approvals");
     revalidatePath("/app/planner");
@@ -2698,11 +2754,13 @@ export async function confirmChatCommand(formData: FormData) {
       revalidatePath(`/app/cases/${executed.executionRefId}`);
     }
     revalidatePath("/app/workflows/runs");
+    revalidatePath("/app/chat/channels");
     if (executed.touchedTaskId) {
       revalidatePath(`/app/tasks/${executed.touchedTaskId}`);
     }
 
-    redirect(withOk(scope, "実行が完了しました。"));
+    revalidatePath("/app/executions");
+    redirect(withOk(scope, "実行が完了しました。", channelId));
   } catch (error) {
     const message = error instanceof Error ? error.message : "コマンド実行に失敗しました。";
 
@@ -2731,7 +2789,24 @@ export async function confirmChatCommand(formData: FormData) {
       }
     });
 
-    revalidatePath(pathForScope(scope));
-    redirect(withError(scope, message));
+    await appendAiExecutionLog({
+      supabase,
+      orgId,
+      triggeredByUserId: userId,
+      sessionId: confirmation.session_id as string,
+      sessionScope: scope,
+      channelId,
+      intentType: intent.intent_type as string,
+      executionStatus: "failed",
+      source: "chat",
+      summaryText: `実行失敗: ${message}`,
+      metadata: { command_id: command.id, confirmation_id: confirmationId, error: message },
+      createdAt: nowIso,
+      finishedAt: new Date().toISOString()
+    });
+
+    revalidatePath(pathForScope(scope, channelId));
+    revalidatePath("/app/executions");
+    redirect(withError(scope, message, channelId));
   }
 }

@@ -29,6 +29,11 @@ const links = [
     description: "保留中の承認と最近の判断結果を確認します。"
   },
   {
+    title: "実行履歴",
+    href: "/app/executions",
+    description: "AI実行の監査ログを期間・依頼元などで横断検索します。"
+  },
+  {
     title: "提案",
     href: "/app/proposals",
     description: "自律提案を確認し、実タスクに変換します。"
@@ -47,6 +52,11 @@ const links = [
     title: "共有チャット",
     href: "/app/chat/shared",
     description: "組織全体向けの会話で、タスク依頼や状況確認を実行確認付きで行います。"
+  },
+  {
+    title: "チャンネル",
+    href: "/app/chat/channels",
+    description: "Slack風に複数チャンネルを作成し、招待して会話できます。"
   },
   {
     title: "個人チャット",
