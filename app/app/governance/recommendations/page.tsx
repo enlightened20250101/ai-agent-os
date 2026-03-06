@@ -118,6 +118,8 @@ function metricLabelJa(label: string) {
   if (label === "open incidents") return "オープンインシデント";
   if (label === "pending >72h") return "72時間超の承認待ち";
   if (label === "pending >24h") return "24時間超の承認待ち";
+  if (label === "sod blocked approvals (7d)") return "SoD承認ブロック件数(7日)";
+  if (label === "blocked approvals (7d)") return "承認ブロック件数(7日)";
   if (label === "failed actions (7d)") return "失敗アクション(7日)";
   if (label === "success rate (7d)") return "成功率(7日)";
   if (label === "overdue chat confirmations") return "期限切れチャット確認";
@@ -293,7 +295,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         </section>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
           <p className="text-xs text-rose-700">オープンインシデント</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900">{summary.openIncidents}</p>
@@ -301,6 +303,14 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
           <p className="text-xs text-amber-700">24時間超の承認待ち</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900">{summary.staleApprovals24h}</p>
+        </div>
+        <div className={`rounded-xl border p-4 shadow-sm ${summary.sodBlockedEvents7d > 0 ? "border-rose-300 bg-rose-100" : "border-amber-200 bg-amber-50"}`}>
+          <p className={`text-xs ${summary.sodBlockedEvents7d > 0 ? "text-rose-700" : "text-amber-700"}`}>SoD承認ブロック ({windowLabel})</p>
+          <p className={`mt-1 text-2xl font-semibold ${summary.sodBlockedEvents7d > 0 ? "text-rose-900" : "text-amber-900"}`}>{summary.sodBlockedEvents7d}</p>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-xs text-amber-700">承認ブロック総数 ({windowLabel})</p>
+          <p className="mt-1 text-2xl font-semibold text-amber-900">{summary.approvalBlockedEvents7d}</p>
         </div>
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
           <p className="text-xs text-sky-700">失敗アクション ({windowLabel})</p>

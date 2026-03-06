@@ -208,6 +208,8 @@ function recommendationMetricLabel(label: string) {
   if (label === "open incidents") return "オープンインシデント";
   if (label === "pending >72h") return "72時間超の承認待ち";
   if (label === "pending >24h") return "24時間超の承認待ち";
+  if (label === "sod blocked approvals (7d)") return "SoD承認ブロック件数(7日)";
+  if (label === "blocked approvals (7d)") return "承認ブロック件数(7日)";
   if (label === "failed actions (7d)") return "失敗アクション(7日)";
   if (label === "success rate (7d)") return "成功率(7日)";
   if (label === "overdue chat confirmations") return "期限切れチャット確認";
@@ -359,6 +361,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     autoReminderEventsRes,
     retryEventsRes,
     externalCaseEventsRes,
+    approvalBlockedEventsRes,
     approvalRiskRes,
     approvalPolicyRes,
     approvalModelRes,
@@ -456,6 +459,14 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       .gte("created_at", windowStartIso)
       .order("created_at", { ascending: false })
       .limit(200),
+    supabase
+      .from("task_events")
+      .select("task_id, payload_json, created_at")
+      .eq("org_id", orgId)
+      .eq("event_type", "APPROVAL_BLOCKED")
+      .gte("created_at", windowStartIso)
+      .order("created_at", { ascending: false })
+      .limit(1000),
     supabase
       .from("risk_assessments")
       .select("task_id, risk_score, created_at")
@@ -564,6 +575,9 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   ) {
     throw new Error(`Failed to load external case metrics: ${externalCaseEventsRes.error.message}`);
   }
+  if (approvalBlockedEventsRes.error) {
+    throw new Error(`Failed to load approval blocked metrics: ${approvalBlockedEventsRes.error.message}`);
+  }
   if (approvalRiskRes.error) {
     throw new Error(`Failed to load approval risk metrics: ${approvalRiskRes.error.message}`);
   }
@@ -594,6 +608,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
   const autoReminderEvents = autoReminderEventsRes.data ?? [];
   const retryEvents = retryEventsRes.data ?? [];
   const externalCaseEvents = externalCaseEventsRes.data ?? [];
+  const approvalBlockedEvents = approvalBlockedEventsRes.data ?? [];
   const highRiskThreshold = getHighRiskThreshold();
 
   const taskStatusOrder = ["draft", "ready_for_approval", "approved", "executing", "done", "failed"];
@@ -678,6 +693,11 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       row.created_at >= new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
   ).length;
   const blockedProposals = proposals.filter((row) => row.policy_status === "block" && row.status === "proposed").length;
+  const approvalBlockedCount = approvalBlockedEvents.length;
+  const sodBlockedCount = approvalBlockedEvents.filter((row) => {
+    const payload = asObject(row.payload_json);
+    return payload?.reason_code === "sod_initiator_approver_conflict";
+  }).length;
   const pendingProposals = proposals.filter((row) => row.status === "proposed").length;
   const pendingExternalEvents = externalEvents.filter((row) => row.status === "new").length;
   const externalEventProposals = proposals.filter(
@@ -803,6 +823,7 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
     (taskStatusCounts.get("failed") ?? 0) > 0 ? `失敗タスク ${taskStatusCounts.get("failed") ?? 0}件` : null,
     pendingApprovals > 5 ? `承認待ち ${pendingApprovals}件` : null,
     highRiskInsufficientPending > 0 ? `高リスク承認不足 ${highRiskInsufficientPending}件` : null,
+    sodBlockedCount > 0 ? `SoD承認ブロック ${sodBlockedCount}件` : null,
     failedActions > 0 ? `直近${windowLabel}アクション失敗 ${failedActions}件` : null,
     failedChatCommands > 0 ? `直近${windowLabel}チャット失敗 ${failedChatCommands}件` : null,
     staleOpenCases > 0 ? `滞留案件 ${staleOpenCases}件` : null,
@@ -1310,6 +1331,20 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
             />
           </form>
         </div>
+        <Link
+          href={withWindowParam("/app/approvals?blocked_only=1", windowFilter)}
+          className={`rounded-xl border p-4 shadow-sm ${
+            sodBlockedCount > 0 ? "border-rose-300 bg-rose-50" : approvalBlockedCount > 0 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <p className={`text-xs ${sodBlockedCount > 0 ? "text-rose-700" : approvalBlockedCount > 0 ? "text-amber-700" : "text-slate-600"}`}>
+            承認ブロック ({windowLabel})
+          </p>
+          <p className={`mt-1 text-2xl font-semibold ${sodBlockedCount > 0 ? "text-rose-900" : approvalBlockedCount > 0 ? "text-amber-900" : "text-slate-900"}`}>
+            {approvalBlockedCount}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-600">SoD: {sodBlockedCount}</p>
+        </Link>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

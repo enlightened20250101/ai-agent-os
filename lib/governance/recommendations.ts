@@ -24,6 +24,8 @@ export type GovernanceRecommendationSummary = {
   openIncidents: number;
   staleApprovals24h: number;
   staleApprovals72h: number;
+  approvalBlockedEvents7d: number;
+  sodBlockedEvents7d: number;
   failedActions7d: number;
   failedChatCommands7d: number;
   pendingChatConfirmations: number;
@@ -73,6 +75,8 @@ export async function buildGovernanceRecommendations(args: {
     approvals24Res,
     approvals72Res,
     actionsRes,
+    approvalBlockedRes,
+    sodBlockedRes,
     policyBlocksRes,
     lowTrustRes,
     budgetUsageRes,
@@ -105,6 +109,19 @@ export async function buildGovernanceRecommendations(args: {
         .gte("created_at", sinceWindowIso)
         .in("status", ["success", "failed"])
         .limit(2000),
+      supabase
+        .from("task_events")
+        .select("id", { head: true, count: "exact" })
+        .eq("org_id", orgId)
+        .eq("event_type", "APPROVAL_BLOCKED")
+        .gte("created_at", sinceWindowIso),
+      supabase
+        .from("task_events")
+        .select("id", { head: true, count: "exact" })
+        .eq("org_id", orgId)
+        .eq("event_type", "APPROVAL_BLOCKED")
+        .gte("created_at", sinceWindowIso)
+        .filter("payload_json->>reason_code", "eq", "sod_initiator_approver_conflict"),
       supabase
         .from("task_events")
         .select("id", { head: true, count: "exact" })
@@ -161,6 +178,12 @@ export async function buildGovernanceRecommendations(args: {
   if (actionsRes.error) {
     throw new Error(`action metrics query failed: ${actionsRes.error.message}`);
   }
+  if (approvalBlockedRes.error && !missingTable(approvalBlockedRes.error.message, "task_events")) {
+    throw new Error(`approval blocked metrics query failed: ${approvalBlockedRes.error.message}`);
+  }
+  if (sodBlockedRes.error && !missingTable(sodBlockedRes.error.message, "task_events")) {
+    throw new Error(`sod blocked metrics query failed: ${sodBlockedRes.error.message}`);
+  }
   if (
     policyBlocksRes.error &&
     !missingTable(policyBlocksRes.error.message, "task_events") &&
@@ -203,6 +226,8 @@ export async function buildGovernanceRecommendations(args: {
     openIncidents: incidentsRes.count ?? 0,
     staleApprovals24h: approvals24Res.count ?? 0,
     staleApprovals72h: approvals72Res.count ?? 0,
+    approvalBlockedEvents7d: approvalBlockedRes.count ?? 0,
+    sodBlockedEvents7d: sodBlockedRes.count ?? 0,
     failedActions7d,
     failedChatCommands7d: failedChatCommandsRes.count ?? 0,
     pendingChatConfirmations: pendingChatConfirmationsRes.count ?? 0,
@@ -257,6 +282,34 @@ export async function buildGovernanceRecommendations(args: {
       actionLabel: "承認キューを確認",
       href: withWindow("/app/approvals"),
       automation: { kind: "send_approval_reminder", label: "Slackで承認催促を送信" }
+    });
+  }
+
+  if (summary.sodBlockedEvents7d > 0) {
+    recommendations.push({
+      id: "approvals-sod-blocked",
+      priority: "high",
+      title: "職務分掌違反の承認試行を是正",
+      description:
+        "起票者自身による承認試行が検知されています。承認者アサインと操作手順を見直し、再発を防止してください。",
+      metricLabel: "sod blocked approvals (7d)",
+      metricValue: String(summary.sodBlockedEvents7d),
+      actionLabel: "ブロック承認を確認",
+      href: withWindow("/app/approvals?blocked_only=1"),
+      automation: null
+    });
+  } else if (summary.approvalBlockedEvents7d > 0) {
+    recommendations.push({
+      id: "approvals-blocked",
+      priority: "medium",
+      title: "承認ブロック要因を解消",
+      description:
+        "承認ブロックイベントが発生しています。ブロック理由を確認し、ルールや運用導線を調整してください。",
+      metricLabel: "blocked approvals (7d)",
+      metricValue: String(summary.approvalBlockedEvents7d),
+      actionLabel: "ブロック承認を確認",
+      href: withWindow("/app/approvals?blocked_only=1"),
+      automation: null
     });
   }
 

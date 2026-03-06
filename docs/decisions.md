@@ -1752,3 +1752,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 承認拒否のうち職務分掌（SoD）で弾いたケースを `APPROVAL_BLOCKED` として `task_events` に記録し、`/app/approvals` に期間内ブロック件数（合計/SoD）と直近履歴を追加した。あわせて `blocked_only=1` フィルタで「ブロック発生タスク」へ絞り込めるようにした。
 - Why: これまで SoD 拒否はユーザーエラー表示のみで運用監査に残らず、再発傾向や訓練対象の把握が難しかったため。Ledgerに残して可視化することで、統制運用の改善サイクルを回しやすくするため。
+
+- Decision: ホーム `/app` と `/app/governance/recommendations` の指標に `APPROVAL_BLOCKED`（総数）と `sod_initiator_approver_conflict`（SoD違反）を追加し、改善提案にも「承認ブロック要因の是正」を自動生成するようにした。導線は `blocked_only=1` を付けて承認画面へ直行させる。
+- Why: SoD違反を承認ページだけでなく全体運用のKPIとして扱い、日次監視→改善提案→現場対応のループを1クリックで回せるようにするため。
