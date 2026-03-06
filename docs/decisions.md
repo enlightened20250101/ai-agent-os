@@ -1104,3 +1104,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app` トップにも Auto Guard 状態カード（stale/threshold、run/skipped、delta）と「推奨値で実行」ボタンを追加し、承認ページへ遷移せずに一次対応可能にした。
 - Why: ホーム画面を運用コックピットとして強化し、承認滞留への初動時間をさらに短縮するため。
+
+- Decision: `/app` トップの Auto Guard カードでも、delta悪化時に低閾値の「悪化対応」実行ボタンを表示するようにして、承認ページと同等の緊急導線を揃えた。
+- Why: ダッシュボード起点の運用でも悪化シグナルに即応できるようにし、ページ遷移による対応遅延を減らすため。

@@ -434,6 +434,10 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
       : null;
   const suggestedGuardMinStale =
     stalePendingApprovals >= 10 ? 10 : stalePendingApprovals >= 5 ? 5 : stalePendingApprovals >= 3 ? 3 : 1;
+  const urgentGuardMinStale =
+    autoDelta !== null && autoDelta > 0
+      ? Math.max(1, Math.min(suggestedGuardMinStale, Math.max(1, stalePendingApprovals - 1)))
+      : suggestedGuardMinStale;
 
   const urgentSignals = [
     openIncidents.length > 0 ? `インシデント ${openIncidents.length}件` : null,
@@ -695,6 +699,17 @@ export default async function AppHomePage({ searchParams }: HomePageProps) {
               className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-100"
             />
           </form>
+          {urgentGuardMinStale !== suggestedGuardMinStale ? (
+            <form action={runGuardedAutoReminderNow} className="mt-2">
+              <input type="hidden" name="min_stale" value={String(urgentGuardMinStale)} />
+              <ConfirmSubmitButton
+                label={`悪化対応: 閾値${urgentGuardMinStale}で実行`}
+                pendingLabel="実行中..."
+                confirmMessage={`悪化傾向のため、閾値 ${urgentGuardMinStale} で緊急実行します。よろしいですか？`}
+                className="rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs font-medium text-rose-800 hover:bg-rose-200"
+              />
+            </form>
+          ) : null}
           {latestAutoEvent ? (
             <p className="mt-2 text-[11px] text-slate-500">
               last: {new Date(latestAutoEvent.created_at as string).toLocaleString()} / {String(latestAutoEvent.event_type)}
