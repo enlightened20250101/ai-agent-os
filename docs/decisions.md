@@ -1782,3 +1782,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 自律実行ゲートのリスク計算を強化し、`INTERNAL_EMAIL_DOMAINS` を用いた internal/customer 判定、金額推定（本文/件名の数値抽出）、可逆性ヒント（draft/reminder vs final/確定）、機微キーワード判定を `evaluateGovernance` に追加した。`monetary_impact=high` または `hard_to_reverse` は auto execute 許可条件から除外する。
 - Why: 理想像に対して不足していた「リスク次元に基づく段階的自律化」を最小実装で前進させるため。高影響・不可逆な実行をデフォルトで人手承認に寄せ、誤実行の安全マージンを上げるため。
+
+- Decision: 例外キューに「回収質問テンプレを記録」アクションを追加し、`CASE_RECOVERY_QUESTION_PREPARED` を `exception_case_events` に保存する運用にした。記録時はケースが `open` なら `in_progress` に更新し、期限未設定なら24時間後を自動設定する。
+- Why: 例外処理で止まりやすい「次に誰へ何を聞くか」を1クリックで台帳化し、担当引き継ぎ時に質問文と次アクションを失わないようにするため。

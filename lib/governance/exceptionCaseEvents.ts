@@ -6,7 +6,8 @@ export type ExceptionCaseEventType =
   | "CASE_BULK_UPDATED"
   | "CASE_NOTIFICATION_SENT"
   | "CASE_AUTO_ASSIGNED"
-  | "CASE_ESCALATED";
+  | "CASE_ESCALATED"
+  | "CASE_RECOVERY_QUESTION_PREPARED";
 
 function isMissingTableError(message: string, tableName: string) {
   return (

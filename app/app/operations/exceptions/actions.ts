@@ -252,6 +252,82 @@ export async function notifyExceptionCasesNow() {
   redirect(withMessage("error", `例外通知を送信できませんでした。reason=${result.reason}`));
 }
 
+export async function prepareExceptionRecoveryQuestion(formData: FormData) {
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const kind = String(formData.get("kind") ?? "").trim() as ExceptionKind;
+  const refId = String(formData.get("ref_id") ?? "").trim();
+  const question = String(formData.get("question") ?? "").trim();
+  const nextAction = String(formData.get("next_action") ?? "").trim();
+  const taskLabel = String(formData.get("task_label") ?? "").trim();
+
+  if (!kind || !refId || !question) {
+    redirect(withMessage("error", "回収質問の記録に必要な情報が不足しています。"));
+  }
+
+  const { data: caseRow, error: caseError } = await supabase
+    .from("exception_cases")
+    .select("id, status, due_at")
+    .eq("org_id", orgId)
+    .eq("kind", kind)
+    .eq("ref_id", refId)
+    .maybeSingle();
+
+  if (caseError) {
+    redirect(withMessage("error", `例外ケース取得に失敗しました: ${caseError.message}`));
+  }
+  if (!caseRow?.id) {
+    redirect(withMessage("error", "対象の例外ケースが見つかりません。先にケースを作成してください。"));
+  }
+
+  const nowIso = new Date().toISOString();
+  const dueAtCurrent = (caseRow.due_at as string | null | undefined) ?? null;
+  const dueAtNext =
+    dueAtCurrent && Number.isFinite(new Date(dueAtCurrent).getTime())
+      ? dueAtCurrent
+      : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const patch: Record<string, string> = {
+    updated_at: nowIso
+  };
+  if ((caseRow.status as string) === "open") {
+    patch.status = "in_progress";
+  }
+  if (!dueAtCurrent) {
+    patch.due_at = dueAtNext;
+  }
+
+  const { error: updateError } = await supabase
+    .from("exception_cases")
+    .update(patch)
+    .eq("org_id", orgId)
+    .eq("id", caseRow.id as string);
+  if (updateError) {
+    redirect(withMessage("error", `例外ケース更新に失敗しました: ${updateError.message}`));
+  }
+
+  await appendExceptionCaseEvent({
+    supabase,
+    orgId,
+    exceptionCaseId: caseRow.id as string,
+    actorUserId: userId,
+    eventType: "CASE_RECOVERY_QUESTION_PREPARED",
+    payload: {
+      kind,
+      ref_id: refId,
+      task_label: taskLabel || null,
+      question,
+      next_action: nextAction || null,
+      status_after_prepare: (caseRow.status as string) === "open" ? "in_progress" : (caseRow.status as string),
+      due_at: dueAtNext
+    }
+  });
+
+  revalidatePath("/app/operations/exceptions");
+  redirect(withMessage("ok", "回収質問テンプレを記録しました。担当者への確認を進めてください。"));
+}
+
 export async function bulkUpdateExceptionCases(formData: FormData) {
   const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();

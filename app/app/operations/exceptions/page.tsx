@@ -4,6 +4,7 @@ import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   bulkUpdateExceptionCases,
   notifyExceptionCasesNow,
+  prepareExceptionRecoveryQuestion,
   retryTopFailedWorkflowRuns,
   retryWorkflowRunFromExceptions,
   upsertExceptionCase
@@ -704,62 +705,96 @@ function renderGuidance(args: {
     };
   }
 
-  function renderCaseControls(args: { kind: ExceptionKind; refId: string; taskId: string | null; existing: ExceptionCase | null }) {
+  function renderCaseControls(args: {
+    kind: ExceptionKind;
+    refId: string;
+    taskId: string | null;
+    taskLabel: string;
+    existing: ExceptionCase | null;
+  }) {
     const existing = args.existing;
+    const guide = guidanceForKind({
+      kind: args.kind,
+      owner: existing?.owner_user_id ?? null,
+      dueAt: existing?.due_at ?? null,
+      taskLabel: args.taskLabel
+    });
     return (
-      <form action={upsertExceptionCase} className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-        <input type="hidden" name="kind" value={args.kind} />
-        <input type="hidden" name="ref_id" value={args.refId} />
-        <input type="hidden" name="task_id" value={args.taskId ?? ""} />
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <label className="flex items-center gap-1">
-            <span className="text-slate-600">状態</span>
-            <select
-              name="status"
-              defaultValue={existing?.status ?? "open"}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
-            >
-              <option value="open">未着手</option>
-              <option value="in_progress">対応中</option>
-              <option value="resolved">解決</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            <span className="text-slate-600">担当者</span>
-            <select
-              name="owner_user_id"
-              defaultValue={existing?.owner_user_id ?? ""}
-              className="max-w-[220px] rounded border border-slate-300 bg-white px-2 py-1 text-xs"
-            >
-              <option value="">未割当</option>
-              {ownerUsers.map((userId) => (
-                <option key={userId} value={userId}>
-                  {memberLabel(userId)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <input
-            type="text"
-            name="note"
-            defaultValue={existing?.note ?? ""}
-            placeholder="メモ"
-            className="min-w-[180px] flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
-          />
-          <label className="flex items-center gap-1">
-            <span className="text-slate-600">期限</span>
+      <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+        <form action={upsertExceptionCase}>
+          <input type="hidden" name="kind" value={args.kind} />
+          <input type="hidden" name="ref_id" value={args.refId} />
+          <input type="hidden" name="task_id" value={args.taskId ?? ""} />
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <label className="flex items-center gap-1">
+              <span className="text-slate-600">状態</span>
+              <select
+                name="status"
+                defaultValue={existing?.status ?? "open"}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              >
+                <option value="open">未着手</option>
+                <option value="in_progress">対応中</option>
+                <option value="resolved">解決</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1">
+              <span className="text-slate-600">担当者</span>
+              <select
+                name="owner_user_id"
+                defaultValue={existing?.owner_user_id ?? ""}
+                className="max-w-[220px] rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              >
+                <option value="">未割当</option>
+                {ownerUsers.map((userId) => (
+                  <option key={userId} value={userId}>
+                    {memberLabel(userId)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <input
-              type="datetime-local"
-              name="due_at"
-              defaultValue={toDateTimeLocalValue(existing?.due_at ?? null)}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              type="text"
+              name="note"
+              defaultValue={existing?.note ?? ""}
+              placeholder="メモ"
+              className="min-w-[180px] flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
             />
-          </label>
-          <button type="submit" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium">
-            保存
-          </button>
-        </div>
-      </form>
+            <label className="flex items-center gap-1">
+              <span className="text-slate-600">期限</span>
+              <input
+                type="datetime-local"
+                name="due_at"
+                defaultValue={toDateTimeLocalValue(existing?.due_at ?? null)}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              />
+            </label>
+            <button type="submit" className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium">
+              保存
+            </button>
+          </div>
+        </form>
+        {existing?.id ? (
+          <div className="mt-2 border-t border-slate-200 pt-2">
+            <form action={prepareExceptionRecoveryQuestion} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="kind" value={args.kind} />
+              <input type="hidden" name="ref_id" value={args.refId} />
+              <input type="hidden" name="task_label" value={args.taskLabel} />
+              <input type="hidden" name="question" value={guide.question} />
+              <input type="hidden" name="next_action" value={guide.nextAction} />
+              <ConfirmSubmitButton
+                label="回収質問テンプレを記録"
+                pendingLabel="記録中..."
+                confirmMessage="この回収質問テンプレをケース履歴へ記録し、対応中へ更新します。実行しますか？"
+                className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+              />
+              <span className="text-[11px] text-slate-500">未設定の期限は自動で24時間後に設定</span>
+            </form>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-slate-500">先に「保存」でケースを作成すると回収質問テンプレを記録できます。</p>
+        )}
+      </div>
     );
   }
 
@@ -1212,6 +1247,7 @@ function renderGuidance(args: {
                     kind: "failed_action",
                     refId: row.id,
                     taskId: row.task_id,
+                    taskLabel: task?.title ?? "関連タスク",
                     existing: exceptionCase
                   })}
                 </li>
@@ -1295,6 +1331,7 @@ function renderGuidance(args: {
                     kind: "failed_workflow",
                     refId: row.id,
                     taskId: row.task_id,
+                    taskLabel: task?.title ?? "関連タスク",
                     existing: exceptionCase
                   })}
                 </li>
@@ -1360,6 +1397,7 @@ function renderGuidance(args: {
                     kind: "stale_approval",
                     refId: row.id,
                     taskId: row.task_id,
+                    taskLabel: task?.title ?? "関連タスク",
                     existing: exceptionCase
                   })}
                 </li>
@@ -1421,6 +1459,7 @@ function renderGuidance(args: {
                     kind: "policy_block",
                     refId: task.id,
                     taskId: task.id,
+                    taskLabel: task.title,
                     existing: exceptionCase
                   })}
                 </li>
@@ -1440,6 +1479,8 @@ function renderGuidance(args: {
               const relatedCase = exceptionCases.find((row) => row.id === event.exception_case_id) ?? null;
               const isEscalated = event.event_type === "CASE_ESCALATED";
               const isAutoAssigned = event.event_type === "CASE_AUTO_ASSIGNED";
+              const isRecoveryQuestionPrepared = event.event_type === "CASE_RECOVERY_QUESTION_PREPARED";
+              const payload = asObject(event.payload_json);
               return (
                 <li key={event.id} className="rounded-md border border-slate-200 p-3 text-sm">
                   <p className="mt-1 text-slate-900">
@@ -1454,6 +1495,11 @@ function renderGuidance(args: {
                         自動アサイン
                       </span>
                     ) : null}
+                    {isRecoveryQuestionPrepared ? (
+                      <span className="ml-2 rounded-full border border-indigo-300 bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">
+                        回収質問準備
+                      </span>
+                    ) : null}
                   </p>
                   <p className="text-xs text-slate-600">
                     時刻: {new Date(event.created_at).toLocaleString("ja-JP")} / 実行者: {memberLabel(event.actor_user_id, "システム")}
@@ -1461,6 +1507,11 @@ function renderGuidance(args: {
                   <p className="text-xs text-slate-700">
                     種別: {relatedCase ? relatedCase.kind : "不明"}
                   </p>
+                  {isRecoveryQuestionPrepared ? (
+                    <p className="mt-1 text-xs text-indigo-700">
+                      回収質問: {typeof payload?.question === "string" ? payload.question : "（未設定）"}
+                    </p>
+                  ) : null}
                   <details className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
                     <summary className="cursor-pointer text-xs text-slate-700">ペイロードJSON</summary>
                     <pre className="mt-2 overflow-x-auto text-xs text-slate-700">
