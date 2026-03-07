@@ -1785,3 +1785,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 例外キューに「回収質問テンプレを記録」アクションを追加し、`CASE_RECOVERY_QUESTION_PREPARED` を `exception_case_events` に保存する運用にした。記録時はケースが `open` なら `in_progress` に更新し、期限未設定なら24時間後を自動設定する。
 - Why: 例外処理で止まりやすい「次に誰へ何を聞くか」を1クリックで台帳化し、担当引き継ぎ時に質問文と次アクションを失わないようにするため。
+
+- Decision: 例外キューの回収質問テンプレから `sendExceptionRecoveryQuestionNow` で Slack へ直接送信できる導線を追加し、送信結果は `CASE_NOTIFICATION_SENT`（`source=manual_recovery_question`）として記録するようにした。
+- Why: 「記録だけして送信し忘れる」運用漏れを減らすため。質問テンプレ作成と対外通知を同一画面で完結させ、例外回収のリードタイムを短縮するため。

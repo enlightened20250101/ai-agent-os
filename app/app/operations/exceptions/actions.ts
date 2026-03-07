@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { appendExceptionCaseEvent } from "@/lib/governance/exceptionCaseEvents";
 import { requireOrgContext } from "@/lib/org/context";
 import { notifyExceptionCases } from "@/lib/governance/exceptionAlerts";
+import { resolveSlackRuntimeConfig } from "@/lib/connectors/runtime";
+import { postSlackMessage } from "@/lib/slack/client";
 import { createClient } from "@/lib/supabase/server";
 import { retryFailedWorkflowRun } from "@/lib/workflows/orchestrator";
 
@@ -326,6 +328,101 @@ export async function prepareExceptionRecoveryQuestion(formData: FormData) {
 
   revalidatePath("/app/operations/exceptions");
   redirect(withMessage("ok", "回収質問テンプレを記録しました。担当者への確認を進めてください。"));
+}
+
+export async function sendExceptionRecoveryQuestionNow(formData: FormData) {
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const kind = String(formData.get("kind") ?? "").trim() as ExceptionKind;
+  const refId = String(formData.get("ref_id") ?? "").trim();
+  const question = String(formData.get("question") ?? "").trim();
+  const nextAction = String(formData.get("next_action") ?? "").trim();
+  const taskLabel = String(formData.get("task_label") ?? "").trim();
+  const taskId = String(formData.get("task_id") ?? "").trim() || null;
+
+  if (!kind || !refId || !question) {
+    redirect(withMessage("error", "送信に必要な回収質問情報が不足しています。"));
+  }
+
+  const { data: caseRow, error: caseError } = await supabase
+    .from("exception_cases")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("kind", kind)
+    .eq("ref_id", refId)
+    .maybeSingle();
+  if (caseError) {
+    redirect(withMessage("error", `例外ケース取得に失敗しました: ${caseError.message}`));
+  }
+  if (!caseRow?.id) {
+    redirect(withMessage("error", "対象の例外ケースが見つかりません。先にケースを保存してください。"));
+  }
+
+  const slackCfg = await resolveSlackRuntimeConfig({ supabase, orgId });
+  const channel = slackCfg.alertChannelId || slackCfg.approvalChannelId;
+  if (!slackCfg.botToken || !channel) {
+    redirect(withMessage("error", "Slack通知先が未設定です。Integrationsで設定してください。"));
+  }
+
+  const appBase = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  const taskUrl = taskId ? `${appBase}/app/tasks/${taskId}` : `${appBase}/app/operations/exceptions`;
+
+  let posted: { ts: string; channel: string; permalink?: string };
+  try {
+    posted = await postSlackMessage({
+      botToken: slackCfg.botToken,
+      channel,
+      text: `例外回収質問: ${taskLabel || refId}`,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text:
+              `*例外回収質問*\nkind: ${kind}\nref: ${refId}\n` +
+              `task: ${taskLabel || "-"}\n` +
+              `question: ${question}\n` +
+              `${nextAction ? `next_action: ${nextAction}\n` : ""}` +
+              `link: ${taskUrl}`
+          }
+        }
+      ]
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Slack送信に失敗しました。";
+    redirect(withMessage("error", message));
+  }
+
+  const nowIso = new Date().toISOString();
+  await supabase
+    .from("exception_cases")
+    .update({ last_alerted_at: nowIso, updated_at: nowIso })
+    .eq("org_id", orgId)
+    .eq("id", caseRow.id as string);
+
+  await appendExceptionCaseEvent({
+    supabase,
+    orgId,
+    exceptionCaseId: caseRow.id as string,
+    actorUserId: userId,
+    eventType: "CASE_NOTIFICATION_SENT",
+    payload: {
+      source: "manual_recovery_question",
+      kind,
+      ref_id: refId,
+      task_id: taskId,
+      task_label: taskLabel || null,
+      question,
+      next_action: nextAction || null,
+      channel_id: posted.channel,
+      slack_ts: posted.ts,
+      permalink: posted.permalink ?? null
+    }
+  });
+
+  revalidatePath("/app/operations/exceptions");
+  redirect(withMessage("ok", "回収質問をSlackへ送信しました。"));
 }
 
 export async function bulkUpdateExceptionCases(formData: FormData) {

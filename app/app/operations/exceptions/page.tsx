@@ -5,6 +5,7 @@ import {
   bulkUpdateExceptionCases,
   notifyExceptionCasesNow,
   prepareExceptionRecoveryQuestion,
+  sendExceptionRecoveryQuestionNow,
   retryTopFailedWorkflowRuns,
   retryWorkflowRunFromExceptions,
   upsertExceptionCase
@@ -776,20 +777,36 @@ function renderGuidance(args: {
         </form>
         {existing?.id ? (
           <div className="mt-2 border-t border-slate-200 pt-2">
-            <form action={prepareExceptionRecoveryQuestion} className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="kind" value={args.kind} />
-              <input type="hidden" name="ref_id" value={args.refId} />
-              <input type="hidden" name="task_label" value={args.taskLabel} />
-              <input type="hidden" name="question" value={guide.question} />
-              <input type="hidden" name="next_action" value={guide.nextAction} />
-              <ConfirmSubmitButton
-                label="回収質問テンプレを記録"
-                pendingLabel="記録中..."
-                confirmMessage="この回収質問テンプレをケース履歴へ記録し、対応中へ更新します。実行しますか？"
-                className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <form action={prepareExceptionRecoveryQuestion}>
+                <input type="hidden" name="kind" value={args.kind} />
+                <input type="hidden" name="ref_id" value={args.refId} />
+                <input type="hidden" name="task_label" value={args.taskLabel} />
+                <input type="hidden" name="question" value={guide.question} />
+                <input type="hidden" name="next_action" value={guide.nextAction} />
+                <ConfirmSubmitButton
+                  label="回収質問テンプレを記録"
+                  pendingLabel="記録中..."
+                  confirmMessage="この回収質問テンプレをケース履歴へ記録し、対応中へ更新します。実行しますか？"
+                  className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                />
+              </form>
+              <form action={sendExceptionRecoveryQuestionNow}>
+                <input type="hidden" name="kind" value={args.kind} />
+                <input type="hidden" name="ref_id" value={args.refId} />
+                <input type="hidden" name="task_id" value={args.taskId ?? ""} />
+                <input type="hidden" name="task_label" value={args.taskLabel} />
+                <input type="hidden" name="question" value={guide.question} />
+                <input type="hidden" name="next_action" value={guide.nextAction} />
+                <ConfirmSubmitButton
+                  label="回収質問をSlack送信"
+                  pendingLabel="送信中..."
+                  confirmMessage="回収質問テンプレをSlackへ送信します。実行しますか？"
+                  className="rounded border border-sky-300 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100"
+                />
+              </form>
               <span className="text-[11px] text-slate-500">未設定の期限は自動で24時間後に設定</span>
-            </form>
+            </div>
           </div>
         ) : (
           <p className="mt-2 text-[11px] text-slate-500">先に「保存」でケースを作成すると回収質問テンプレを記録できます。</p>
