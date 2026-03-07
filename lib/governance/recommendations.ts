@@ -74,6 +74,7 @@ export async function buildGovernanceRecommendations(args: {
     incidentsRes,
     approvals24Res,
     approvals72Res,
+    staleApprovalRowsRes,
     actionsRes,
     approvalBlockedRes,
     sodBlockedRes,
@@ -82,6 +83,7 @@ export async function buildGovernanceRecommendations(args: {
     lowTrustRes,
     budgetUsageRes,
     failedChatCommandsRes,
+    failedChatCommandRowsRes,
     pendingChatConfirmationsRes,
     overdueChatConfirmationsRes
   ] =
@@ -103,6 +105,14 @@ export async function buildGovernanceRecommendations(args: {
         .eq("org_id", orgId)
         .eq("status", "pending")
         .lt("created_at", before72h),
+      supabase
+        .from("approvals")
+        .select("created_at")
+        .eq("org_id", orgId)
+        .eq("status", "pending")
+        .lt("created_at", before24h)
+        .order("created_at", { ascending: true })
+        .limit(2000),
       supabase
         .from("actions")
         .select("status")
@@ -159,6 +169,13 @@ export async function buildGovernanceRecommendations(args: {
         .eq("execution_status", "failed")
         .gte("created_at", sinceWindowIso),
       supabase
+        .from("chat_commands")
+        .select("intent_id")
+        .eq("org_id", orgId)
+        .eq("execution_status", "failed")
+        .gte("created_at", sinceWindowIso)
+        .limit(2000),
+      supabase
         .from("chat_confirmations")
         .select("id", { head: true, count: "exact" })
         .eq("org_id", orgId)
@@ -182,6 +199,9 @@ export async function buildGovernanceRecommendations(args: {
   }
   if (approvals72Res.error) {
     throw new Error(`approval stale query failed: ${approvals72Res.error.message}`);
+  }
+  if (staleApprovalRowsRes.error) {
+    throw new Error(`approval stale detail query failed: ${staleApprovalRowsRes.error.message}`);
   }
   if (actionsRes.error) {
     throw new Error(`action metrics query failed: ${actionsRes.error.message}`);
@@ -211,6 +231,9 @@ export async function buildGovernanceRecommendations(args: {
   if (failedChatCommandsRes.error && !missingTable(failedChatCommandsRes.error.message, "chat_commands")) {
     throw new Error(`chat command metrics query failed: ${failedChatCommandsRes.error.message}`);
   }
+  if (failedChatCommandRowsRes.error && !missingTable(failedChatCommandRowsRes.error.message, "chat_commands")) {
+    throw new Error(`chat command detail query failed: ${failedChatCommandRowsRes.error.message}`);
+  }
   if (
     pendingChatConfirmationsRes.error &&
     !missingTable(pendingChatConfirmationsRes.error.message, "chat_confirmations")
@@ -232,6 +255,48 @@ export async function buildGovernanceRecommendations(args: {
     totalActions7d > 0 ? Math.round((successActions7d / totalActions7d) * 100) : null;
   const budgetUsed = (budgetUsageRes.data?.used_count as number | undefined) ?? 0;
   const budgetRemaining = Math.max(0, settings.dailySendEmailLimit - budgetUsed);
+  const staleApprovalRows = (staleApprovalRowsRes.data ?? []) as Array<{ created_at: string }>;
+  const oldestStaleApprovalHours = staleApprovalRows.length
+    ? Math.max(
+        0,
+        Math.floor(
+          (now - new Date(staleApprovalRows[0].created_at).getTime()) / (60 * 60 * 1000)
+        )
+      )
+    : 0;
+  const failedChatCommandRows = (failedChatCommandRowsRes.data ?? []) as Array<{ intent_id: string | null }>;
+  const failedIntentIds = Array.from(
+    new Set(
+      failedChatCommandRows
+        .map((row) => row.intent_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  let intentTypeById = new Map<string, string>();
+  if (failedIntentIds.length > 0) {
+    const intentsRes = await supabase
+      .from("chat_intents")
+      .select("id, intent_type")
+      .eq("org_id", orgId)
+      .in("id", failedIntentIds)
+      .limit(2000);
+    if (intentsRes.error && !missingTable(intentsRes.error.message, "chat_intents")) {
+      throw new Error(`chat intent detail query failed: ${intentsRes.error.message}`);
+    }
+    intentTypeById = new Map(
+      ((intentsRes.data ?? []) as Array<{ id: string; intent_type: string | null }>).map((row) => [
+        row.id,
+        row.intent_type ?? "unknown"
+      ])
+    );
+  }
+  const failedIntentCounts = new Map<string, number>();
+  for (const row of failedChatCommandRows) {
+    const intentId = row.intent_id;
+    const intentType = intentId ? intentTypeById.get(intentId) ?? "unknown" : "unknown";
+    failedIntentCounts.set(intentType, (failedIntentCounts.get(intentType) ?? 0) + 1);
+  }
+  const topFailedIntent = Array.from(failedIntentCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? null;
   const approvalBlockedRows = (approvalBlockedRowsRes.data ?? []) as Array<{
     actor_id: string | null;
     payload_json: unknown;
@@ -316,7 +381,7 @@ export async function buildGovernanceRecommendations(args: {
       priority: "high",
       title: "72時間超の承認滞留を解消",
       description:
-        "長時間の承認滞留は業務停止に直結します。承認担当の再割当てか通知ルート強化を実施してください。",
+        `長時間の承認滞留は業務停止に直結します。最古滞留は約${oldestStaleApprovalHours}時間です。承認担当の再割当てか通知ルート強化を実施してください。`,
       metricLabel: "pending >72h",
       metricValue: String(summary.staleApprovals72h),
       actionLabel: "承認キューを確認",
@@ -328,7 +393,7 @@ export async function buildGovernanceRecommendations(args: {
       id: "approvals-stale-24h",
       priority: "medium",
       title: "承認滞留（24時間超）を圧縮",
-      description: "承認待ちの先行処理でリードタイムを短縮できます。優先度の高い案件から処理してください。",
+      description: `承認待ちの先行処理でリードタイムを短縮できます。最古滞留は約${oldestStaleApprovalHours}時間です。優先度の高い案件から処理してください。`,
       metricLabel: "pending >24h",
       metricValue: String(summary.staleApprovals24h),
       actionLabel: "承認キューを確認",
@@ -431,7 +496,7 @@ export async function buildGovernanceRecommendations(args: {
       priority: "medium",
       title: "チャット実行失敗を改善",
       description:
-        "チャット起点の実行失敗が増加しています。対象解決の曖昧性や権限/上限制約の失敗要因を確認してください。",
+        `チャット起点の実行失敗が増加しています。最多失敗意図は ${topFailedIntent ? `${topFailedIntent[0]}(${topFailedIntent[1]}件)` : "unknown"} です。対象解決の曖昧性や権限/上限制約の失敗要因を確認してください。`,
       metricLabel: "failed chat commands (7d)",
       metricValue: String(summary.failedChatCommands7d),
       actionLabel: "チャット監査ログへ",

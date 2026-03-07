@@ -1761,3 +1761,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `buildGovernanceRecommendations` でも `APPROVAL_BLOCKED` 詳細を集計し、SoD提案文に「最多発生経路（source）」「最多起点メンバー（display_name）」を埋め込むようにした。
 - Why: 提案カードを開いた時点で誰に何を改善すべきかが分かる形にし、分析画面へ遷移しなくても一次アクションを開始できるようにするため。
+
+- Decision: 改善提案の説明文に、承認滞留は「最古滞留時間（hours）」、チャット失敗は「最多失敗意図（intent_type）」を埋め込むようにした。
+- Why: 件数だけの提案は優先順位判断が難しいため。影響の深さ（滞留時間）と主因（失敗意図）を同時提示して、即時の対処判断を可能にするため。
