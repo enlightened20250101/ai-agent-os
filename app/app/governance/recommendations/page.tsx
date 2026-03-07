@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/app/ConfirmSubmitButton";
 import { StatusNotice } from "@/app/app/StatusNotice";
-import { applyRecommendationAction, runRecommendationsReviewNow } from "@/app/app/governance/recommendations/actions";
+import {
+  acknowledgeRecommendation,
+  applyRecommendationAction,
+  runRecommendationsReviewNow
+} from "@/app/app/governance/recommendations/actions";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
 import { requireOrgContext } from "@/lib/org/context";
 import { createClient } from "@/lib/supabase/server";
@@ -104,6 +108,7 @@ function formatWindowLabel(windowValue: "24h" | "7d" | "30d") {
 function actionKindLabel(kind: string) {
   if (kind === "disable_auto_execute") return "自動実行を一時停止";
   if (kind === "send_approval_reminder") return "承認催促を送信";
+  if (kind === "acknowledge_recommendation") return "対処済みとして記録";
   return kind || "不明";
 }
 
@@ -408,6 +413,17 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               >
                 {item.actionLabel}
               </Link>
+              <form action={acknowledgeRecommendation} className="mt-2">
+                <input type="hidden" name="window" value={windowFilter} />
+                <input type="hidden" name="recommendation_id" value={item.id} />
+                <input type="hidden" name="note" value={`manual_ack:${item.id}`} />
+                <ConfirmSubmitButton
+                  label="対処済みとして記録"
+                  pendingLabel="記録中..."
+                  confirmMessage="この改善提案を対処済みとして履歴に記録します。よろしいですか？"
+                  className="inline-flex rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100"
+                />
+              </form>
               {item.automation ? (
                 <form action={applyRecommendationAction} className="mt-2">
                   <input type="hidden" name="window" value={windowFilter} />

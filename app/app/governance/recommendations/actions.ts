@@ -32,6 +32,10 @@ function withRetryMessage(message: string, actionKind: string, recommendationId:
   return `/app/governance/recommendations?${params.toString()}`;
 }
 
+function recommendationNotFoundError(windowValue: string) {
+  return withMessage("error", "指定した改善提案が見つかりません。再評価してから再実行してください。", windowValue);
+}
+
 function windowHoursFromValue(windowValue: string) {
   if (windowValue === "24h") return 24;
   if (windowValue === "30d") return 24 * 30;
@@ -277,6 +281,51 @@ export async function applyRecommendationAction(formData: FormData) {
   }
 
   redirect(withMessage("error", `未対応の action_kind です: ${actionKind}`, windowValue));
+}
+
+export async function acknowledgeRecommendation(formData: FormData) {
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
+  const recommendationId = String(formData.get("recommendation_id") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!recommendationId) {
+    redirect(withMessage("error", "recommendation_id が不足しています。", windowValue));
+  }
+
+  const { summary: baseline, recommendations } = await buildGovernanceRecommendations({
+    supabase,
+    orgId,
+    windowHours: windowHoursFromValue(windowValue)
+  });
+  const matched = recommendations.find((item) => item.id === recommendationId);
+  if (!matched) {
+    redirect(recommendationNotFoundError(windowValue));
+  }
+
+  const systemTaskId = await getOrCreateAgentOpsTaskId({ supabase, orgId, userId });
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: systemTaskId,
+    actorType: "user",
+    actorId: userId,
+    eventType: "GOVERNANCE_RECOMMENDATION_APPLIED",
+    payload: {
+      recommendation_id: recommendationId,
+      recommendation_title: matched.title,
+      action_kind: "acknowledge_recommendation",
+      result: "success",
+      baseline_summary: baseline,
+      followup_href: matched.href,
+      note: note || null
+    }
+  });
+
+  revalidatePath("/app/governance/recommendations");
+  revalidatePath("/app");
+  redirect(withMessage("ok", "改善提案を対処済みとして記録しました。", windowValue));
 }
 
 export async function runRecommendationsReviewNow(formData: FormData) {

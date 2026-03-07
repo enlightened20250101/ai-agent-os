@@ -1764,3 +1764,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 改善提案の説明文に、承認滞留は「最古滞留時間（hours）」、チャット失敗は「最多失敗意図（intent_type）」を埋め込むようにした。
 - Why: 件数だけの提案は優先順位判断が難しいため。影響の深さ（滞留時間）と主因（失敗意図）を同時提示して、即時の対処判断を可能にするため。
+
+- Decision: `/app/governance/recommendations` の各提案カードに「対処済みとして記録」アクションを追加し、`GOVERNANCE_RECOMMENDATION_APPLIED`（`action_kind=acknowledge_recommendation`）としてベースライン付きで監査履歴へ保存するようにした。
+- Why: 実行自動化アクションが無い提案でも「確認して対処した」事実を残せるようにし、改善サイクルの追跡性（誰がいつ閉じたか）を高めるため。
