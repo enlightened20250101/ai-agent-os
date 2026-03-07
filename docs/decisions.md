@@ -1758,3 +1758,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/approvals` に SoD違反の再発分析カード（起点メンバー上位5 / 発生経路上位5）を追加し、`APPROVAL_BLOCKED` の `reason_code` と `source` を運用改善指標として常時可視化した。
 - Why: ブロック件数だけでは再発防止策（教育対象・導線改善）が決めにくいため。誰がどの経路で失敗しやすいかを同画面で把握し、改善アクションへ直接つなげるため。
+
+- Decision: `buildGovernanceRecommendations` でも `APPROVAL_BLOCKED` 詳細を集計し、SoD提案文に「最多発生経路（source）」「最多起点メンバー（display_name）」を埋め込むようにした。
+- Why: 提案カードを開いた時点で誰に何を改善すべきかが分かる形にし、分析画面へ遷移しなくても一次アクションを開始できるようにするため。

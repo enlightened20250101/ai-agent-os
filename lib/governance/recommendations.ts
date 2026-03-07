@@ -77,6 +77,7 @@ export async function buildGovernanceRecommendations(args: {
     actionsRes,
     approvalBlockedRes,
     sodBlockedRes,
+    approvalBlockedRowsRes,
     policyBlocksRes,
     lowTrustRes,
     budgetUsageRes,
@@ -122,6 +123,13 @@ export async function buildGovernanceRecommendations(args: {
         .eq("event_type", "APPROVAL_BLOCKED")
         .gte("created_at", sinceWindowIso)
         .filter("payload_json->>reason_code", "eq", "sod_initiator_approver_conflict"),
+      supabase
+        .from("task_events")
+        .select("actor_id, payload_json")
+        .eq("org_id", orgId)
+        .eq("event_type", "APPROVAL_BLOCKED")
+        .gte("created_at", sinceWindowIso)
+        .limit(2000),
       supabase
         .from("task_events")
         .select("id", { head: true, count: "exact" })
@@ -184,6 +192,9 @@ export async function buildGovernanceRecommendations(args: {
   if (sodBlockedRes.error && !missingTable(sodBlockedRes.error.message, "task_events")) {
     throw new Error(`sod blocked metrics query failed: ${sodBlockedRes.error.message}`);
   }
+  if (approvalBlockedRowsRes.error && !missingTable(approvalBlockedRowsRes.error.message, "task_events")) {
+    throw new Error(`approval blocked detail query failed: ${approvalBlockedRowsRes.error.message}`);
+  }
   if (
     policyBlocksRes.error &&
     !missingTable(policyBlocksRes.error.message, "task_events") &&
@@ -221,6 +232,47 @@ export async function buildGovernanceRecommendations(args: {
     totalActions7d > 0 ? Math.round((successActions7d / totalActions7d) * 100) : null;
   const budgetUsed = (budgetUsageRes.data?.used_count as number | undefined) ?? 0;
   const budgetRemaining = Math.max(0, settings.dailySendEmailLimit - budgetUsed);
+  const approvalBlockedRows = (approvalBlockedRowsRes.data ?? []) as Array<{
+    actor_id: string | null;
+    payload_json: unknown;
+  }>;
+  const sodBlockedRows = approvalBlockedRows.filter((row) => {
+    if (typeof row.payload_json !== "object" || row.payload_json === null) return false;
+    const payload = row.payload_json as Record<string, unknown>;
+    return payload.reason_code === "sod_initiator_approver_conflict";
+  });
+  const sodSourceCounts = new Map<string, number>();
+  const sodActorCounts = new Map<string, number>();
+  for (const row of sodBlockedRows) {
+    const payload = row.payload_json as Record<string, unknown>;
+    const source = typeof payload.source === "string" && payload.source.length > 0 ? payload.source : "unknown";
+    sodSourceCounts.set(source, (sodSourceCounts.get(source) ?? 0) + 1);
+    if (row.actor_id) {
+      sodActorCounts.set(row.actor_id, (sodActorCounts.get(row.actor_id) ?? 0) + 1);
+    }
+  }
+  const topSodSource = Array.from(sodSourceCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? null;
+  const topSodActorEntry = Array.from(sodActorCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? null;
+  let topSodActorLabel = topSodActorEntry?.[0] ?? null;
+  if (topSodActorEntry?.[0]) {
+    const actorId = topSodActorEntry[0];
+    const profileRes = await supabase
+      .from("user_profiles")
+      .select("display_name")
+      .eq("org_id", orgId)
+      .eq("user_id", actorId)
+      .maybeSingle();
+    if (
+      profileRes.error &&
+      !missingTable(profileRes.error.message, "user_profiles")
+    ) {
+      throw new Error(`user profile query failed: ${profileRes.error.message}`);
+    }
+    const displayName = (profileRes.data?.display_name as string | null | undefined) ?? null;
+    if (displayName && displayName.trim().length > 0) {
+      topSodActorLabel = displayName.trim();
+    }
+  }
 
   const summary: GovernanceRecommendationSummary = {
     openIncidents: incidentsRes.count ?? 0,
@@ -286,12 +338,14 @@ export async function buildGovernanceRecommendations(args: {
   }
 
   if (summary.sodBlockedEvents7d > 0) {
+    const sourceText = topSodSource ? `${topSodSource[0]}(${topSodSource[1]}件)` : "unknown";
+    const actorText = topSodActorLabel && topSodActorEntry ? `${topSodActorLabel}(${topSodActorEntry[1]}件)` : "特定なし";
     recommendations.push({
       id: "approvals-sod-blocked",
       priority: "high",
       title: "職務分掌違反の承認試行を是正",
       description:
-        "起票者自身による承認試行が検知されています。承認者アサインと操作手順を見直し、再発を防止してください。",
+        `起票者自身による承認試行が検知されています。最多経路=${sourceText} / 最多起点=${actorText}。承認者アサインと操作手順を見直し、再発を防止してください。`,
       metricLabel: "sod blocked approvals (7d)",
       metricValue: String(summary.sodBlockedEvents7d),
       actionLabel: "ブロック承認を確認",
