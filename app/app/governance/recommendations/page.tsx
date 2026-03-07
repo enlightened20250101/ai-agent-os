@@ -216,6 +216,18 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
     }
     return true;
   });
+  const latestAckedAtByRecommendationId = new Map<string, string>();
+  for (const row of recentActions) {
+    const payload = asObject(row.payload_json);
+    if (!payload || payload.action_kind !== "acknowledge_recommendation") continue;
+    const recommendationId = typeof payload.recommendation_id === "string" ? payload.recommendation_id : null;
+    if (!recommendationId || latestAckedAtByRecommendationId.has(recommendationId)) continue;
+    latestAckedAtByRecommendationId.set(recommendationId, row.created_at);
+  }
+  const acknowledgedCurrentCount = recommendations.filter((item) => latestAckedAtByRecommendationId.has(item.id)).length;
+  const unresolvedCurrentCount = Math.max(0, recommendations.length - acknowledgedCurrentCount);
+  const latestAckedAt =
+    Array.from(latestAckedAtByRecommendationId.values()).sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
 
   const priorityCounts = {
     critical: recommendations.filter((item) => item.priority === "critical").length,
@@ -339,6 +351,26 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         </div>
       </div>
 
+      <section className="grid gap-3 md:grid-cols-3">
+        <div className={`rounded-xl border p-4 shadow-sm ${unresolvedCurrentCount > 0 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+          <p className={`text-xs ${unresolvedCurrentCount > 0 ? "text-amber-700" : "text-emerald-700"}`}>未対応の提案</p>
+          <p className={`mt-1 text-2xl font-semibold ${unresolvedCurrentCount > 0 ? "text-amber-900" : "text-emerald-900"}`}>{unresolvedCurrentCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">現在表示の提案ベース</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+          <p className="text-xs text-emerald-700">対応済みの提案</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900">{acknowledgedCurrentCount}</p>
+          <p className="mt-1 text-[11px] text-slate-600">「対処済みとして記録」実施済み</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+          <p className="text-xs text-slate-600">最新の対処記録</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">
+            {latestAckedAt ? new Date(latestAckedAt).toLocaleString("ja-JP") : "なし"}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-600">acknowledge_recommendation</p>
+        </div>
+      </section>
+
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">最新レビュー結果</h2>
         {latestReview ? (
@@ -394,7 +426,9 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">優先アクション</h2>
         <ul className="mt-4 space-y-3">
-          {recommendations.map((item) => (
+          {recommendations.map((item) => {
+            const ackedAt = latestAckedAtByRecommendationId.get(item.id) ?? null;
+            return (
             <li key={item.id} className="rounded-xl border border-slate-200 p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${priorityClasses(item.priority)}`}>
@@ -404,9 +438,19 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   {metricLabelJa(item.metricLabel)}:{" "}
                   <span className="font-semibold text-slate-700">{metricValueJa(item.metricLabel, item.metricValue)}</span>
                 </p>
+                {ackedAt ? (
+                  <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                    対応済み
+                  </span>
+                ) : null}
               </div>
               <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
               <p className="mt-1 text-sm text-slate-600">{item.description}</p>
+              {ackedAt ? (
+                <p className="mt-1 text-xs text-emerald-700">最終記録: {new Date(ackedAt).toLocaleString("ja-JP")}</p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">未対応</p>
+              )}
               <Link
                 href={item.href}
                 className="mt-3 inline-flex rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
@@ -444,7 +488,8 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                 </form>
               ) : null}
             </li>
-          ))}
+          );
+          })}
         </ul>
       </section>
 

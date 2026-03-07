@@ -1767,3 +1767,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `/app/governance/recommendations` の各提案カードに「対処済みとして記録」アクションを追加し、`GOVERNANCE_RECOMMENDATION_APPLIED`（`action_kind=acknowledge_recommendation`）としてベースライン付きで監査履歴へ保存するようにした。
 - Why: 実行自動化アクションが無い提案でも「確認して対処した」事実を残せるようにし、改善サイクルの追跡性（誰がいつ閉じたか）を高めるため。
+
+- Decision: 改善提案ページに「未対応/対応済み/最新対処記録」の集計カードを追加し、提案ID単位で `acknowledge_recommendation` 履歴を突合してカードと各提案行へ対応状態を表示するようにした。
+- Why: 提案数が増えると対応漏れを見落としやすくなるため。ページを開いた時点で残件と最新対応時刻を確認できるようにし、運用の継続性を上げるため。
