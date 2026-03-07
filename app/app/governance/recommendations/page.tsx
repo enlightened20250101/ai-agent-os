@@ -121,6 +121,13 @@ function actionKindLabel(kind: string) {
   return kind || "不明";
 }
 
+function reopenReasonLabel(reasonCode: string | null) {
+  if (reasonCode === "overdue_followup") return "期限超過フォロー";
+  if (reasonCode === "policy_changed") return "方針変更";
+  if (reasonCode === "regression") return "再発";
+  return "理由未設定";
+}
+
 function actorTypeLabel(actorType: string | null) {
   if (actorType === "user") return "ユーザー";
   if (actorType === "agent") return "AIエージェント";
@@ -225,6 +232,14 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
     }
     return true;
   });
+  const reopenReasonCounts = filteredActions.reduce((acc, row) => {
+    const payload = asObject(row.payload_json);
+    const actionKind = typeof payload?.action_kind === "string" ? payload.action_kind : "";
+    if (actionKind !== "reopen_recommendation") return acc;
+    const reasonCode = typeof payload?.reason_code === "string" ? payload.reason_code : "unknown";
+    acc.set(reasonCode, (acc.get(reasonCode) ?? 0) + 1);
+    return acc;
+  }, new Map<string, number>());
   const recommendationStateById = new Map<
     string,
     { actionKind: "acknowledge_recommendation" | "reopen_recommendation"; createdAt: string }
@@ -440,6 +455,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   <input type="hidden" name="window" value={windowFilter} />
                   <input type="hidden" name="recommendation_id" value={row.id} />
                   <input type="hidden" name="note" value={`auto_reopen_due_overdue:${row.id}`} />
+                  <input type="hidden" name="reason_code" value="overdue_followup" />
                   <ConfirmSubmitButton
                     label="未対応に戻す"
                     pendingLabel="更新中..."
@@ -574,6 +590,15 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   <input type="hidden" name="window" value={windowFilter} />
                   <input type="hidden" name="recommendation_id" value={item.id} />
                   <input type="hidden" name="note" value={`manual_reopen:${item.id}`} />
+                  <select
+                    name="reason_code"
+                    defaultValue="regression"
+                    className="mb-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option value="regression">再発</option>
+                    <option value="overdue_followup">期限超過フォロー</option>
+                    <option value="policy_changed">方針変更</option>
+                  </select>
                   <ConfirmSubmitButton
                     label="未対応に戻す"
                     pendingLabel="更新中..."
@@ -610,6 +635,17 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">実行履歴</h2>
         <p className="mt-1 text-sm text-slate-600">改善提案の適用履歴と、適用時点メトリクス（基準値）を表示します。</p>
+        {reopenReasonCounts.size > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Array.from(reopenReasonCounts.entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([reasonCode, count]) => (
+                <span key={reasonCode} className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs text-rose-700">
+                  再オープン: {reopenReasonLabel(reasonCode)} {count}件
+                </span>
+              ))}
+          </div>
+        ) : null}
         <form method="get" className="mt-3 flex flex-wrap items-end gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
           <input type="hidden" name="window" value={windowFilter} />
           <div>
@@ -683,7 +719,7 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               const badge = impactBadge({ improved: improvedCount, worsened: worsenedCount });
 
               return (
-                <li key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <li key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-slate-900">{actionKindLabel(actionKind)}</p>
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>{badge.label}</span>
@@ -696,6 +732,11 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-slate-600">対象: {followupHref ? "関連運用項目" : "改善項目"}</p>
+                  {actionKind === "reopen_recommendation" ? (
+                    <p className="mt-1 text-xs text-rose-700">
+                      再オープン理由: {reopenReasonLabel(typeof payload?.reason_code === "string" ? payload.reason_code : null)}
+                    </p>
+                  ) : null}
                   <p className="mt-1 text-xs text-slate-600">実行者: {actorTypeLabel(row.actor_type)}</p>
                   <p className="mt-1 text-xs text-slate-600">{new Date(row.created_at).toLocaleString("ja-JP")}</p>
                   {followupHref ? (

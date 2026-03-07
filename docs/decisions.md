@@ -1776,3 +1776,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 改善提案の状態判定を「最新イベントベース（ack/reopen）」に変更し、期限超過フォローを警告表示するようにした。期限超過または手動判断で `reopen_recommendation` を記録して未対応へ戻せる導線を追加した。
 - Why: 一度 ack した提案を固定で完了扱いにすると、期限超過や再発時の再対応が漏れやすいため。運用上の再オープンを明示イベントとして残し、状態遷移を追跡可能にするため。
+
+- Decision: `reopen_recommendation` に `reason_code`（`regression` / `overdue_followup` / `policy_changed`）を必須で記録し、改善提案履歴に理由別集計と各履歴行の理由表示を追加した。
+- Why: 再オープンの発生は改善施策の品質指標になるため。理由を構造化して記録することで、再発起因の優先改善領域を定量的に把握できるようにするため。

@@ -344,6 +344,11 @@ export async function reopenRecommendation(formData: FormData) {
   const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
   const recommendationId = String(formData.get("recommendation_id") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim();
+  const reasonCodeRaw = String(formData.get("reason_code") ?? "").trim();
+  const reasonCode =
+    reasonCodeRaw === "regression" || reasonCodeRaw === "overdue_followup" || reasonCodeRaw === "policy_changed"
+      ? reasonCodeRaw
+      : "regression";
 
   if (!recommendationId) {
     redirect(withMessage("error", "recommendation_id が不足しています。", windowValue));
@@ -372,6 +377,7 @@ export async function reopenRecommendation(formData: FormData) {
       recommendation_title: matched.title,
       action_kind: "reopen_recommendation",
       result: "success",
+      reason_code: reasonCode,
       baseline_summary: baseline,
       followup_href: matched.href,
       note: note || null
