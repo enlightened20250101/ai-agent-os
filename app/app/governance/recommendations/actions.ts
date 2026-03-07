@@ -338,6 +338,51 @@ export async function acknowledgeRecommendation(formData: FormData) {
   redirect(withMessage("ok", "改善提案を対処済みとして記録しました。", windowValue));
 }
 
+export async function reopenRecommendation(formData: FormData) {
+  const { orgId, userId } = await requireOrgContext();
+  const supabase = await createClient();
+  const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
+  const recommendationId = String(formData.get("recommendation_id") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!recommendationId) {
+    redirect(withMessage("error", "recommendation_id が不足しています。", windowValue));
+  }
+
+  const { summary: baseline, recommendations } = await buildGovernanceRecommendations({
+    supabase,
+    orgId,
+    windowHours: windowHoursFromValue(windowValue)
+  });
+  const matched = recommendations.find((item) => item.id === recommendationId);
+  if (!matched) {
+    redirect(recommendationNotFoundError(windowValue));
+  }
+
+  const systemTaskId = await getOrCreateAgentOpsTaskId({ supabase, orgId, userId });
+  await appendTaskEvent({
+    supabase,
+    orgId,
+    taskId: systemTaskId,
+    actorType: "user",
+    actorId: userId,
+    eventType: "GOVERNANCE_RECOMMENDATION_APPLIED",
+    payload: {
+      recommendation_id: recommendationId,
+      recommendation_title: matched.title,
+      action_kind: "reopen_recommendation",
+      result: "success",
+      baseline_summary: baseline,
+      followup_href: matched.href,
+      note: note || null
+    }
+  });
+
+  revalidatePath("/app/governance/recommendations");
+  revalidatePath("/app");
+  redirect(withMessage("ok", "改善提案を未対応に戻しました。", windowValue));
+}
+
 export async function runRecommendationsReviewNow(formData: FormData) {
   const { orgId } = await requireOrgContext();
   const supabase = await createClient();

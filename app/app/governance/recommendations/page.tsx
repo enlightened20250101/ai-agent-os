@@ -4,6 +4,7 @@ import { StatusNotice } from "@/app/app/StatusNotice";
 import {
   acknowledgeRecommendation,
   applyRecommendationAction,
+  reopenRecommendation,
   runRecommendationsReviewNow
 } from "@/app/app/governance/recommendations/actions";
 import { buildGovernanceRecommendations } from "@/lib/governance/recommendations";
@@ -116,6 +117,7 @@ function actionKindLabel(kind: string) {
   if (kind === "disable_auto_execute") return "自動実行を一時停止";
   if (kind === "send_approval_reminder") return "承認催促を送信";
   if (kind === "acknowledge_recommendation") return "対処済みとして記録";
+  if (kind === "reopen_recommendation") return "未対応に戻す";
   return kind || "不明";
 }
 
@@ -223,29 +225,57 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
     }
     return true;
   });
-  const latestAckedAtByRecommendationId = new Map<string, string>();
+  const recommendationStateById = new Map<
+    string,
+    { actionKind: "acknowledge_recommendation" | "reopen_recommendation"; createdAt: string }
+  >();
   const ackMetaByRecommendationId = new Map<
     string,
     { ownerUserId: string | null; dueAt: string | null; dueDays: number | null; note: string | null }
   >();
   for (const row of recentActions) {
     const payload = asObject(row.payload_json);
-    if (!payload || payload.action_kind !== "acknowledge_recommendation") continue;
+    if (!payload) continue;
+    const actionKind =
+      payload.action_kind === "acknowledge_recommendation" || payload.action_kind === "reopen_recommendation"
+        ? payload.action_kind
+        : null;
+    if (!actionKind) continue;
     const recommendationId = typeof payload.recommendation_id === "string" ? payload.recommendation_id : null;
-    if (!recommendationId || latestAckedAtByRecommendationId.has(recommendationId)) continue;
-    latestAckedAtByRecommendationId.set(recommendationId, row.created_at);
-    const ackMeta = asObject(payload.ack_meta);
-    ackMetaByRecommendationId.set(recommendationId, {
-      ownerUserId: typeof ackMeta?.owner_user_id === "string" ? ackMeta.owner_user_id : null,
-      dueAt: typeof ackMeta?.due_at === "string" ? ackMeta.due_at : null,
-      dueDays: numberFromUnknown(ackMeta?.due_days),
-      note: typeof payload.note === "string" ? payload.note : null
-    });
+    if (!recommendationId || recommendationStateById.has(recommendationId)) continue;
+    recommendationStateById.set(recommendationId, { actionKind, createdAt: row.created_at });
+    if (actionKind === "acknowledge_recommendation") {
+      const ackMeta = asObject(payload.ack_meta);
+      ackMetaByRecommendationId.set(recommendationId, {
+        ownerUserId: typeof ackMeta?.owner_user_id === "string" ? ackMeta.owner_user_id : null,
+        dueAt: typeof ackMeta?.due_at === "string" ? ackMeta.due_at : null,
+        dueDays: numberFromUnknown(ackMeta?.due_days),
+        note: typeof payload.note === "string" ? payload.note : null
+      });
+    }
   }
-  const acknowledgedCurrentCount = recommendations.filter((item) => latestAckedAtByRecommendationId.has(item.id)).length;
+  const acknowledgedCurrentCount = recommendations.filter(
+    (item) => recommendationStateById.get(item.id)?.actionKind === "acknowledge_recommendation"
+  ).length;
   const unresolvedCurrentCount = Math.max(0, recommendations.length - acknowledgedCurrentCount);
   const latestAckedAt =
-    Array.from(latestAckedAtByRecommendationId.values()).sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+    Array.from(recommendationStateById.values())
+      .filter((value) => value.actionKind === "acknowledge_recommendation")
+      .map((value) => value.createdAt)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+  const nowMs = Date.now();
+  const overdueAckedRecommendations = recommendations
+    .map((item) => {
+      const state = recommendationStateById.get(item.id);
+      if (!state || state.actionKind !== "acknowledge_recommendation") return null;
+      const ackMeta = ackMetaByRecommendationId.get(item.id);
+      if (!ackMeta?.dueAt) return null;
+      const dueMs = new Date(ackMeta.dueAt).getTime();
+      if (!Number.isFinite(dueMs) || dueMs >= nowMs) return null;
+      return { id: item.id, title: item.title, dueAt: ackMeta.dueAt, stateCreatedAt: state.createdAt };
+    })
+    .filter((value): value is { id: string; title: string; dueAt: string; stateCreatedAt: string } => value !== null)
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
 
   const priorityCounts = {
     critical: recommendations.filter((item) => item.priority === "critical").length,
@@ -255,8 +285,8 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
   };
   const maxPriorityCount = Math.max(1, ...Object.values(priorityCounts));
   const sortedRecommendations = [...recommendations].sort((a, b) => {
-    const aAcked = latestAckedAtByRecommendationId.has(a.id) ? 1 : 0;
-    const bAcked = latestAckedAtByRecommendationId.has(b.id) ? 1 : 0;
+    const aAcked = recommendationStateById.get(a.id)?.actionKind === "acknowledge_recommendation" ? 1 : 0;
+    const bAcked = recommendationStateById.get(b.id)?.actionKind === "acknowledge_recommendation" ? 1 : 0;
     if (aAcked !== bAcked) return aAcked - bAcked;
     return priorityRank(a.priority) - priorityRank(b.priority);
   });
@@ -395,6 +425,34 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         </div>
       </section>
 
+      {overdueAckedRecommendations.length > 0 ? (
+        <section className="rounded-xl border border-rose-300 bg-rose-50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-rose-900">期限超過フォロー（再確認が必要）</p>
+            <span className="text-xs text-rose-700">{overdueAckedRecommendations.length}件</span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {overdueAckedRecommendations.slice(0, 5).map((row) => (
+              <li key={row.id} className="rounded-md border border-rose-200 bg-white p-2 text-xs text-slate-700">
+                <p className="font-medium text-slate-900">{row.title}</p>
+                <p className="mt-1 text-rose-700">期限: {new Date(row.dueAt).toLocaleDateString("ja-JP")}（超過）</p>
+                <form action={reopenRecommendation} className="mt-2">
+                  <input type="hidden" name="window" value={windowFilter} />
+                  <input type="hidden" name="recommendation_id" value={row.id} />
+                  <input type="hidden" name="note" value={`auto_reopen_due_overdue:${row.id}`} />
+                  <ConfirmSubmitButton
+                    label="未対応に戻す"
+                    pendingLabel="更新中..."
+                    confirmMessage="期限超過のため、この提案を未対応に戻します。よろしいですか？"
+                    className="inline-flex rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs text-rose-800 hover:bg-rose-200"
+                  />
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">最新レビュー結果</h2>
         {latestReview ? (
@@ -451,8 +509,13 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
         <h2 className="text-base font-semibold text-slate-900">優先アクション</h2>
         <ul className="mt-4 space-y-3">
           {sortedRecommendations.map((item) => {
-            const ackedAt = latestAckedAtByRecommendationId.get(item.id) ?? null;
+            const state = recommendationStateById.get(item.id) ?? null;
+            const ackedAt = state?.actionKind === "acknowledge_recommendation" ? state.createdAt : null;
             const ackMeta = ackMetaByRecommendationId.get(item.id) ?? null;
+            const isOverdue =
+              Boolean(ackedAt) &&
+              Boolean(ackMeta?.dueAt) &&
+              new Date(String(ackMeta?.dueAt)).getTime() < nowMs;
             return (
             <li key={item.id} className="rounded-xl border border-slate-200 p-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -466,6 +529,11 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                 {ackedAt ? (
                   <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                     対応済み
+                  </span>
+                ) : null}
+                {isOverdue ? (
+                  <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700">
+                    期限超過
                   </span>
                 ) : null}
               </div>
@@ -501,6 +569,19 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
                   className="inline-flex rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100"
                 />
               </form>
+              {ackedAt ? (
+                <form action={reopenRecommendation} className="mt-2">
+                  <input type="hidden" name="window" value={windowFilter} />
+                  <input type="hidden" name="recommendation_id" value={item.id} />
+                  <input type="hidden" name="note" value={`manual_reopen:${item.id}`} />
+                  <ConfirmSubmitButton
+                    label="未対応に戻す"
+                    pendingLabel="更新中..."
+                    confirmMessage="この提案を未対応に戻します。よろしいですか？"
+                    className="inline-flex rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100"
+                  />
+                </form>
+              ) : null}
               {item.automation ? (
                 <form action={applyRecommendationAction} className="mt-2">
                   <input type="hidden" name="window" value={windowFilter} />

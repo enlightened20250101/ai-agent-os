@@ -1773,3 +1773,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `acknowledge_recommendation` 記録時に `ack_meta`（`owner_user_id`, `due_at`, `due_days`）を保存し、改善提案一覧は「未対応を先頭」「次に優先度順」で並べる方式にした。対応済み行には担当と期限を表示する。
 - Why: 対応済みの記録だけでは運用フォロー期限を管理しづらいため。軽量メタデータで担当/期限を残し、未対応案件の先頭表示で実行優先度を明確にするため。
+
+- Decision: 改善提案の状態判定を「最新イベントベース（ack/reopen）」に変更し、期限超過フォローを警告表示するようにした。期限超過または手動判断で `reopen_recommendation` を記録して未対応へ戻せる導線を追加した。
+- Why: 一度 ack した提案を固定で完了扱いにすると、期限超過や再発時の再対応が漏れやすいため。運用上の再オープンを明示イベントとして残し、状態遷移を追跡可能にするため。
