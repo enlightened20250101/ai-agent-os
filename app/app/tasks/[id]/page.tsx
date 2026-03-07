@@ -713,6 +713,12 @@ export default async function TaskDetailsPage({ params, searchParams }: TaskDeta
               1時間実行ガード: {governanceEvaluation.guardrails.hourlyUsed}/
               {governanceEvaluation.guardrails.hourlyLimit} (remaining={governanceEvaluation.guardrails.hourlyRemaining})
             </p>
+            <p>
+              リスク次元: sensitivity={governanceEvaluation.dimensions.data_sensitivity} / monetary=
+              {governanceEvaluation.dimensions.monetary_impact} / externality=
+              {governanceEvaluation.dimensions.externality} / reversibility=
+              {governanceEvaluation.dimensions.reversibility}
+            </p>
             {governanceEvaluation.reasons.length > 0 ? (
               <ul className="list-disc pl-5">
                 {governanceEvaluation.reasons.map((reason) => (

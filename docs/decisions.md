@@ -1779,3 +1779,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: `reopen_recommendation` に `reason_code`（`regression` / `overdue_followup` / `policy_changed`）を必須で記録し、改善提案履歴に理由別集計と各履歴行の理由表示を追加した。
 - Why: 再オープンの発生は改善施策の品質指標になるため。理由を構造化して記録することで、再発起因の優先改善領域を定量的に把握できるようにするため。
+
+- Decision: 自律実行ゲートのリスク計算を強化し、`INTERNAL_EMAIL_DOMAINS` を用いた internal/customer 判定、金額推定（本文/件名の数値抽出）、可逆性ヒント（draft/reminder vs final/確定）、機微キーワード判定を `evaluateGovernance` に追加した。`monetary_impact=high` または `hard_to_reverse` は auto execute 許可条件から除外する。
+- Why: 理想像に対して不足していた「リスク次元に基づく段階的自律化」を最小実装で前進させるため。高影響・不可逆な実行をデフォルトで人手承認に寄せ、誤実行の安全マージンを上げるため。

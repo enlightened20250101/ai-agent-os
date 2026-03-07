@@ -87,6 +87,38 @@ function includesMonetaryText(text: string) {
   return /\b(?:\$|¥|EUR|USD|JPY|invoice|請求|支払い|payment|amount)\b/i.test(text);
 }
 
+function parseInternalDomains() {
+  const raw = String(process.env.INTERNAL_EMAIL_DOMAINS ?? "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function estimateMonetaryAmount(text: string) {
+  const normalized = text.replace(/,/g, "");
+  const currencyNumberRegex = /(?:JPY|USD|EUR|¥|\$)\s*([0-9]+(?:\.[0-9]+)?)/gi;
+  const plainNumberRegex = /\b([0-9]{4,})(?:\.[0-9]+)?\b/g;
+  let maxAmount = 0;
+
+  for (const match of normalized.matchAll(currencyNumberRegex)) {
+    const value = Number.parseFloat(match[1] ?? "");
+    if (Number.isFinite(value)) {
+      maxAmount = Math.max(maxAmount, value);
+    }
+  }
+
+  for (const match of normalized.matchAll(plainNumberRegex)) {
+    const value = Number.parseFloat(match[1] ?? "");
+    if (Number.isFinite(value)) {
+      maxAmount = Math.max(maxAmount, value);
+    }
+  }
+
+  return maxAmount;
+}
+
 function parseSettingsRow(row: Record<string, unknown> | null): GovernanceSettings {
   if (!row) {
     return { ...DEFAULT_SETTINGS };
@@ -252,11 +284,20 @@ function buildRiskModel(args: {
   const text = `${args.subject}\n${args.bodyText}`;
   const pii = isLikelyPiiText(text);
   const money = includesMonetaryText(text);
-
-  const dataSensitivity: "low" | "medium" | "high" = pii ? "high" : "medium";
-  const monetaryImpact: "low" | "medium" | "high" = money ? "high" : "medium";
-  const externality: "internal" | "customer_facing" = "customer_facing";
-  const reversibility: "reversible" | "hard_to_reverse" = "hard_to_reverse";
+  const legalOrSensitive =
+    /契約|法務|個人情報|機密|confidential|nda|salary|payroll|social security|マイナンバー/i.test(text);
+  const estimatedAmount = estimateMonetaryAmount(text);
+  const dataSensitivity: "low" | "medium" | "high" = pii || legalOrSensitive ? "high" : "medium";
+  const monetaryImpact: "low" | "medium" | "high" =
+    money && estimatedAmount >= 100000 ? "high" : money && estimatedAmount >= 10000 ? "medium" : money ? "low" : "low";
+  const domain = domainFromEmail(args.to);
+  const internalDomains = parseInternalDomains();
+  const externality: "internal" | "customer_facing" =
+    domain && internalDomains.includes(domain) ? "internal" : "customer_facing";
+  const reversibleHint = /test|draft|reminder|確認|下書き/i.test(args.subject + "\n" + args.bodyText);
+  const hardCommitHint = /final|確定|正式|binding|契約締結|支払確定/i.test(args.subject + "\n" + args.bodyText);
+  const reversibility: "reversible" | "hard_to_reverse" =
+    reversibleHint && !hardCommitHint ? "reversible" : "hard_to_reverse";
   const pastReliability: "low" | "medium" | "high" =
     args.trustScore >= 85 ? "high" : args.trustScore >= 65 ? "medium" : "low";
 
@@ -270,8 +311,19 @@ function buildRiskModel(args: {
   if (pii) {
     score += 25;
   }
-  if (money) {
-    score += 20;
+  if (monetaryImpact === "high") {
+    score += 25;
+  } else if (monetaryImpact === "medium") {
+    score += 15;
+  } else if (money) {
+    score += 8;
+  }
+
+  if (externality === "customer_facing") {
+    score += 8;
+  }
+  if (reversibility === "hard_to_reverse") {
+    score += 10;
   }
 
   if (pastReliability === "low") {
@@ -280,13 +332,13 @@ function buildRiskModel(args: {
     score -= 5;
   }
 
-  const domain = domainFromEmail(args.to);
   if (!domain) {
     score += 20;
   }
 
   return {
     score: clampScore(score),
+    estimatedAmount,
     dimensions: {
       data_sensitivity: dataSensitivity,
       monetary_impact: monetaryImpact,
@@ -426,9 +478,17 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
   }
 
   if (risk.score > settings.maxAutoExecuteRiskScore) {
-    reasons.push(
-      `リスクスコア ${risk.score} が閾値 ${settings.maxAutoExecuteRiskScore} を超えています。`
-    );
+    reasons.push(`リスクスコア ${risk.score} が閾値 ${settings.maxAutoExecuteRiskScore} を超えています。`);
+  }
+
+  if (risk.dimensions.monetary_impact === "high") {
+    reasons.push("金額影響が high のため、自動実行より人手承認を優先します。");
+  }
+  if (risk.dimensions.data_sensitivity === "high") {
+    reasons.push("データ機微性が high のため、追加確認を推奨します。");
+  }
+  if (risk.dimensions.reversibility === "hard_to_reverse") {
+    reasons.push("不可逆リスクが高いため、慎重な承認が必要です。");
   }
 
   if (trustScore < settings.minTrustScore) {
@@ -449,6 +509,8 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
     settings.autoExecuteGoogleSendEmail &&
     (settings.autonomyLevel === "L3" || settings.autonomyLevel === "L4") &&
     risk.score <= settings.maxAutoExecuteRiskScore &&
+    risk.dimensions.monetary_impact !== "high" &&
+    risk.dimensions.reversibility !== "hard_to_reverse" &&
     trustScore >= settings.minTrustScore &&
     remainingBudget > 0 &&
     hourlyGuardrail.remainingLastHour > 0 &&
@@ -477,6 +539,7 @@ export async function evaluateGovernance(args: GovernanceEvaluationInput): Promi
       metadata: {
         policy_status: args.policyStatus,
         trust_score: trustScore,
+        estimated_amount: risk.estimatedAmount,
         remaining_budget: remainingBudget,
         hourly_remaining: hourlyGuardrail.remainingLastHour,
         required_approvals: requiredApprovals,
