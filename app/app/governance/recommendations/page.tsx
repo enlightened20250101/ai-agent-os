@@ -20,6 +20,13 @@ function priorityLabel(priority: "critical" | "high" | "medium" | "low") {
   return "低";
 }
 
+function priorityRank(priority: "critical" | "high" | "medium" | "low") {
+  if (priority === "critical") return 0;
+  if (priority === "high") return 1;
+  if (priority === "medium") return 2;
+  return 3;
+}
+
 function priorityClasses(priority: "critical" | "high" | "medium" | "low") {
   if (priority === "critical") {
     return "border-rose-300 bg-rose-50 text-rose-800";
@@ -145,7 +152,7 @@ function metricValueJa(metricLabel: string, metricValue: string) {
 }
 
 export default async function GovernanceRecommendationsPage({ searchParams }: RecommendationsPageProps) {
-  const { orgId } = await requireOrgContext();
+  const { orgId, userId } = await requireOrgContext();
   const supabase = await createClient();
   const sp = searchParams ? await searchParams : {};
   const windowFilter = sp.window === "24h" || sp.window === "30d" ? sp.window : "7d";
@@ -217,12 +224,23 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
     return true;
   });
   const latestAckedAtByRecommendationId = new Map<string, string>();
+  const ackMetaByRecommendationId = new Map<
+    string,
+    { ownerUserId: string | null; dueAt: string | null; dueDays: number | null; note: string | null }
+  >();
   for (const row of recentActions) {
     const payload = asObject(row.payload_json);
     if (!payload || payload.action_kind !== "acknowledge_recommendation") continue;
     const recommendationId = typeof payload.recommendation_id === "string" ? payload.recommendation_id : null;
     if (!recommendationId || latestAckedAtByRecommendationId.has(recommendationId)) continue;
     latestAckedAtByRecommendationId.set(recommendationId, row.created_at);
+    const ackMeta = asObject(payload.ack_meta);
+    ackMetaByRecommendationId.set(recommendationId, {
+      ownerUserId: typeof ackMeta?.owner_user_id === "string" ? ackMeta.owner_user_id : null,
+      dueAt: typeof ackMeta?.due_at === "string" ? ackMeta.due_at : null,
+      dueDays: numberFromUnknown(ackMeta?.due_days),
+      note: typeof payload.note === "string" ? payload.note : null
+    });
   }
   const acknowledgedCurrentCount = recommendations.filter((item) => latestAckedAtByRecommendationId.has(item.id)).length;
   const unresolvedCurrentCount = Math.max(0, recommendations.length - acknowledgedCurrentCount);
@@ -236,6 +254,12 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
     low: recommendations.filter((item) => item.priority === "low").length
   };
   const maxPriorityCount = Math.max(1, ...Object.values(priorityCounts));
+  const sortedRecommendations = [...recommendations].sort((a, b) => {
+    const aAcked = latestAckedAtByRecommendationId.has(a.id) ? 1 : 0;
+    const bAcked = latestAckedAtByRecommendationId.has(b.id) ? 1 : 0;
+    if (aAcked !== bAcked) return aAcked - bAcked;
+    return priorityRank(a.priority) - priorityRank(b.priority);
+  });
 
   return (
     <section className="space-y-6">
@@ -426,8 +450,9 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">優先アクション</h2>
         <ul className="mt-4 space-y-3">
-          {recommendations.map((item) => {
+          {sortedRecommendations.map((item) => {
             const ackedAt = latestAckedAtByRecommendationId.get(item.id) ?? null;
+            const ackMeta = ackMetaByRecommendationId.get(item.id) ?? null;
             return (
             <li key={item.id} className="rounded-xl border border-slate-200 p-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -447,7 +472,13 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
               <p className="mt-1 text-sm text-slate-600">{item.description}</p>
               {ackedAt ? (
-                <p className="mt-1 text-xs text-emerald-700">最終記録: {new Date(ackedAt).toLocaleString("ja-JP")}</p>
+                <div className="mt-1 space-y-1 text-xs text-emerald-700">
+                  <p>最終記録: {new Date(ackedAt).toLocaleString("ja-JP")}</p>
+                  <p>
+                    担当: {ackMeta?.ownerUserId === userId ? "自分" : "メンバー"} / 期限:{" "}
+                    {ackMeta?.dueAt ? new Date(ackMeta.dueAt).toLocaleDateString("ja-JP") : "-"}
+                  </p>
+                </div>
               ) : (
                 <p className="mt-1 text-xs text-slate-500">未対応</p>
               )}
@@ -460,7 +491,9 @@ export default async function GovernanceRecommendationsPage({ searchParams }: Re
               <form action={acknowledgeRecommendation} className="mt-2">
                 <input type="hidden" name="window" value={windowFilter} />
                 <input type="hidden" name="recommendation_id" value={item.id} />
+                <input type="hidden" name="owner_user_id" value={userId} />
                 <input type="hidden" name="note" value={`manual_ack:${item.id}`} />
+                <input type="hidden" name="due_days" value="7" />
                 <ConfirmSubmitButton
                   label="対処済みとして記録"
                   pendingLabel="記録中..."

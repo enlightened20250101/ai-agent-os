@@ -289,6 +289,11 @@ export async function acknowledgeRecommendation(formData: FormData) {
   const windowValue = normalizeWindow(String(formData.get("window") ?? "").trim());
   const recommendationId = String(formData.get("recommendation_id") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim();
+  const ownerUserIdRaw = String(formData.get("owner_user_id") ?? "").trim();
+  const dueDaysRaw = Number.parseInt(String(formData.get("due_days") ?? "").trim(), 10);
+  const dueDays = Number.isFinite(dueDaysRaw) ? Math.max(1, Math.min(90, dueDaysRaw)) : 7;
+  const dueAtIso = new Date(Date.now() + dueDays * 24 * 60 * 60 * 1000).toISOString();
+  const ownerUserId = ownerUserIdRaw || userId;
 
   if (!recommendationId) {
     redirect(withMessage("error", "recommendation_id が不足しています。", windowValue));
@@ -319,7 +324,12 @@ export async function acknowledgeRecommendation(formData: FormData) {
       result: "success",
       baseline_summary: baseline,
       followup_href: matched.href,
-      note: note || null
+      note: note || null,
+      ack_meta: {
+        owner_user_id: ownerUserId,
+        due_at: dueAtIso,
+        due_days: dueDays
+      }
     }
   });
 

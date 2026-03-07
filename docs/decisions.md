@@ -1770,3 +1770,6 @@ This file records implementation decisions made without blocking on open questio
 
 - Decision: 改善提案ページに「未対応/対応済み/最新対処記録」の集計カードを追加し、提案ID単位で `acknowledge_recommendation` 履歴を突合してカードと各提案行へ対応状態を表示するようにした。
 - Why: 提案数が増えると対応漏れを見落としやすくなるため。ページを開いた時点で残件と最新対応時刻を確認できるようにし、運用の継続性を上げるため。
+
+- Decision: `acknowledge_recommendation` 記録時に `ack_meta`（`owner_user_id`, `due_at`, `due_days`）を保存し、改善提案一覧は「未対応を先頭」「次に優先度順」で並べる方式にした。対応済み行には担当と期限を表示する。
+- Why: 対応済みの記録だけでは運用フォロー期限を管理しづらいため。軽量メタデータで担当/期限を残し、未対応案件の先頭表示で実行優先度を明確にするため。
